@@ -81,6 +81,25 @@ test-notifications:
     open -g "$({{ cli }} notification url --severity critical --title 'Critical severity' --body 'Red, always on top. Sent through a URL.')"
     osascript -e 'display notification "A native macOS notification, intercepted and moved into the sidebar." with title "macOS notification" subtitle "Posted by osascript"'
 
+# Push count distinct notifications of mixed severity and length, enough to make the list scroll; none stack
+fill-notifications count="20":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    severities=(low normal normal normal high critical)
+    bodies=(
+        "Short body."
+        "A body long enough to wrap onto a second line in the sidebar."
+        "A longer body that wraps across several lines, so cards of different heights show how the list scrolls and how the indicator sizes its knob."
+    )
+    run="$(date +%H:%M:%S)"
+    for i in $(seq 1 {{ count }}); do
+        {{ cli }} notification push \
+            --severity "${severities[RANDOM % ${#severities[@]}]}" \
+            --title "Filler $i ($run)" \
+            --body "${bodies[RANDOM % ${#bodies[@]}]}" >/dev/null
+    done
+    echo "Pushed {{ count }} notifications"
+
 # Tests run with a one-thread cooperative pool, so blocking calls on Swift's thread pool deadlock
 # here instead of only on few-core CI runners.
 test:

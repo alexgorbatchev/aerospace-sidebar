@@ -15,6 +15,7 @@ Swift package (`Package.swift`) driven by `justfile`:
 - Build and relaunch the app bundle: `just run`. It quits NotifyMeHow first (`just quit-notifymehow`) so only one app hides banners. `just stop` quits the sidebar gracefully; `just bundle` only builds `.build/AerospaceSidebar.app` and `bin/aerospace-sidebar`.
 - CLI: `just cli <args>`, agent mode `just cli-ai <args>` (the CLI's `run`/`run-ai` equivalents; `run` launches the app)
 - Push sample notifications through every path (CLI, URL scheme, native `osascript`), one per severity: `just test-notifications`
+- Fill the list with distinct notifications that never stack, to check scrolling: `just fill-notifications [count]` (default 20)
 - Tests: `just test`
 - Coverage gate: `just coverage`
 - Re-prompt for Accessibility: `just reset-permissions`
