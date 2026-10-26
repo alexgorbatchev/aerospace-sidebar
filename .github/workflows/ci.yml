@@ -17,4 +17,5 @@ jobs:
         run: swift build --build-tests
       - name: Tests and coverage gate
         timeout-minutes: 10
-        run: just coverage
+        # A pseudo-terminal keeps test output line-buffered, so a hang shows the last test that started.
+        run: script -q /dev/null just coverage
