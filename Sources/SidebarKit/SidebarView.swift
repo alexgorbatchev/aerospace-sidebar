@@ -7,6 +7,12 @@ struct SidebarView: View {
     let openSettings: () -> Void
     let quit: () -> Void
 
+    static let margin: CGFloat = 16
+
+    @State private var scrollPosition = ScrollPosition(edge: .top)
+    @State private var scrollMetrics = ScrollMetrics()
+    @State private var isScrolling = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -18,6 +24,7 @@ struct SidebarView: View {
                         .buttonStyle(.link)
                 }
             }
+            .padding(.horizontal, Self.margin)
             if let message = statusMessage {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(message)
@@ -27,7 +34,9 @@ struct SidebarView: View {
                         Button("Set Up…", action: openSettings)
                     }
                 }
+                .padding(.horizontal, Self.margin)
             }
+            // The list spans the full width so the scroll indicator sits in the trailing margin.
             ScrollView {
                 LazyVStack(spacing: 8) {
                     ForEach(model.notifications) { notification in
@@ -37,6 +46,16 @@ struct SidebarView: View {
                             dismiss: { model.dismiss(notification.id) }
                         )
                     }
+                }
+                .padding(.horizontal, Self.margin)
+            }
+            .scrollIndicators(.never)
+            .scrollPosition($scrollPosition)
+            .onScrollGeometryChange(for: ScrollMetrics.self, of: ScrollMetrics.init) { scrollMetrics = $1 }
+            .onScrollPhaseChange { isScrolling = $1.isScrolling }
+            .overlay(alignment: .trailing) {
+                if scrollMetrics.isScrollable {
+                    ScrollIndicator(metrics: scrollMetrics, isScrolling: isScrolling) { scrollPosition.scrollTo(y: $0) }
                 }
             }
             .overlay {
@@ -52,8 +71,9 @@ struct SidebarView: View {
                 Button("Quit Sidebar", action: quit)
                     .keyboardShortcut("q", modifiers: .command)
             }
+            .padding(.horizontal, Self.margin)
         }
-        .padding(16)
+        .padding(.vertical, Self.margin)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
