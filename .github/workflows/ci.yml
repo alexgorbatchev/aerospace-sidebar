@@ -16,6 +16,22 @@ jobs:
         timeout-minutes: 15
         run: swift build --build-tests
       - name: Tests and coverage gate
-        timeout-minutes: 10
-        # A pseudo-terminal keeps test output line-buffered, so a hang shows the last test that started.
-        run: script -q /dev/null just coverage
+        timeout-minutes: 12
+        # A pseudo-terminal keeps test output line-buffered. If the tests stall, sample the test
+        # processes so the log shows where their threads are blocked.
+        run: |
+          script -q /dev/null just coverage &
+          tests=$!
+          for _ in $(seq 1 300); do
+            kill -0 "$tests" 2>/dev/null || break
+            sleep 1
+          done
+          if kill -0 "$tests" 2>/dev/null; then
+            for pid in $(pgrep -f 'swiftpm-testing-helper|aerospace-sidebarPackageTests'); do
+              echo "::group::sample $pid"
+              sample "$pid" 3 -file "/tmp/sample-$pid.txt" >/dev/null 2>&1 && cat "/tmp/sample-$pid.txt"
+              echo "::endgroup::"
+            done
+            exit 1
+          fi
+          wait "$tests"
