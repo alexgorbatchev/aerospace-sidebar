@@ -30,7 +30,7 @@ public struct SettingsFile: Sendable {
     }
 
     public func save(_ settings: SidebarSettings) throws {
-        var encoder = TOMLEncoder()
+        let encoder = TOMLEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let body = try encoder.encodeToString(settings)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
