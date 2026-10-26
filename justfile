@@ -98,7 +98,8 @@ coverage:
     summary="$(xcrun llvm-cov export "$bin" -instr-profile "$profdata" -ignore-filename-regex "$ignore" -summary-only)"
     status=0
     while IFS= read -r source; do
-        if ! jq -e --arg f "$PWD/$source" '.data[0].files | any(.filename == $f)' <<<"$summary" >/dev/null; then
+        # llvm-cov reports resolved paths, so compare against the physical directory (/tmp is a symlink).
+        if ! jq -e --arg f "$(pwd -P)/$source" '.data[0].files | any(.filename == $f)' <<<"$summary" >/dev/null; then
             echo "error: $source is not in the coverage report" >&2
             status=1
         fi

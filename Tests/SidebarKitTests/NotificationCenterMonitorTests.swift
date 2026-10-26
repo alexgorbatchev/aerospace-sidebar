@@ -62,6 +62,49 @@ struct NotificationCenterMonitorTests {
         harness.monitor.stop()
     }
 
+    @Test func attachesOnceAccessibilityIsGrantedLater() async throws {
+        let platform = FakePlatform()
+        platform.trusted = false
+        var statuses: [InterceptionStatus] = []
+        let monitor = NotificationCenterMonitor(
+            platform: platform,
+            interceptor: SystemNotificationInterceptor { _ in },
+            workspaceCenter: NotificationCenter(),
+            permissionPollInterval: 0.01,
+            onStatus: { statuses.append($0) }
+        )
+        monitor.start()
+        defer { monitor.stop() }
+
+        platform.trusted = true
+        for _ in 0..<200 where statuses.last != .active {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(statuses == [.needsAccessibility, .active])
+        #expect(platform.observedPIDs == [42])
+    }
+
+    @Test func defaultMonitorWiresSettingsAndModel() throws {
+        let directory = try TemporaryDirectory()
+        let settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        settings.update { $0.notifications.appsLeftToMacOS = ["zoom.us"] }
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        let platform = FakePlatform()
+        let zoom = FakeElement.banner(id: "z", app: "zoom.us", title: "Meeting")
+        let mail = FakeElement.banner(id: "m", app: "Mail", title: "Lunch")
+        platform.windowsByPID[42] = [FakeElement.window(zoom), FakeElement.window(mail)]
+
+        let monitor = SidebarAppDelegate.makeMonitor(model: model, settings: settings, platform: platform)
+        monitor.start()
+        defer { monitor.stop() }
+
+        #expect(model.interception == .active)
+        #expect(Set(model.notifications.map { "\($0.title):\($0.shownByMacOS)" }) == ["Meeting:true", "Lunch:false"])
+        #expect(zoom.performed.isEmpty)
+        #expect(mail.performed.count == 1)
+    }
+
     @Test func reportsMissingNotificationCenter() {
         let harness = Harness()
         harness.platform.pid = nil
@@ -117,28 +160,44 @@ struct NotificationCenterMonitorTests {
     }
 }
 
-/// Read-only checks against the real Accessibility API. Assertions hold whether or not the test
-/// process has the Accessibility permission; nothing here moves or closes real windows.
+/// Read-only checks against the real Accessibility API, using the Dock because every logged-in
+/// session runs it. Assertions hold whether or not the test process has the Accessibility
+/// permission; nothing here moves or closes real windows.
 @MainActor
 struct SystemAccessibilityTests {
     let platform = SystemAccessibility()
 
-    @Test(.enabled(if: !NSRunningApplication.runningApplications(withBundleIdentifier: NotificationCenterMonitor.notificationCenterBundleID).isEmpty))
-    func readsNotificationCenter() throws {
-        let pid = try #require(platform.notificationCenterPID())
+    nonisolated static var dockPID: pid_t? {
+        NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first?.processIdentifier
+    }
+
+    @Test(.enabled(if: dockPID != nil, "requires a logged-in session"))
+    func readsRunningAppWithOrWithoutPermission() throws {
+        let pid = try #require(Self.dockPID)
         let trusted = platform.isTrusted(prompt: false)
         let application = AXElement(AXUIElementCreateApplication(pid))
 
         #expect(application.string(kAXRoleAttribute) == (trusted ? kAXApplicationRole : nil))
-        // Live NotificationCenter windows come and go, so only read them.
-        for window in platform.windows(ofProcess: pid) {
-            _ = window.position
-            _ = window.children
-            _ = window.actionNames
-        }
+        #expect(application.children.isEmpty == !trusted)
+        _ = application.actionNames
         if trusted {
-            #expect(platform.observe(process: pid) { _ in } != nil)
+            _ = application.position
+        } else {
+            #expect(application.position == nil)
+            #expect(platform.windows(ofProcess: pid).isEmpty)
         }
+        let observation = platform.observe(process: pid) { _ in }
+        if trusted {
+            #expect(observation != nil)
+        }
+    }
+
+    @Test func findsNotificationCenterProcess() {
+        let running = NSRunningApplication.runningApplications(
+            withBundleIdentifier: NotificationCenterMonitor.notificationCenterBundleID
+        ).first
+
+        #expect(platform.notificationCenterPID() == running?.processIdentifier)
     }
 
     @Test func refusesInvalidProcess() {

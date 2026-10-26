@@ -30,7 +30,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         makeController: @escaping @MainActor (SidebarModel, _ openSettings: @escaping @MainActor () -> Void) -> SidebarPanelController = {
             SidebarPanelController(model: $0, openSettings: $1)
         },
-        makeMonitor: @escaping @MainActor (SidebarModel, SettingsStore) -> NotificationCenterMonitor = SidebarAppDelegate.makeMonitor,
+        makeMonitor: @escaping @MainActor (SidebarModel, SettingsStore) -> NotificationCenterMonitor = { SidebarAppDelegate.makeMonitor(model: $0, settings: $1) },
         makeServer: @escaping @MainActor (SidebarModel) -> ControlServer = { SidebarAppDelegate.makeServer(model: $0) },
         makeSettingsWindow: @escaping @MainActor (SettingsStore, _ onAeroSpaceUpdated: @escaping @MainActor () -> Void) -> SettingsWindowController = SidebarAppDelegate.makeSettingsWindow,
         urlSender: @escaping @MainActor () -> String? = SidebarAppDelegate.currentAppleEventSender
@@ -108,8 +108,13 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    public static func makeMonitor(model: SidebarModel, settings: SettingsStore) -> NotificationCenterMonitor {
+    public static func makeMonitor(
+        model: SidebarModel,
+        settings: SettingsStore,
+        platform: any AccessibilityPlatform = SystemAccessibility()
+    ) -> NotificationCenterMonitor {
         NotificationCenterMonitor(
+            platform: platform,
             interceptor: SystemNotificationInterceptor(
                 leavesToMacOS: { settings.settings.notifications.leavesToMacOS($0) },
                 onNotification: { model.add($0) }

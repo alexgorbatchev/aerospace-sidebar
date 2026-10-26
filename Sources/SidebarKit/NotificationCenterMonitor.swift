@@ -22,21 +22,25 @@ public final class NotificationCenterMonitor {
     private let interceptor: SystemNotificationInterceptor
     private let onStatus: @MainActor (InterceptionStatus) -> Void
     private let workspaceCenter: NotificationCenter
+    private let permissionPollInterval: TimeInterval
     private var observation: AnyObject?
     private var attachedPID: pid_t?
     private var permissionTimer: Timer?
     private var launchObserver: NSObjectProtocol?
     public private(set) var isRunning = false
 
+    /// - Parameter permissionPollInterval: How often to check whether the Accessibility permission was granted.
     public init(
         platform: any AccessibilityPlatform = SystemAccessibility(),
         interceptor: SystemNotificationInterceptor,
         workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
+        permissionPollInterval: TimeInterval = 2,
         onStatus: @escaping @MainActor (InterceptionStatus) -> Void
     ) {
         self.platform = platform
         self.interceptor = interceptor
         self.workspaceCenter = workspaceCenter
+        self.permissionPollInterval = permissionPollInterval
         self.onStatus = onStatus
     }
 
@@ -57,7 +61,7 @@ public final class NotificationCenterMonitor {
             attach()
         } else {
             onStatus(.needsAccessibility)
-            permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            permissionTimer = Timer.scheduledTimer(withTimeInterval: permissionPollInterval, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.checkPermission() }
             }
         }
