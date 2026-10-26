@@ -1,0 +1,130 @@
+import Foundation
+@testable import SidebarKit
+import SidebarProtocol
+import Testing
+
+@MainActor
+struct SidebarModelTests {
+    @Test func ordersBySeverityThenRecency() {
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        let names: [(String, NotificationSeverity)] = [
+            ("normal-1", .normal), ("critical-1", .critical), ("low-1", .low), ("high-1", .high), ("normal-2", .normal), ("critical-2", .critical),
+        ]
+
+        for (title, severity) in names {
+            model.add(SidebarNotification(source: "test", title: title, severity: severity))
+        }
+
+        #expect(model.notifications.map(\.title) == ["critical-2", "critical-1", "high-1", "normal-2", "normal-1", "low-1"])
+    }
+
+    @Test func dropsLeastSevereOldestBeyondCap() {
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        model.add(SidebarNotification(source: "test", title: "critical", severity: .critical))
+        for index in 0..<SidebarModel.maxNotifications {
+            model.add(SidebarNotification(source: "test", title: "low-\(index)", severity: .low))
+        }
+
+        #expect(model.notifications.count == SidebarModel.maxNotifications)
+        #expect(model.notifications.first?.title == "critical")
+        #expect(!model.notifications.contains { $0.title == "low-0" })
+    }
+
+    @Test func dismissAndClearRemoveNotifications() {
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        let first = SidebarNotification(source: "a", title: "first")
+        let second = SidebarNotification(source: "b", title: "second")
+        model.add(first)
+        model.add(second)
+
+        model.dismiss(first.id)
+        #expect(model.notifications == [second])
+
+        model.clear()
+        #expect(model.notifications.isEmpty)
+    }
+
+    @Test func activatePerformsActionAndDismisses() {
+        let performer = RecordingPerformer()
+        let model = SidebarModel(performer: performer, store: InMemoryStore())
+        let withAction = SidebarNotification(source: "cli", title: "run", action: .run(command: "make", workingDirectory: "/tmp"))
+        let plain = SidebarNotification(source: "cli", title: "plain")
+        model.add(withAction)
+        model.add(plain)
+
+        model.activate(withAction.id)
+        model.activate(plain.id)
+        model.activate(UUID())
+
+        #expect(performer.actions == [.run(command: "make", workingDirectory: "/tmp")])
+        #expect(model.notifications.isEmpty)
+    }
+
+    @Test func opensAccessibilitySettings() {
+        let performer = RecordingPerformer()
+
+        SidebarModel(performer: performer, store: InMemoryStore()).openAccessibilitySettings()
+
+        #expect(performer.actions == [.open(SidebarModel.accessibilitySettingsURL)])
+    }
+
+    @Test func mapsPayloadActions() throws {
+        let date = Date(timeIntervalSince1970: 1)
+        let open = try NotificationPayload(title: "t", severity: .high, action: .open(URL(string: "https://a.example")!))
+        let run = try NotificationPayload(body: "b", action: .run(command: "ls", workingDirectory: "/"))
+
+        let opened = SidebarNotification(payload: open, source: "url", receivedAt: date)
+        let ran = SidebarNotification(payload: run, source: "cli")
+
+        #expect(opened.action == .open(URL(string: "https://a.example")!))
+        #expect(opened.severity == .high)
+        #expect(opened.receivedAt == date)
+        #expect(ran.action == .run(command: "ls", workingDirectory: "/"))
+        #expect(SidebarNotification(payload: try NotificationPayload(title: "t"), source: "x").action == nil)
+    }
+
+    @Test(arguments: [
+        (nil, "Click to dismiss"),
+        (SidebarNotification.ClickAction.open(URL(string: "https://a.example")!), "Click to open https://a.example"),
+        (.run(command: "make test", workingDirectory: "/repo"), "Click to run in /repo:\nmake test"),
+        (.activateApp(name: "Mail"), "Click to switch to Mail"),
+    ])
+    func describesClickBeforeItHappens(action: SidebarNotification.ClickAction?, description: String) {
+        #expect(SidebarNotification(source: "s", title: "t", action: action).clickDescription == description)
+    }
+}
+
+@MainActor
+struct WorkspaceActionPerformerTests {
+    @Test func runsCommandInWorkingDirectory() throws {
+        let directory = try TemporaryDirectory()
+
+        let process = try WorkspaceActionPerformer.run("echo ran > marker.txt", in: directory.url.path)
+        process.waitUntilExit()
+
+        #expect(process.terminationStatus == 0)
+        #expect(try String(contentsOf: directory.url.appendingPathComponent("marker.txt"), encoding: .utf8) == "ran\n")
+    }
+
+    @Test func runsWithLoginShell() {
+        #expect(WorkspaceActionPerformer.loginShell == String(cString: getpwuid(getuid()).pointee.pw_shell))
+    }
+
+    @Test func performingRunStartsCommand() async throws {
+        let directory = try TemporaryDirectory()
+        let marker = directory.url.appendingPathComponent("performed.txt")
+
+        WorkspaceActionPerformer().perform(.run(command: "touch performed.txt", workingDirectory: directory.url.path))
+
+        for _ in 0..<100 where !FileManager.default.fileExists(atPath: marker.path) {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(FileManager.default.fileExists(atPath: marker.path))
+    }
+
+    @Test func failingCommandsDoNotThrowFromPerform() throws {
+        WorkspaceActionPerformer().perform(.run(command: "exit 3", workingDirectory: "/"))
+        WorkspaceActionPerformer().perform(.run(command: "true", workingDirectory: "/nonexistent-directory"))
+        WorkspaceActionPerformer().perform(.activateApp(name: "No Such App \(UUID())"))
+    }
+}

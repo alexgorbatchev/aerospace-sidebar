@@ -1,0 +1,26 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    env:
+      # CI has no Developer ID; releases are ad-hoc signed.
+      AEROSPACE_SIDEBAR_SIGNING_IDENTITY: "-"
+    steps:
+      - uses: actions/checkout@v7
+      - run: brew install just
+      - name: Tests and coverage gate
+        run: just coverage
+      - name: Build archives
+        run: just release-archives "${GITHUB_REF_NAME#v}"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes
