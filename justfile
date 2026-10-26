@@ -81,14 +81,16 @@ test-notifications:
     open -g "$({{ cli }} notification url --severity critical --title 'Critical severity' --body 'Red, always on top. Sent through a URL.')"
     osascript -e 'display notification "A native macOS notification, intercepted and moved into the sidebar." with title "macOS notification" subtitle "Posted by osascript"'
 
+# Tests run with a one-thread cooperative pool, so blocking calls on Swift's thread pool deadlock
+# here instead of only on few-core CI runners.
 test:
-    swift test
+    LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test
 
 # Run tests with coverage and enforce line and function minimums over Sources/
 coverage:
     #!/usr/bin/env bash
     set -euo pipefail
-    swift test --enable-code-coverage
+    LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test --enable-code-coverage
     bin="$(swift build --show-bin-path)/aerospace-sidebarPackageTests.xctest/Contents/MacOS/aerospace-sidebarPackageTests"
     profdata="$(dirname "$(swift test --show-codecov-path)")/default.profdata"
     ignore='(\.build|Tests)/'

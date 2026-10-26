@@ -31,7 +31,7 @@ public struct SocketNotificationSender: NotificationSending {
         let request = ControlRequest.pushNotification(payload)
         var response: ControlResponse
         do {
-            response = try UnixSocket.exchange(request, path: socketPath)
+            response = try await UnixSocket.exchange(request, path: socketPath)
         } catch let error as SocketError where [ENOENT, ECONNREFUSED].contains(error.code) {
             try await launchApp()
             response = try await exchangeOnceListening(request)
@@ -46,7 +46,7 @@ public struct SocketNotificationSender: NotificationSending {
     private func exchangeOnceListening(_ request: ControlRequest) async throws -> ControlResponse {
         for _ in 0..<attempts {
             try await Task.sleep(for: retryDelay)
-            if let response = try? UnixSocket.exchange(request, path: socketPath) {
+            if let response = try? await UnixSocket.exchange(request, path: socketPath) {
                 return response
             }
         }

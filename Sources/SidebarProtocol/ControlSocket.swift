@@ -32,8 +32,11 @@ public struct SocketError: Error, Equatable, Sendable, CustomStringConvertible {
 public enum UnixSocket {
     /// Largest request or response either side accepts.
     public static let maxMessageSize = 64 * 1024
+    /// How long a client waits on a send or reply before giving up.
+    public static let clientTimeout = timeval(tv_sec: 5, tv_usec: 0)
 
-    public static func connect(to path: String) throws(SocketError) -> Int32 {
+    /// Connects to `path`; sends and reads time out after `timeout`.
+    public static func connect(to path: String, timeout: timeval = clientTimeout) throws(SocketError) -> Int32 {
         var address = try address(for: path)
         let descriptor = try makeSocket()
         let result = withUnsafePointer(to: &address) {
@@ -46,6 +49,9 @@ public enum UnixSocket {
             close(descriptor)
             throw error
         }
+        var timeout = timeout
+        setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         return descriptor
     }
 
@@ -91,13 +97,19 @@ public enum UnixSocket {
         }
     }
 
-    /// Sends one request and waits for the reply.
-    public static func exchange(_ request: ControlRequest, path: String) throws -> ControlResponse {
-        let descriptor = try connect(to: path)
-        defer { close(descriptor) }
-        try writeAll(JSONEncoder().encode(request), to: descriptor)
-        shutdown(descriptor, SHUT_WR)
-        return try JSONDecoder().decode(ControlResponse.self, from: readAll(from: descriptor))
+    /// Sends one request and waits for the reply, on a Dispatch thread (see `onBlockingQueue`).
+    public static func exchange(
+        _ request: ControlRequest,
+        path: String,
+        timeout: timeval = clientTimeout
+    ) async throws -> ControlResponse {
+        try await onBlockingQueue {
+            let descriptor = try connect(to: path, timeout: timeout)
+            defer { close(descriptor) }
+            try writeAll(JSONEncoder().encode(request), to: descriptor)
+            shutdown(descriptor, SHUT_WR)
+            return try JSONDecoder().decode(ControlResponse.self, from: readAll(from: descriptor))
+        }
     }
 
     private static func makeSocket() throws(SocketError) -> Int32 {

@@ -40,7 +40,7 @@ struct SidebarAppDelegateTests {
 
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         let payload = try NotificationPayload(title: "from cli", severity: .critical)
-        let response = try await Task.detached { try UnixSocket.exchange(.pushNotification(payload), path: path) }.value
+        let response = try await UnixSocket.exchange(.pushNotification(payload), path: path)
 
         #expect(try #require(delegate.controller).panel.isVisible)
         #expect(delegate.model.interception == .active)

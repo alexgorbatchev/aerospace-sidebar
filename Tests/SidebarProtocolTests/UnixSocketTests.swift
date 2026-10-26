@@ -9,17 +9,17 @@ struct UnixSocketTests {
         defer { close(listener); unlink(path) }
         let payload = try NotificationPayload(title: "hello")
 
-        let server = Task.detached {
+        async let served = onBlockingQueue {
             let connection = accept(listener, nil, nil)
             defer { close(connection) }
             let request = try JSONDecoder().decode(ControlRequest.self, from: UnixSocket.readAll(from: connection))
             try UnixSocket.writeAll(JSONEncoder().encode(ControlResponse(error: nil)), to: connection)
             return request
         }
-        let response = try UnixSocket.exchange(.pushNotification(payload), path: path)
+        let response = try await UnixSocket.exchange(.pushNotification(payload), path: path)
 
         #expect(response == ControlResponse(error: nil))
-        #expect(try await server.value == .pushNotification(payload))
+        #expect(try await served == .pushNotification(payload))
     }
 
     @Test func socketFileIsOwnerOnly() throws {
@@ -49,18 +49,45 @@ struct UnixSocketTests {
         #expect(throws: SocketError.self) { try UnixSocket.listen(on: "/nonexistent-dir/x.sock") }
     }
 
-    @Test func readAllRejectsOversizedMessages() throws {
+    @Test func readAllRejectsOversizedMessages() async throws {
         var descriptors: [Int32] = [0, 0]
         #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0)
         descriptors.forEach(UnixSocket.disableSIGPIPE)
-        defer { close(descriptors[0]) }
-        let writer = Task.detached { [descriptors] in
-            defer { close(descriptors[1]) }
-            try? UnixSocket.writeAll(Data(count: UnixSocket.maxMessageSize + 1), to: descriptors[1])
+        let (reader, writer) = (descriptors[0], descriptors[1])
+        async let written: Void = onBlockingQueue {
+            defer { close(writer) }
+            try? UnixSocket.writeAll(Data(count: UnixSocket.maxMessageSize + 1), to: writer)
         }
 
-        #expect(throws: SocketError("read", code: EMSGSIZE)) { try UnixSocket.readAll(from: descriptors[0]) }
-        writer.cancel()
+        await #expect(throws: SocketError("read", code: EMSGSIZE)) {
+            try await onBlockingQueue {
+                defer { close(reader) }
+                return try UnixSocket.readAll(from: reader)
+            }
+        }
+        await written
+    }
+
+    @Test func clientGivesUpOnServerThatNeverReplies() async throws {
+        let path = Self.temporarySocketPath()
+        let listener = try UnixSocket.listen(on: path)
+        defer { close(listener); unlink(path) }
+        async let accepted = onBlockingQueue { accept(listener, nil, nil) }
+
+        await #expect(throws: SocketError("read", code: EAGAIN)) {
+            try await UnixSocket.exchange(
+                .pushNotification(NotificationPayload(title: "t")),
+                path: path,
+                timeout: timeval(tv_sec: 0, tv_usec: 200_000)
+            )
+        }
+        close(await accepted)
+    }
+
+    @Test func blockingQueuePropagatesErrors() async {
+        await #expect(throws: SocketError("x", code: EIO)) {
+            try await onBlockingQueue { () throws -> Int in throw SocketError("x", code: EIO) }
+        }
     }
 
     @Test func writeAndReadReportClosedDescriptors() {

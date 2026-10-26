@@ -9,13 +9,15 @@ struct SocketNotificationSenderTests {
     /// Answers one request on `path` with `response`, returning the request it received.
     static func serveOnce(at path: String, response: ControlResponse) throws -> Task<ControlRequest, any Error> {
         let listener = try UnixSocket.listen(on: path)
-        return Task.detached {
-            defer { close(listener); unlink(path) }
-            let connection = accept(listener, nil, nil)
-            defer { close(connection) }
-            let request = try JSONDecoder().decode(ControlRequest.self, from: UnixSocket.readAll(from: connection))
-            try UnixSocket.writeAll(JSONEncoder().encode(response), to: connection)
-            return request
+        return Task {
+            try await onBlockingQueue {
+                defer { close(listener); unlink(path) }
+                let connection = accept(listener, nil, nil)
+                defer { close(connection) }
+                let request = try JSONDecoder().decode(ControlRequest.self, from: UnixSocket.readAll(from: connection))
+                try UnixSocket.writeAll(JSONEncoder().encode(response), to: connection)
+                return request
+            }
         }
     }
 

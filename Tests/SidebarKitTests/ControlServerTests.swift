@@ -17,7 +17,7 @@ struct ControlServerTests {
         defer { server.stop() }
         let payload = try NotificationPayload(title: "hi")
 
-        let response = try await Task.detached { try UnixSocket.exchange(.pushNotification(payload), path: path) }.value
+        let response = try await UnixSocket.exchange(.pushNotification(payload), path: path)
 
         #expect(response == ControlResponse(error: nil))
         #expect(await received.requests == [.pushNotification(payload)])
@@ -29,13 +29,13 @@ struct ControlServerTests {
         try server.start()
         defer { server.stop() }
 
-        let response = try await Task.detached {
+        let response = try await onBlockingQueue {
             let descriptor = try UnixSocket.connect(to: path)
             defer { close(descriptor) }
             try UnixSocket.writeAll(Data("not json".utf8), to: descriptor)
             shutdown(descriptor, SHUT_WR)
             return try JSONDecoder().decode(ControlResponse.self, from: UnixSocket.readAll(from: descriptor))
-        }.value
+        }
 
         #expect(response.error?.hasPrefix("invalid request") == true)
     }
