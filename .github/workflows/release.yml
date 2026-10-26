@@ -10,13 +10,18 @@ permissions:
 jobs:
   release:
     runs-on: macos-26
+    timeout-minutes: 45
     env:
       # CI has no Developer ID; releases are ad-hoc signed.
       AEROSPACE_SIDEBAR_SIGNING_IDENTITY: "-"
     steps:
       - uses: actions/checkout@v7
       - run: brew install just
+      - name: Build tests
+        timeout-minutes: 15
+        run: swift build --build-tests
       - name: Tests and coverage gate
+        timeout-minutes: 10
         run: just coverage
       - name: Build archives
         run: just release-archives "${GITHUB_REF_NAME#v}"

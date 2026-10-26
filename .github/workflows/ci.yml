@@ -8,8 +8,13 @@ on:
 jobs:
   test:
     runs-on: macos-26
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - run: brew install just
+      - name: Build tests
+        timeout-minutes: 15
+        run: swift build --build-tests
       - name: Tests and coverage gate
+        timeout-minutes: 10
         run: just coverage
