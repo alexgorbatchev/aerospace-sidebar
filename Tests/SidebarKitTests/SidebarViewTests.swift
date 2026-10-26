@@ -85,6 +85,25 @@ struct SidebarViewTests {
         #expect(throws: Never.self) { try view().inspect().find(text: "Shown by macOS for its buttons") }
     }
 
+    @Test func showsCountAndLayersForStackedNotifications() throws {
+        model.add(SidebarNotification(source: "ci", title: "single"))
+        for _ in 0..<2 {
+            model.add(SidebarNotification(source: "ci", title: "twice"))
+        }
+        for _ in 0..<5 {
+            model.add(SidebarNotification(source: "ci", title: "often"))
+        }
+
+        let sut = try view().inspect()
+        let cards = sut.findAll(NotificationCard.self)
+
+        #expect(try cards.map { try $0.actualView().notification.title } == ["often", "twice", "single"])
+        #expect(throws: Never.self) { try sut.find(text: "×5") }
+        #expect(throws: Never.self) { try sut.find(viewWithAccessibilityLabel: "Received 2 times") }
+        #expect(throws: (any Error).self) { try sut.find(text: "×1") }
+        #expect(try cards.map { try $0.find(ViewType.ForEach.self).count } == [NotificationCard.maxStackLayers, 1, 0])
+    }
+
     @Test func bodyOnlyNotificationOmitsTitle() throws {
         model.add(SidebarNotification(source: "s", title: "", body: "just a body"))
 

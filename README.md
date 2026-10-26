@@ -8,6 +8,7 @@
 - **Push from anywhere**: the `aerospace-sidebar` command and `aerospace-sidebar://` links add notifications.
 - **Click actions**: a notification can run a shell command or open a link when clicked.
 - **Severity**: `low`, `normal`, `high` and `critical` notifications sort and look different, with critical ones always on top.
+- **Repeats stacked**: a notification identical to one already listed joins it as a single card with a count, instead of filling the list with copies.
 - **History**: the list survives quitting and relaunching; notifications are kept for 24 hours by default.
 - **Guided setup**: Settings grants the Accessibility permission, adds the app to Login Items and adds the sidebar's settings to your AeroSpace config, one button each.
 
@@ -16,6 +17,7 @@
 - AeroSpace leaves an empty strip on the right edge of the main display, and the sidebar fills it.
 - When an app posts a macOS notification, its banner vanishes and the notification appears at the top of its severity group in the sidebar.
 - `aerospace-sidebar notification push` sends a notification from the terminal, starting the sidebar first when it is not running.
+- A notification with the same sender, text, severity and click action as a listed one is stacked onto it: the card moves up as the newest, shows `×2`, `×3`, … next to its time, and gets layered edges below it. Clicking or dismissing a stack removes all of its copies.
 - Clicking a notification runs its action, or switches to the app that posted it, and removes it. The × button removes it without acting.
 - Hovering a notification shows what a click will do, including the full command.
 
@@ -27,7 +29,7 @@
 - `aerospace-sidebar notification push` talks to the app over a socket in your private temporary directory (`$(getconf DARWIN_USER_TEMP_DIR)com.alexgorbatchev.aerospace-sidebar.sock`) that only your user account can open. This is the only way to attach a `--run` command.
 - `aerospace-sidebar://` links can be opened by any app, and by web pages after your browser asks for permission. They therefore never carry commands, and their `open` links must be `http` or `https`. A notification from a link is labeled with the app that opened it when macOS reports one, otherwise `URL`.
 - `--run` commands run with your login shell (`$SHELL -lc`) in the directory where you ran `aerospace-sidebar`. Their output is discarded.
-- The list is saved to `~/Library/Application Support/com.alexgorbatchev.aerospace-sidebar/notifications.json` on every change and holds at most 200 notifications by default.
+- The list is saved to `~/Library/Application Support/com.alexgorbatchev.aerospace-sidebar/notifications.json` on every change and holds at most 200 notifications by default; a stack counts as one.
 - Settings live in `${XDG_CONFIG_HOME:-~/.config}/aerospace-sidebar/config.toml`. Edits to that file apply immediately; saving from the Settings window rewrites it and drops comments.
 - Settings › Setup › Update AeroSpace Config edits your AeroSpace config in place, keeping its comments, saves the original next to it as `aerospace.toml.bak-<timestamp>`, checks the result with `aerospace reload-config --dry-run`, and puts the original back if AeroSpace rejects it. It leaves files marked as generated alone.
 - Success messages go to stdout and errors to stderr. Exit codes: `0` success, `1` notification rejected or undeliverable, `64` invalid arguments, `74` output could not be written. With `AGENT=1`, output is compact: `OK: pushed`, or `ERR: <code>: <detail>`.

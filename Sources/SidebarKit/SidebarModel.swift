@@ -21,7 +21,10 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
     public let action: ClickAction?
     /// macOS kept presenting the original notification because it needs interaction.
     public let shownByMacOS: Bool
+    /// When the most recent copy arrived.
     public let receivedAt: Date
+    /// How many identical notifications this entry stands for (see `SidebarModel.add(_:)`).
+    public let occurrences: Int
 
     public init(
         id: UUID = UUID(),
@@ -32,7 +35,8 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         severity: NotificationSeverity = .normal,
         action: ClickAction? = nil,
         shownByMacOS: Bool = false,
-        receivedAt: Date = Date()
+        receivedAt: Date = Date(),
+        occurrences: Int = 1
     ) {
         self.id = id
         self.source = source
@@ -43,6 +47,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         self.action = action
         self.shownByMacOS = shownByMacOS
         self.receivedAt = receivedAt
+        self.occurrences = occurrences
     }
 
     public init(payload: NotificationPayload, source: String, receivedAt: Date = Date()) {
@@ -64,6 +69,28 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
 }
 
 extension SidebarNotification {
+    /// Same sender, text, severity, click action and presentation; only identity, time and count may differ.
+    func hasSameContent(as other: SidebarNotification) -> Bool {
+        source == other.source && title == other.title && subtitle == other.subtitle && body == other.body
+            && severity == other.severity && action == other.action && shownByMacOS == other.shownByMacOS
+    }
+
+    /// This entry with `newer` folded in: it keeps its identity, takes `newer`'s time, and adds its count.
+    func stacking(_ newer: SidebarNotification) -> SidebarNotification {
+        SidebarNotification(
+            id: id,
+            source: source,
+            title: title,
+            subtitle: subtitle,
+            body: body,
+            severity: severity,
+            action: action,
+            shownByMacOS: shownByMacOS,
+            receivedAt: max(receivedAt, newer.receivedAt),
+            occurrences: occurrences + newer.occurrences
+        )
+    }
+
     /// What a click does, shown before it happens; includes the full command for `run` actions.
     public var clickDescription: String {
         switch action {
@@ -104,7 +131,8 @@ public protocol NotificationStore {
 /// history limits are dropped, so a relaunch restores the list as it was.
 @MainActor
 @Observable
-public final class SidebarModel {    public static let accessibilitySettingsURL = URL(
+public final class SidebarModel {
+    public static let accessibilitySettingsURL = URL(
         string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
     )!
 
@@ -145,9 +173,14 @@ public final class SidebarModel {    public static let accessibilitySettingsURL 
         }
     }
 
-    /// Inserts the notification by severity, then recency. Beyond `history.maxCount`, the least
-    /// severe and oldest notifications are dropped.
+    /// Inserts the notification by severity, then recency. A notification with the same content as a
+    /// listed one is stacked onto it instead: the entry counts both and moves up as the newest. Beyond
+    /// `history.maxCount`, the least severe and oldest entries are dropped.
     public func add(_ notification: SidebarNotification) {
+        var notification = notification
+        if let existing = notifications.firstIndex(where: { $0.hasSameContent(as: notification) }) {
+            notification = notifications.remove(at: existing).stacking(notification)
+        }
         let index = notifications.firstIndex {
             ($0.severity, $0.receivedAt) <= (notification.severity, notification.receivedAt)
         } ?? notifications.endIndex

@@ -72,7 +72,29 @@ struct NotificationCard: View {
     let activate: () -> Void
     let dismiss: () -> Void
 
+    static let cornerRadius: CGFloat = 10
+    /// How far each layer under a stacked card shows, and how much narrower it is per side.
+    static let stackLayerHeight: CGFloat = 5
+    static let stackLayerInset: CGFloat = 8
+    static let maxStackLayers = 2
+
     var body: some View {
+        VStack(spacing: 0) {
+            card
+            ForEach(1..<stackLayers + 1, id: \.self) { layer in
+                UnevenRoundedRectangle(bottomLeadingRadius: Self.stackLayerHeight, bottomTrailingRadius: Self.stackLayerHeight)
+                    .fill(background)
+                    .opacity(0.8 - 0.25 * Double(layer))
+                    .frame(height: Self.stackLayerHeight)
+                    .padding(.horizontal, Self.stackLayerInset * CGFloat(layer))
+            }
+        }
+    }
+
+    /// Layers drawn under the card for notifications received more than once.
+    private var stackLayers: Int { min(notification.occurrences - 1, Self.maxStackLayers) }
+
+    private var card: some View {
         ZStack(alignment: .topTrailing) {
             Button(action: activate) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -87,6 +109,13 @@ struct NotificationCard: View {
                         }
                         Text(notification.source.isEmpty ? "Notification" : notification.source)
                         Text(notification.receivedAt, style: .time)
+                        if notification.occurrences > 1 {
+                            Text("×\(notification.occurrences)")
+                                .monospacedDigit()
+                                .padding(.horizontal, 5)
+                                .background(.quaternary, in: Capsule())
+                                .accessibilityLabel("Received \(notification.occurrences) times")
+                        }
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -108,15 +137,15 @@ struct NotificationCard: View {
                 .padding(10)
                 .padding(.trailing, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(background, in: RoundedRectangle(cornerRadius: 10))
+                .background(background, in: RoundedRectangle(cornerRadius: Self.cornerRadius))
                 .overlay {
                     if let accent {
-                        RoundedRectangle(cornerRadius: 10)
+                        RoundedRectangle(cornerRadius: Self.cornerRadius)
                             .strokeBorder(accent, lineWidth: notification.severity == .critical ? 2 : 1)
                     }
                 }
                 .opacity(notification.severity == .low ? 0.6 : 1)
-                .contentShape(RoundedRectangle(cornerRadius: 10))
+                .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
             }
             .buttonStyle(.plain)
             .help(notification.clickDescription)

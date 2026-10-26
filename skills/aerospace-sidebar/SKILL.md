@@ -1,12 +1,12 @@
 ---
 name: aerospace-sidebar
 description: Push notifications into the aerospace-sidebar macOS app with the aerospace-sidebar CLI or aerospace-sidebar:// URLs. Use when a task should alert the user on their Mac, report a finished build or agent run, or offer a click-to-run command or link.
-last_modified: 2026-10-26 13:50
+last_modified: 2026-10-26 16:25
 ---
 
 # aerospace-sidebar
 
-`aerospace-sidebar` shows notifications in the aerospace-sidebar app, a permanent panel on the right edge of the main display. Notifications stay listed until the user clicks or dismisses them. More severe notifications are listed above less severe ones, newest first within a severity.
+`aerospace-sidebar` shows notifications in the aerospace-sidebar app, a permanent panel on the right edge of the main display. Notifications stay listed until the user clicks or dismisses them. More severe notifications are listed above less severe ones, newest first within a severity. Pushing a notification identical to a listed one (same title, subtitle, body, severity, click action and sender) stacks it onto that entry with a count instead of adding a copy.
 
 Set `AGENT=1` for compact output: success prints `OK: …`, failures print `ERR: <code>: <detail>` to stderr, and help screens are untruncated.
 

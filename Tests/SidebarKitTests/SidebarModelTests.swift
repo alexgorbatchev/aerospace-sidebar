@@ -30,6 +30,51 @@ struct SidebarModelTests {
         #expect(!model.notifications.contains { $0.title == "low-0" })
     }
 
+    @Test func stacksIdenticalNotificationsAsNewest() {
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        let store = InMemoryStore()
+        let model = SidebarModel(performer: RecordingPerformer(), store: store)
+        let first = SidebarNotification(source: "ci", title: "Build failed", body: "main", receivedAt: start)
+        model.add(first)
+        model.add(SidebarNotification(source: "ci", title: "Deploy done", receivedAt: start.addingTimeInterval(1)))
+        model.add(SidebarNotification(source: "ci", title: "Build failed", body: "main", receivedAt: start.addingTimeInterval(2)))
+        model.add(SidebarNotification(source: "ci", title: "Build failed", body: "main", receivedAt: start.addingTimeInterval(3)))
+
+        #expect(model.notifications.map(\.title) == ["Build failed", "Deploy done"])
+        #expect(model.notifications.map(\.occurrences) == [3, 1])
+        #expect(model.notifications.first?.id == first.id)
+        #expect(model.notifications.first?.receivedAt == start.addingTimeInterval(3))
+        #expect(store.stored == model.notifications)
+    }
+
+    @Test(arguments: [
+        SidebarNotification(source: "other", title: "t", body: "b"),
+        SidebarNotification(source: "s", title: "other", body: "b"),
+        SidebarNotification(source: "s", title: "t", subtitle: "other", body: "b"),
+        SidebarNotification(source: "s", title: "t", body: "other"),
+        SidebarNotification(source: "s", title: "t", body: "b", severity: .high),
+        SidebarNotification(source: "s", title: "t", body: "b", action: .activateApp(name: "s")),
+        SidebarNotification(source: "s", title: "t", body: "b", shownByMacOS: true),
+    ])
+    func keepsNotificationsThatDifferApart(other: SidebarNotification) {
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+
+        model.add(SidebarNotification(source: "s", title: "t", body: "b"))
+        model.add(other)
+
+        #expect(model.notifications.map(\.occurrences) == [1, 1])
+    }
+
+    @Test func dismissingStackRemovesEveryOccurrence() {
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        model.add(SidebarNotification(source: "s", title: "again"))
+        model.add(SidebarNotification(source: "s", title: "again"))
+
+        model.dismiss(model.notifications[0].id)
+
+        #expect(model.notifications.isEmpty)
+    }
+
     @Test func dismissAndClearRemoveNotifications() {
         let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
         let first = SidebarNotification(source: "a", title: "first")

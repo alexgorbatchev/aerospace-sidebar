@@ -61,7 +61,7 @@ struct NotificationHistoryTests {
             SidebarNotification(source: "cli", title: "t", subtitle: "s", body: "b", severity: .critical,
                                 action: .run(command: "ls", workingDirectory: "/"), receivedAt: start),
             SidebarNotification(source: "Mail", title: "m", action: .activateApp(name: "Mail"), shownByMacOS: true, receivedAt: start),
-            SidebarNotification(source: "URL", title: "u", action: .open(URL(string: "https://a.example")!), receivedAt: start),
+            SidebarNotification(source: "URL", title: "u", action: .open(URL(string: "https://a.example")!), receivedAt: start, occurrences: 4),
         ]
 
         store.save(notifications)
