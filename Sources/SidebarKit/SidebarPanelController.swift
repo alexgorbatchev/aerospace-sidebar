@@ -16,17 +16,19 @@ public final class SidebarPanelController: NSObject {
     /// - Parameters:
     ///   - model: State the sidebar renders.
     ///   - layout: Resolved on every pin, so screen changes also pick up a changed AeroSpace gap.
+    ///   - openSettings: Shows the Settings window.
     ///   - terminate: Called with `nil` when the user quits from the sidebar.
     public init(
         model: SidebarModel,
         layout: @escaping @MainActor () -> SidebarLayout = { SidebarLayout.fromAeroSpaceConfig() },
         targetVisibleFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenVisibleFrame,
         notificationCenter: NotificationCenter = .default,
+        openSettings: @escaping @MainActor () -> Void = {},
         terminate: @escaping @MainActor (Any?) -> Void = NSApplication.shared.terminate
     ) {
         self.layout = layout
         self.targetVisibleFrame = targetVisibleFrame
-        self.panel = Self.makePanel(model: model, quit: { terminate(nil) })
+        self.panel = Self.makePanel(model: model, openSettings: openSettings, quit: { terminate(nil) })
         super.init()
         notificationCenter.addObserver(
             self,
@@ -50,7 +52,11 @@ public final class SidebarPanelController: NSObject {
         pin()
     }
 
-    private static func makePanel(model: SidebarModel, quit: @escaping @MainActor () -> Void) -> NSPanel {
+    private static func makePanel(
+        model: SidebarModel,
+        openSettings: @escaping @MainActor () -> Void,
+        quit: @escaping @MainActor () -> Void
+    ) -> NSPanel {
         // Borderless with no close button: combined with LSUIElement, AeroSpace classifies
         // the window as a popup and neither tiles it nor hides it on workspace switches.
         let panel = SidebarPanel(
@@ -73,7 +79,7 @@ public final class SidebarPanelController: NSObject {
         // The app never becomes active, so follow-window-state would render it permanently inactive.
         background.state = .active
 
-        let content = NSHostingView(rootView: SidebarView(model: model, quit: quit))
+        let content = NSHostingView(rootView: SidebarView(model: model, openSettings: openSettings, quit: quit))
         content.translatesAutoresizingMaskIntoConstraints = false
         background.addSubview(content)
         NSLayoutConstraint.activate([

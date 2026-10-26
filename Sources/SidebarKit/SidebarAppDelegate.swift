@@ -2,44 +2,69 @@ import AppKit
 import os
 import SidebarProtocol
 
-/// Wires the sidebar panel, notification interception, the URL scheme and the control socket.
+/// Wires the sidebar panel, settings, notification interception, the URL scheme and the control socket.
 @MainActor
 public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     private static let logger = Logger(subsystem: "com.alexgorbatchev.aerospace-sidebar", category: "app")
 
+    public let settings: SettingsStore
     public let model: SidebarModel
     public private(set) var controller: SidebarPanelController?
-    private var monitor: NotificationCenterMonitor?
+    public private(set) var settingsWindow: SettingsWindowController?
+    public private(set) var monitor: NotificationCenterMonitor?
     private var server: ControlServer?
     private var pruneTimer: Timer?
-    private let makeController: @MainActor (SidebarModel) -> SidebarPanelController
-    private let makeMonitor: @MainActor (SidebarModel) -> NotificationCenterMonitor
+    private let makeController: @MainActor (SidebarModel, _ openSettings: @escaping @MainActor () -> Void) -> SidebarPanelController
+    private let makeMonitor: @MainActor (SidebarModel, SettingsStore) -> NotificationCenterMonitor
     private let makeServer: @MainActor (SidebarModel) -> ControlServer
+    private let makeSettingsWindow: @MainActor (SettingsStore, _ onAeroSpaceUpdated: @escaping @MainActor () -> Void) -> SettingsWindowController
     private let urlSender: @MainActor () -> String?
 
     /// - Parameter urlSender: Name of the process that opened the URL being handled.
     public init(
-        model: SidebarModel = SidebarModel(store: FileNotificationStore()),
-        makeController: @escaping @MainActor (SidebarModel) -> SidebarPanelController = { SidebarPanelController(model: $0) },
-        makeMonitor: @escaping @MainActor (SidebarModel) -> NotificationCenterMonitor = SidebarAppDelegate.makeMonitor,
+        settings: SettingsStore = SettingsStore(file: SettingsFile(
+            home: FileManager.default.homeDirectoryForCurrentUser,
+            environment: ProcessInfo.processInfo.environment
+        )),
+        makeModel: @MainActor (SidebarSettings) -> SidebarModel = { SidebarModel(store: FileNotificationStore(), history: $0.history) },
+        makeController: @escaping @MainActor (SidebarModel, _ openSettings: @escaping @MainActor () -> Void) -> SidebarPanelController = {
+            SidebarPanelController(model: $0, openSettings: $1)
+        },
+        makeMonitor: @escaping @MainActor (SidebarModel, SettingsStore) -> NotificationCenterMonitor = SidebarAppDelegate.makeMonitor,
         makeServer: @escaping @MainActor (SidebarModel) -> ControlServer = { SidebarAppDelegate.makeServer(model: $0) },
+        makeSettingsWindow: @escaping @MainActor (SettingsStore, _ onAeroSpaceUpdated: @escaping @MainActor () -> Void) -> SettingsWindowController = SidebarAppDelegate.makeSettingsWindow,
         urlSender: @escaping @MainActor () -> String? = SidebarAppDelegate.currentAppleEventSender
     ) {
-        self.model = model
+        self.settings = settings
+        self.model = makeModel(settings.settings)
         self.makeController = makeController
         self.makeMonitor = makeMonitor
         self.makeServer = makeServer
+        self.makeSettingsWindow = makeSettingsWindow
         self.urlSender = urlSender
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
-        let controller = makeController(model)
+        let controller = makeController(model) { [weak self] in self?.showSettings() }
         controller.pin()
         self.controller = controller
 
-        let monitor = makeMonitor(model)
-        monitor.start()
+        let monitor = makeMonitor(model, settings)
         self.monitor = monitor
+        settings.observe { [model] settings in
+            model.apply(history: settings.history)
+            if settings.notifications.replaceSystem {
+                monitor.start()
+            } else {
+                monitor.stop()
+                model.interception = .disabled
+            }
+        }
+        do {
+            try settings.startWatching()
+        } catch {
+            Self.logger.error("Cannot watch settings: \(String(describing: error), privacy: .public)")
+        }
 
         pruneTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [model] _ in
             MainActor.assumeIsolated { model.pruneExpired() }
@@ -56,8 +81,16 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
 
     public func applicationWillTerminate(_ notification: Notification) {
         pruneTimer?.invalidate()
+        settings.stopWatching()
         monitor?.stop()
         server?.stop()
+    }
+
+    /// Opens the Settings window, creating it on first use.
+    public func showSettings() {
+        let window = settingsWindow ?? makeSettingsWindow(settings) { [weak self] in self?.controller?.pin() }
+        settingsWindow = window
+        window.show()
     }
 
     /// Handles `aerospace-sidebar://` URLs; see `SidebarRequest` for the routes.
@@ -75,9 +108,12 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    public static func makeMonitor(model: SidebarModel) -> NotificationCenterMonitor {
+    public static func makeMonitor(model: SidebarModel, settings: SettingsStore) -> NotificationCenterMonitor {
         NotificationCenterMonitor(
-            interceptor: SystemNotificationInterceptor { model.add($0) },
+            interceptor: SystemNotificationInterceptor(
+                leavesToMacOS: { settings.settings.notifications.leavesToMacOS($0) },
+                onNotification: { model.add($0) }
+            ),
             onStatus: { model.interception = $0 }
         )
     }
@@ -90,6 +126,19 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
                 return ControlResponse(error: nil)
             }
         }
+    }
+
+    public static func makeSettingsWindow(
+        settings: SettingsStore,
+        onAeroSpaceUpdated: @escaping @MainActor () -> Void
+    ) -> SettingsWindowController {
+        SettingsWindowController(store: settings, onboarding: OnboardingModel(
+            accessibility: SystemAccessibility(),
+            loginItems: MainAppLoginItem(),
+            setup: AeroSpaceSetup(),
+            performer: WorkspaceActionPerformer(),
+            onAeroSpaceUpdated: onAeroSpaceUpdated
+        ))
     }
 
     /// The app that sent the Apple Event currently being handled, such as the browser that opened a URL.

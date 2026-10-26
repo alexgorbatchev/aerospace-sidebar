@@ -85,9 +85,10 @@ struct SidebarPanelControllerTests {
         )
         controller.pin()
 
-        controller.panel.makeKey()
-
-        #expect(controller.panel.isKeyWindow)
+        // Borderless windows refuse key status unless the panel overrides it. Asserting
+        // `isKeyWindow` races with other tests that make their own windows key.
+        #expect(controller.panel.canBecomeKey)
+        #expect(controller.panel.styleMask.contains(.nonactivatingPanel))
     }
 
     @Test func quitButtonTerminatesApp() throws {

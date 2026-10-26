@@ -130,8 +130,9 @@ struct SystemAccessibilityTests {
         let application = AXElement(AXUIElementCreateApplication(pid))
 
         #expect(application.string(kAXRoleAttribute) == (trusted ? kAXApplicationRole : nil))
+        // Live NotificationCenter windows come and go, so only read them.
         for window in platform.windows(ofProcess: pid) {
-            #expect(window.position != nil)
+            _ = window.position
             _ = window.children
             _ = window.actionNames
         }

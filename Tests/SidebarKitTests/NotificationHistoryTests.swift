@@ -10,7 +10,7 @@ struct NotificationHistoryTests {
     @Test func restoresUnexpiredNotificationsInDisplayOrder() {
         let store = InMemoryStore([
             SidebarNotification(source: "s", title: "old-normal", receivedAt: start.addingTimeInterval(-3600)),
-            SidebarNotification(source: "s", title: "expired", severity: .critical, receivedAt: start.addingTimeInterval(-SidebarModel.retention - 1)),
+            SidebarNotification(source: "s", title: "expired", severity: .critical, receivedAt: start.addingTimeInterval(-SidebarSettings.History().retention - 1)),
             SidebarNotification(source: "s", title: "new-normal", receivedAt: start),
             SidebarNotification(source: "s", title: "high", severity: .high, receivedAt: start.addingTimeInterval(-7200)),
         ])
@@ -44,7 +44,7 @@ struct NotificationHistoryTests {
         model.add(SidebarNotification(source: "s", title: "early", receivedAt: start))
         model.add(SidebarNotification(source: "s", title: "late", receivedAt: start.addingTimeInterval(3600)))
 
-        now = start.addingTimeInterval(SidebarModel.retention + 1)
+        now = start.addingTimeInterval(SidebarSettings.History().retention + 1)
         model.pruneExpired()
         let savesAfterPrune = store.saves
         model.pruneExpired()

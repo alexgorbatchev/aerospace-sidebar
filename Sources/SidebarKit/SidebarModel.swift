@@ -78,6 +78,8 @@ extension SidebarNotification {
 /// Whether native macOS notification banners are being replaced.
 public enum InterceptionStatus: Equatable, Sendable {
     case starting
+    /// Turned off in settings.
+    case disabled
     case active
     /// The app lacks the Accessibility permission needed to read and hide banners.
     case needsAccessibility
@@ -98,14 +100,11 @@ public protocol NotificationStore {
     func save(_ notifications: [SidebarNotification])
 }
 
-/// State rendered by the sidebar. Every change is saved to the store, and notifications older than
-/// `retention` are dropped, so a relaunch restores the list as it was.
+/// State rendered by the sidebar. Every change is saved to the store, and notifications beyond the
+/// history limits are dropped, so a relaunch restores the list as it was.
 @MainActor
 @Observable
-public final class SidebarModel {
-    public static let maxNotifications = 200
-    public static let retention: TimeInterval = 24 * 60 * 60
-    public static let accessibilitySettingsURL = URL(
+public final class SidebarModel {    public static let accessibilitySettingsURL = URL(
         string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
     )!
 
@@ -116,31 +115,45 @@ public final class SidebarModel {
     @ObservationIgnored private let performer: any NotificationActionPerforming
     @ObservationIgnored private let store: any NotificationStore
     @ObservationIgnored private let now: () -> Date
+    /// How long and how many notifications are kept.
+    @ObservationIgnored public private(set) var history: SidebarSettings.History
 
     public init(
         performer: any NotificationActionPerforming = WorkspaceActionPerformer(),
         store: any NotificationStore,
+        history: SidebarSettings.History = SidebarSettings.History(),
         now: @escaping () -> Date = Date.init
     ) {
         self.performer = performer
         self.store = store
+        self.history = history
         self.now = now
-        let cutoff = now().addingTimeInterval(-Self.retention)
+        let cutoff = now().addingTimeInterval(-history.retention)
         notifications = Array(store.load()
             .filter { $0.receivedAt >= cutoff }
             .sorted { ($0.severity, $0.receivedAt) > ($1.severity, $1.receivedAt) }
-            .prefix(Self.maxNotifications))
+            .prefix(history.maxCount))
     }
 
-    /// Inserts the notification by severity, then recency. Beyond `maxNotifications`, the least
+    /// Applies new history limits, dropping notifications they no longer allow.
+    public func apply(history: SidebarSettings.History) {
+        self.history = history
+        pruneExpired()
+        if notifications.count > history.maxCount {
+            notifications.removeLast(notifications.count - history.maxCount)
+            store.save(notifications)
+        }
+    }
+
+    /// Inserts the notification by severity, then recency. Beyond `history.maxCount`, the least
     /// severe and oldest notifications are dropped.
     public func add(_ notification: SidebarNotification) {
         let index = notifications.firstIndex {
             ($0.severity, $0.receivedAt) <= (notification.severity, notification.receivedAt)
         } ?? notifications.endIndex
         notifications.insert(notification, at: index)
-        if notifications.count > Self.maxNotifications {
-            notifications.removeLast(notifications.count - Self.maxNotifications)
+        if notifications.count > history.maxCount {
+            notifications.removeLast(notifications.count - history.maxCount)
         }
         store.save(notifications)
     }
@@ -155,9 +168,9 @@ public final class SidebarModel {
         store.save(notifications)
     }
 
-    /// Drops notifications older than `retention`.
+    /// Drops notifications older than `history.retention`.
     public func pruneExpired() {
-        let cutoff = now().addingTimeInterval(-Self.retention)
+        let cutoff = now().addingTimeInterval(-history.retention)
         guard notifications.contains(where: { $0.receivedAt < cutoff }) else { return }
         notifications.removeAll { $0.receivedAt < cutoff }
         store.save(notifications)
@@ -172,7 +185,4 @@ public final class SidebarModel {
         dismiss(id)
     }
 
-    public func openAccessibilitySettings() {
-        performer.perform(.open(Self.accessibilitySettingsURL))
-    }
 }

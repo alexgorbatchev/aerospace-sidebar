@@ -21,11 +21,11 @@ struct SidebarModelTests {
     @Test func dropsLeastSevereOldestBeyondCap() {
         let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
         model.add(SidebarNotification(source: "test", title: "critical", severity: .critical))
-        for index in 0..<SidebarModel.maxNotifications {
+        for index in 0..<SidebarSettings.History().maxCount {
             model.add(SidebarNotification(source: "test", title: "low-\(index)", severity: .low))
         }
 
-        #expect(model.notifications.count == SidebarModel.maxNotifications)
+        #expect(model.notifications.count == SidebarSettings.History().maxCount)
         #expect(model.notifications.first?.title == "critical")
         #expect(!model.notifications.contains { $0.title == "low-0" })
     }
@@ -60,12 +60,20 @@ struct SidebarModelTests {
         #expect(model.notifications.isEmpty)
     }
 
-    @Test func opensAccessibilitySettings() {
-        let performer = RecordingPerformer()
+    @Test func applyingHistoryLimitsDropsWhatTheyNoLongerAllow() {
+        var now = Date(timeIntervalSince1970: 1_000_000)
+        let store = InMemoryStore()
+        let model = SidebarModel(performer: RecordingPerformer(), store: store, now: { now })
+        for index in 0..<20 {
+            model.add(SidebarNotification(source: "s", title: "n\(index)", receivedAt: now.addingTimeInterval(TimeInterval(-index * 3600))))
+        }
+        now = now.addingTimeInterval(60)
 
-        SidebarModel(performer: performer, store: InMemoryStore()).openAccessibilitySettings()
+        model.apply(history: SidebarSettings.History(retentionHours: 12, maxCount: 10))
 
-        #expect(performer.actions == [.open(SidebarModel.accessibilitySettingsURL)])
+        #expect(model.notifications.map(\.title) == (0..<10).map { "n\($0)" })
+        #expect(store.stored.count == 10)
+        #expect(model.history.retentionHours == 12)
     }
 
     @Test func mapsPayloadActions() throws {

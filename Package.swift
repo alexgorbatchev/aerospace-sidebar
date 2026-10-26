@@ -11,6 +11,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.8.2"),
         .package(url: "https://github.com/dduan/TOMLDecoder", from: "0.4.5"),
+        .package(url: "https://github.com/mattt/swift-toml", from: "2.0.0"),
         .package(url: "https://github.com/nalexn/ViewInspector", from: "0.10.5"),
     ],
     targets: [
@@ -20,6 +21,7 @@ let package = Package(
             dependencies: [
                 "SidebarProtocol",
                 .product(name: "TOMLDecoder", package: "TOMLDecoder"),
+                .product(name: "TOML", package: "swift-toml"),
             ]
         ),
         .executableTarget(

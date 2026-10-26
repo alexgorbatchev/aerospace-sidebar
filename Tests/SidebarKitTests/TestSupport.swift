@@ -107,3 +107,47 @@ final class InMemoryStore: NotificationStore {
         saves += 1
     }
 }
+
+@MainActor
+final class FakeLoginItems: LoginItemService {
+    var status: LoginItemStatus
+    var statusAfterRegister: LoginItemStatus = .enabled
+    var error: (any Error)?
+    var openedSettings = 0
+
+    init(status: LoginItemStatus = .disabled) {
+        self.status = status
+    }
+
+    func register() throws {
+        if let error { throw error }
+        status = statusAfterRegister
+    }
+
+    func unregister() throws {
+        if let error { throw error }
+        status = .disabled
+    }
+
+    func openSystemSettings() {
+        openedSettings += 1
+    }
+}
+
+final class FakeAeroSpaceCLI: AeroSpaceCommandRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [[String]] = []
+    let results: [String: CommandResult]
+
+    /// Results keyed by the first argument after `reload-config`, e.g. `--dry-run`; default success.
+    init(results: [String: CommandResult] = [:]) {
+        self.results = results
+    }
+
+    var calls: [[String]] { lock.withLock { recorded } }
+
+    func run(_ arguments: [String]) async -> CommandResult {
+        lock.withLock { recorded.append(arguments) }
+        return results[arguments.dropFirst().first ?? ""] ?? CommandResult(status: 0, output: "")
+    }
+}

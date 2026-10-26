@@ -18,28 +18,38 @@ public final class SystemNotificationInterceptor {
     static let duplicateWindow: TimeInterval = 10
 
     private let onNotification: @MainActor (SidebarNotification) -> Void
+    private let leavesToMacOS: @MainActor (String) -> Bool
     private let now: () -> Date
     private var seenIdentifiers: [String] = []
     private var recentContent: [(content: BannerContent, at: Date)] = []
 
-    public init(now: @escaping () -> Date = Date.init, onNotification: @escaping @MainActor (SidebarNotification) -> Void) {
+    /// - Parameter leavesToMacOS: Whether an app's notifications stay native, by app name.
+    public init(
+        now: @escaping () -> Date = Date.init,
+        leavesToMacOS: @escaping @MainActor (String) -> Bool = { _ in false },
+        onNotification: @escaping @MainActor (SidebarNotification) -> Void
+    ) {
         self.now = now
+        self.leavesToMacOS = leavesToMacOS
         self.onNotification = onNotification
     }
 
     /// Hides and closes the plain banners in a NotificationCenter window, reporting new ones. A window
-    /// holding an interactive notification stays on-screen, and is moved back if it was hidden.
+    /// holding an interactive notification, or one from an app left to macOS, stays on-screen and is
+    /// moved back if it was hidden.
     public func process(window: any AccessibilityElement) {
-        let banners = NotificationBanners.find(in: window).map { ($0, NotificationBanners.needsInteraction($0)) }
+        let banners = NotificationBanners.find(in: window).map { banner in
+            let content = NotificationBanners.content(of: banner)
+            return (banner, content, NotificationBanners.needsInteraction(banner) || leavesToMacOS(content.appName))
+        }
         guard !banners.isEmpty else { return }
-        if banners.contains(where: \.1) {
+        if banners.contains(where: \.2) {
             restore([window])
         } else {
             window.setPosition(Self.offScreen)
         }
-        for (banner, shownByMacOS) in banners {
+        for (banner, content, shownByMacOS) in banners {
             let identifier = banner.string(kAXIdentifierAttribute)
-            let content = NotificationBanners.content(of: banner)
             if !shownByMacOS {
                 NotificationBanners.dismiss(banner)
             }

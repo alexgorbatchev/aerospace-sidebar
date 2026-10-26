@@ -26,6 +26,7 @@ public final class NotificationCenterMonitor {
     private var attachedPID: pid_t?
     private var permissionTimer: Timer?
     private var launchObserver: NSObjectProtocol?
+    public private(set) var isRunning = false
 
     public init(
         platform: any AccessibilityPlatform = SystemAccessibility(),
@@ -41,6 +42,8 @@ public final class NotificationCenterMonitor {
 
     /// Prompts for the Accessibility permission when missing, then attaches once it is granted.
     public func start() {
+        guard !isRunning else { return }
+        isRunning = true
         launchObserver = workspaceCenter.addObserver(
             forName: NSWorkspace.didLaunchApplicationNotification,
             object: nil,
@@ -70,6 +73,7 @@ public final class NotificationCenterMonitor {
 
     /// Stops observing and moves any hidden NotificationCenter window back on-screen.
     public func stop() {
+        isRunning = false
         permissionTimer?.invalidate()
         permissionTimer = nil
         if let launchObserver {

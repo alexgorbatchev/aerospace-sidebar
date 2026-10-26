@@ -36,6 +36,11 @@ public struct AeroSpaceConfig: Equatable, Sendable {
     /// `~/.aerospace.toml` or `${XDG_CONFIG_HOME:-~/.config}/aerospace/aerospace.toml`,
     /// and an error when both exist.
     public static func load(home: URL, environment: [String: String]) throws -> AeroSpaceConfig {
+        try AeroSpaceConfig(toml: String(contentsOf: locate(home: home, environment: environment), encoding: .utf8))
+    }
+
+    /// The config file AeroSpace reads.
+    public static func locate(home: URL, environment: [String: String]) throws(Error) -> URL {
         let configHome = environment["XDG_CONFIG_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? home.appendingPathComponent(".config", isDirectory: true)
         let candidates = [
@@ -44,9 +49,21 @@ public struct AeroSpaceConfig: Equatable, Sendable {
         ]
         let existing = candidates.filter { FileManager.default.fileExists(atPath: $0.path) }
         switch existing.count {
-        case 0: throw Error.notFound(searched: candidates)
-        case 1: return try AeroSpaceConfig(toml: String(contentsOf: existing[0], encoding: .utf8))
-        default: throw Error.ambiguous(existing)
+        case 0: throw .notFound(searched: candidates)
+        case 1: return existing[0]
+        default: throw .ambiguous(existing)
+        }
+    }
+
+    /// The `gaps.outer.right` fallback: the constant, or the last entry of a per-monitor array; 0 when unset.
+    static func rightGapFallback(toml: String) throws -> (fallback: Int, hasMainEntry: Bool) {
+        let config = try TOMLDecoder().decode(ConfigFile.self, from: toml)
+        switch config.gaps?.outer?.right {
+        case nil: return (0, false)
+        case .constant(let value): return (value, false)
+        case .perMonitor(let entries):
+            guard case .value(let fallback)? = entries.last else { throw Error.noMainMonitorGap }
+            return (fallback, entries.contains { $0.mainMonitorValue != nil })
         }
     }
 }

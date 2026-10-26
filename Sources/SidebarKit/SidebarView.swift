@@ -4,6 +4,7 @@ import SwiftUI
 /// Root content of the sidebar panel.
 struct SidebarView: View {
     let model: SidebarModel
+    let openSettings: () -> Void
     let quit: () -> Void
 
     var body: some View {
@@ -23,7 +24,7 @@ struct SidebarView: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     if model.interception == .needsAccessibility {
-                        Button("Open Accessibility Settings", action: model.openAccessibilitySettings)
+                        Button("Set Up…", action: openSettings)
                     }
                 }
             }
@@ -44,8 +45,13 @@ struct SidebarView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            Button("Quit Sidebar", action: quit)
-                .keyboardShortcut("q", modifiers: .command)
+            HStack {
+                Button("Settings…", action: openSettings)
+                    .keyboardShortcut(",", modifiers: .command)
+                Spacer()
+                Button("Quit Sidebar", action: quit)
+                    .keyboardShortcut("q", modifiers: .command)
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -54,6 +60,7 @@ struct SidebarView: View {
     private var statusMessage: String? {
         switch model.interception {
         case .starting, .active: nil
+        case .disabled: "macOS notifications are left to macOS (see Settings)."
         case .needsAccessibility: "Grant Accessibility access to show macOS notifications here."
         case .notificationCenterUnavailable: "macOS notifications cannot be read right now."
         }

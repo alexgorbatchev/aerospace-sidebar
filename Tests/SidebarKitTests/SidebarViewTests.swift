@@ -14,8 +14,8 @@ struct SidebarViewTests {
         model = SidebarModel(performer: performer, store: InMemoryStore())
     }
 
-    func view(quit: @escaping () -> Void = {}) -> SidebarView {
-        SidebarView(model: model, quit: quit)
+    func view(openSettings: @escaping () -> Void = {}, quit: @escaping () -> Void = {}) -> SidebarView {
+        SidebarView(model: model, openSettings: openSettings, quit: quit)
     }
 
     @Test func showsEmptyStateWithoutClearAll() throws {
@@ -91,14 +91,29 @@ struct SidebarViewTests {
         #expect(throws: Never.self) { try view().inspect().find(text: "just a body") }
     }
 
-    @Test func promptsForAccessibilityWhenMissing() throws {
+    @Test func promptsForSetupWhenAccessibilityIsMissing() throws {
         model.interception = .needsAccessibility
+        var opened = 0
 
-        let sut = try view().inspect()
-        try sut.find(button: "Open Accessibility Settings").tap()
+        let sut = try view(openSettings: { opened += 1 }).inspect()
+        try sut.find(button: "Set Up…").tap()
 
         #expect(throws: Never.self) { try sut.find(text: "Grant Accessibility access to show macOS notifications here.") }
-        #expect(performer.actions == [.open(SidebarModel.accessibilitySettingsURL)])
+        #expect(opened == 1)
+    }
+
+    @Test func settingsButtonOpensSettings() throws {
+        var opened = 0
+
+        try view(openSettings: { opened += 1 }).inspect().find(button: "Settings…").tap()
+
+        #expect(opened == 1)
+    }
+
+    @Test func explainsDisabledInterception() throws {
+        model.interception = .disabled
+
+        #expect(throws: Never.self) { try view().inspect().find(text: "macOS notifications are left to macOS (see Settings).") }
     }
 
     @Test func reportsUnavailableNotificationCenterWithoutSettingsButton() throws {
@@ -107,7 +122,7 @@ struct SidebarViewTests {
         let sut = try view().inspect()
 
         #expect(throws: Never.self) { try sut.find(text: "macOS notifications cannot be read right now.") }
-        #expect(throws: (any Error).self) { try sut.find(button: "Open Accessibility Settings") }
+        #expect(throws: (any Error).self) { try sut.find(button: "Set Up…") }
     }
 
     @Test func hidesStatusWhileActive() throws {

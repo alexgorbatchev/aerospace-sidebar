@@ -1,0 +1,149 @@
+import Foundation
+import SidebarProtocol
+
+/// Output of an `aerospace` CLI invocation.
+public struct CommandResult: Equatable, Sendable {
+    public let status: Int32
+    public let output: String
+
+    public init(status: Int32, output: String) {
+        self.status = status
+        self.output = output
+    }
+}
+
+/// Runs the `aerospace` CLI; `LoginShellAeroSpaceCLI` is the real implementation.
+public protocol AeroSpaceCommandRunning: Sendable {
+    func run(_ arguments: [String]) async -> CommandResult
+}
+
+/// Runs `aerospace` through the user's login shell, which has the PATH a terminal would have
+/// (GUI apps do not see Homebrew's `/opt/homebrew/bin`).
+public struct LoginShellAeroSpaceCLI: AeroSpaceCommandRunning {
+    public init() {}
+
+    public func run(_ arguments: [String]) async -> CommandResult {
+        let shell = await WorkspaceActionPerformer.loginShell
+        return await onBlockingQueue {
+            let process = Process()
+            let pipe = Pipe()
+            process.executableURL = URL(fileURLWithPath: shell)
+            process.arguments = ["-lc", "exec aerospace \"$@\"", "aerospace"] + arguments
+            process.standardOutput = pipe
+            process.standardError = pipe
+            process.standardInput = FileHandle.nullDevice
+            do {
+                try process.run()
+            } catch {
+                return CommandResult(status: 127, output: String(describing: error))
+            }
+            let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            process.waitUntilExit()
+            return CommandResult(status: process.terminationStatus, output: output)
+        }
+    }
+}
+
+/// Reports and applies the AeroSpace configuration the sidebar needs.
+public struct AeroSpaceSetup: Sendable {
+    public static let defaultWidth = 300
+
+    public enum State: Equatable, Sendable {
+        case ready(AeroSpaceConfigEditor.Analysis, url: URL)
+        case notFound
+        case unreadable(String)
+    }
+
+    public enum Outcome: Equatable, Sendable {
+        case updated(backup: URL)
+        /// Written, but the `aerospace` CLI was unavailable to validate and reload it.
+        case updatedWithoutReload(backup: URL)
+    }
+
+    public enum SetupError: Error, Equatable {
+        case notFound
+        case generated(URL)
+        case unsupported(String)
+        /// AeroSpace rejected the edited config; the original was restored.
+        case rejected(String)
+        case io(String)
+    }
+
+    let home: URL
+    let environment: [String: String]
+    let cli: any AeroSpaceCommandRunning
+    let now: @Sendable () -> Date
+
+    public init(
+        home: URL = FileManager.default.homeDirectoryForCurrentUser,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        cli: any AeroSpaceCommandRunning = LoginShellAeroSpaceCLI(),
+        now: @escaping @Sendable () -> Date = Date.init
+    ) {
+        self.home = home
+        self.environment = environment
+        self.cli = cli
+        self.now = now
+    }
+
+    public func state() -> State {
+        do {
+            let url = try AeroSpaceConfig.locate(home: home, environment: environment)
+            return .ready(AeroSpaceConfigEditor.analyze(try String(contentsOf: url, encoding: .utf8)), url: url)
+        } catch AeroSpaceConfig.Error.notFound {
+            return .notFound
+        } catch {
+            return .unreadable(String(describing: error))
+        }
+    }
+
+    /// Edits the config, validates it with `aerospace reload-config --dry-run`, restores the original
+    /// when AeroSpace rejects it, and reloads AeroSpace. The original is kept next to the config as
+    /// `aerospace.toml.bak-<timestamp>`. Symlinked configs are edited at their target.
+    public func apply(width: Int = AeroSpaceSetup.defaultWidth) async throws(SetupError) -> Outcome {
+        let url: URL
+        do {
+            url = try AeroSpaceConfig.locate(home: home, environment: environment).resolvingSymlinksInPath()
+        } catch .notFound {
+            throw .notFound
+        } catch {
+            throw .io(String(describing: error))
+        }
+        let original: String
+        do {
+            original = try String(contentsOf: url, encoding: .utf8)
+        } catch {
+            throw .io(String(describing: error))
+        }
+        guard !AeroSpaceConfigEditor.isGenerated(original) else { throw .generated(url) }
+        let edited: String
+        do {
+            edited = try AeroSpaceConfigEditor.apply(to: original, width: width)
+        } catch let AeroSpaceConfigEditor.EditError.unsupported(reason) {
+            throw .unsupported(reason)
+        } catch {
+            throw .unsupported(String(describing: error))
+        }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let backup = url.appendingPathExtension("bak-\(formatter.string(from: now()))")
+        do {
+            try original.write(to: backup, atomically: true, encoding: .utf8)
+            try edited.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            throw .io(String(describing: error))
+        }
+
+        let validation = await cli.run(["reload-config", "--dry-run", "--no-gui"])
+        if validation.status == 127 {
+            return .updatedWithoutReload(backup: backup)
+        }
+        guard validation.status == 0 else {
+            try? original.write(to: url, atomically: true, encoding: .utf8)
+            throw .rejected(validation.output.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        _ = await cli.run(["reload-config", "--no-gui"])
+        return .updated(backup: backup)
+    }
+}

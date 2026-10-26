@@ -8,7 +8,8 @@
 - **Push from anywhere**: the `aerospace-sidebar` command and `aerospace-sidebar://` links add notifications.
 - **Click actions**: a notification can run a shell command or open a link when clicked.
 - **Severity**: `low`, `normal`, `high` and `critical` notifications sort and look different, with critical ones always on top.
-- **24-hour history**: the list survives quitting and relaunching; notifications older than 24 hours are dropped.
+- **History**: the list survives quitting and relaunching; notifications are kept for 24 hours by default.
+- **Guided setup**: Settings grants the Accessibility permission, adds the app to Login Items and adds the sidebar's settings to your AeroSpace config, one button each.
 
 # How It Works
 
@@ -26,7 +27,9 @@
 - `aerospace-sidebar notification push` talks to the app over a socket in your private temporary directory (`$(getconf DARWIN_USER_TEMP_DIR)com.alexgorbatchev.aerospace-sidebar.sock`) that only your user account can open. This is the only way to attach a `--run` command.
 - `aerospace-sidebar://` links can be opened by any app, and by web pages after your browser asks for permission. They therefore never carry commands, and their `open` links must be `http` or `https`. A notification from a link is labeled with the app that opened it when macOS reports one, otherwise `URL`.
 - `--run` commands run with your login shell (`$SHELL -lc`) in the directory where you ran `aerospace-sidebar`. Their output is discarded.
-- The list is saved to `~/Library/Application Support/com.alexgorbatchev.aerospace-sidebar/notifications.json` on every change and holds at most 200 notifications.
+- The list is saved to `~/Library/Application Support/com.alexgorbatchev.aerospace-sidebar/notifications.json` on every change and holds at most 200 notifications by default.
+- Settings live in `${XDG_CONFIG_HOME:-~/.config}/aerospace-sidebar/config.toml`. Edits to that file apply immediately; saving from the Settings window rewrites it and drops comments.
+- Settings › Setup › Update AeroSpace Config edits your AeroSpace config in place, keeping its comments, saves the original next to it as `aerospace.toml.bak-<timestamp>`, checks the result with `aerospace reload-config --dry-run`, and puts the original back if AeroSpace rejects it. It leaves files marked as generated alone.
 - Success messages go to stdout and errors to stderr. Exit codes: `0` success, `1` notification rejected or undeliverable, `64` invalid arguments, `74` output could not be written. With `AGENT=1`, output is compact: `OK: pushed`, or `ERR: <code>: <detail>`.
 
 # Installation
@@ -41,7 +44,9 @@ curl -sSL https://github.com/alexgorbatchev/aerospace-sidebar/releases/latest/do
 
 # Setup
 
-- [AeroSpace](https://nikitabobko.github.io/AeroSpace/guide) - Reserves the strip. Add the gap and a floating rule to `~/.config/aerospace/aerospace.toml`, then run `aerospace reload-config`:
+Open `~/Applications/AerospaceSidebar.app`, click **Settings…** at the bottom of the sidebar, and use the **Setup** tab. Each step can also be done by hand:
+
+- [AeroSpace](https://nikitabobko.github.io/AeroSpace/guide) - Reserves the strip. **Update AeroSpace Config** adds the gap and a floating rule; by hand, add them to `~/.config/aerospace/aerospace.toml` and run `aerospace reload-config`:
   ```toml
   [gaps]
   outer.right = [{ monitor.main = 305 }, 5]
@@ -51,7 +56,8 @@ curl -sSL https://github.com/alexgorbatchev/aerospace-sidebar/releases/latest/do
   run = 'layout floating'
   ```
   Bind fullscreen as `fullscreen`, not `fullscreen --no-outer-gaps`, or fullscreen windows cover the sidebar.
-- [Accessibility permission](https://support.apple.com/guide/mac-help/allow-accessibility-apps-to-access-your-mac-mh43185/mac) - Needed to read and hide macOS notifications. Open `~/Applications/AerospaceSidebar.app`, then enable AerospaceSidebar in System Settings › Privacy & Security › Accessibility. Release builds are not signed with a developer certificate, so after each update remove AerospaceSidebar from that list and enable it again.
+- [Accessibility permission](https://support.apple.com/guide/mac-help/allow-accessibility-apps-to-access-your-mac-mh43185/mac) - Needed to read and hide macOS notifications. **Open Accessibility** opens System Settings › Privacy & Security › Accessibility, where you enable AerospaceSidebar. Release builds are not signed with a developer certificate, so after each update remove AerospaceSidebar from that list and enable it again.
+- Login item - **Add to Login Items** opens the sidebar when you log in. It needs the app in `~/Applications` or `/Applications`.
 - Quit other apps that restyle or hide notification banners, such as NotifyMeHow, so only one app handles them.
 
 # Quick Start
@@ -112,6 +118,22 @@ A notification needs `--title` or `--body`. `--open` and `--run` cannot be combi
 | `--body <body>` | | empty | Main text, up to 4096 characters |
 | `--severity <severity>` | | `normal` | `low`, `normal`, `high` or `critical` |
 | `--open <url>` | | none | `http` or `https` URL to open when the notification is clicked |
+
+# Configuration
+
+`~/.config/aerospace-sidebar/config.toml` (or under `$XDG_CONFIG_HOME`), also editable in Settings › General:
+
+```toml
+[notifications]
+replace_system = true                    # hide macOS banners and list them in the sidebar
+apps_left_to_macos = ["zoom.us"]         # app names whose notifications stay on screen
+
+[history]
+retention_hours = 24                     # 1 to 720
+max_count = 200                          # 10 to 2000
+```
+
+A missing file or key uses the defaults shown. An invalid file keeps the previous settings, and Settings shows the error.
 
 # URL Scheme
 

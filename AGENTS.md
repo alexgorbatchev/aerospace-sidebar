@@ -1,6 +1,6 @@
 ---
 created_on: 2026-10-26 11:54
-last_modified: 2026-10-26 14:20
+last_modified: 2026-10-26 15:21
 status: current
 ---
 
@@ -45,6 +45,7 @@ Useful AeroSpace commands while developing:
 - `Sources/SidebarKit/`: all app logic.
   - Window: `AeroSpaceConfig` (reads the reserved width from AeroSpace's TOML), `SidebarLayout`, `SidebarPanelController`, `SidebarView` (notification list), `SidebarAppDelegate` (wiring, URL handling).
   - Notifications: `SidebarModel` (ordered list, click actions), `WorkspaceActionPerformer`, `ControlServer` (socket server).
+  - Settings: `SidebarSettings` (`config.toml` schema), `SettingsFile`, `SettingsStore` (live reload), `SettingsEditor` (Save/Cancel draft), `OnboardingModel` (Setup tab), `AeroSpaceConfigEditor`/`AeroSpaceSetup` (in-place AeroSpace config edits), `LoginItem` (`SMAppService.mainApp`), `SettingsWindowController` with `SettingsPanes`/`SettingsGrid`.
   - Interception: `NotificationBanners` (reads and closes banners through `AccessibilityElement`), `SystemNotificationInterceptor` (hide, dedupe, report), `NotificationCenterMonitor` (permission polling, AX observer, relaunch handling; `SystemAccessibility`/`AXElement` are the real AX adapters).
 - `Sources/SidebarCLI/`: CLI commands (`Commands.swift`), tree help (`CommandTree`), `CLIContext` (output mode, `~` path folding, injected I/O), `SocketNotificationSender`.
 - `Sources/AerospaceSidebar/main.swift`, `Sources/AerospaceSidebarCLI/main.swift`: entry points only; keep logic out of them.
@@ -56,6 +57,7 @@ Useful AeroSpace commands while developing:
 
 - `TOMLDecoder` (dduan/TOMLDecoder): implements TOML 1.1, the version AeroSpace parses. Its `singleValueContainer()` decodes scalars only; decode arrays with `unkeyedContainer()` and tables with a keyed container or a nested `Decodable`.
 - `swift-argument-parser`: CLI parsing. It lists only direct subcommands, so groups hide children (`shouldDisplay: false`) and render the full tree as their `discussion` (`CommandTree`). Its help wrapper breaks a line that fills the whole width, so tree lines are trimmed to width − 1, and help is rendered with `fullMessage(for:columns:)` at the same width. Help requests surface as its internal `CommandError`, not `CleanExit`; `ArgumentParserToolInfo` is not an exported product, so tests decode `--experimental-dump-help` JSON with local types.
+- `swift-toml` (mattt/swift-toml, `import TOML`): reads and writes the app's own `config.toml` (TOML 1.0, Codable both ways). TOMLDecoder stays for AeroSpace's TOML 1.1 config. Both libraries export a type named `TOMLDecoder`; import only one per file.
 - `ViewInspector` (tests only): drives SwiftUI controls in tests. SwiftUI's `NSHostingView` exposes no accessibility children in a test process, so `accessibilityPerformPress()` cannot reach SwiftUI buttons.
 
 ## Architecture
@@ -99,6 +101,12 @@ macOS has no public API for reserving screen space (no AppBar or strut equivalen
    - Severity `low` < `normal` < `high` < `critical`: the list sorts by severity, then newest first, and drops the least severe, oldest entries beyond 200. `low` is dimmed, `high` orange, `critical` red.
    - History: `SidebarModel` saves the list through `NotificationStore` on every change (`FileNotificationStore`: `~/Library/Application Support/com.alexgorbatchev.aerospace-sidebar/notifications.json`) and drops notifications older than 24 hours on load and every minute, so a relaunch restores the list. Tests pass an in-memory store; `SidebarModel` has no default store so tests cannot write the real file.
 
+6. **Settings.** `${XDG_CONFIG_HOME:-~/.config}/aerospace-sidebar/config.toml` holds `[notifications] replace_system, apps_left_to_macos` and `[history] retention_hours (1…720), max_count (10…2000)`. `SettingsStore` watches the directory (atomic replacements included) and applies valid edits live; an invalid file keeps the last valid settings and surfaces `loadError`. Launch at login is never stored there: macOS owns that state, and a stored copy would re-enable a login item the user turned off in System Settings.
+   - The Settings window copies the layout of simple-ptt's settings window (`src/settings_window` in github.com/alexgorbatchev/simple-ptt): Preference-style toolbar tabs (Setup, General) from `NSTabViewController`, a grid with right-aligned `Label:` cells, bold 13pt section headers with 12pt top padding, 11pt secondary hints under controls, 8pt spacing, 20pt margins, checkboxes rather than switches, 80pt number fields, and a separator + status line + Cancel/Save bar. Setup steps start with a status circle (green `checkmark.circle.fill` when done, empty `circle` otherwise) followed by the step's button, or by text naming the finished state once done. Edits stay in `SettingsEditor.draft` until Save; Cancel and closing the window discard them.
+   - Unlike simple-ptt, which switches to the `.regular` activation policy while Settings is open, Settings is a non-activating `NSPanel` ordered in front with `orderFrontRegardless()`. Switching the policy would make AeroSpace re-classify the sidebar panel as a window (see item 3), and `NSApp.activate()` from a background app is only a request since macOS 14. Pop-up buttons do not open in a key window of an inactive app, so prefer controls other than `NSPopUpButton`/`Picker(.menu)` in Settings.
+   - Panes have a fixed width (`SettingsMetrics.paneWidth`) so hints wrap instead of widening the window; their hosting controllers use `sizingOptions = [.intrinsicContentSize]` (`[]` and `.minSize` report a zero fitting size), and every pane gets the largest pane's size so switching tabs never resizes the window.
+   - Update AeroSpace Config: refuses generated files (a `# … generated`/`do not edit` comment in the first five lines) and layouts it cannot edit safely, offering Copy Settings instead. It never creates a missing AeroSpace config, because a config file without `[mode.main.binding]` drops AeroSpace's default key bindings.
+
 ### Coverage limits
 
 - AeroSpace `fullscreen` respects outer gaps unless invoked with `--no-outer-gaps`.
@@ -109,9 +117,6 @@ macOS has no public API for reserving screen space (no AppBar or strut equivalen
 
 - Sidebar content beyond notifications.
 
-## TODO
-
-- Launch at login via `SMAppService.mainApp`. The bundle must live at a stable path (for example `/Applications` or `~/Applications`) instead of `.build/`.
 
 ## Gotchas
 
@@ -123,6 +128,7 @@ macOS has no public API for reserving screen space (no AppBar or strut equivalen
 - Tests must never call `NotificationCenterMonitor.start()` with `SystemAccessibility` or bind `SidebarApp.controlSocketPath`: the first prompts for Accessibility and moves real NotificationCenter windows, the second collides with the running app. Inject `FakePlatform` and a `/tmp` socket path (short: `sockaddr_un` paths are limited to 104 bytes).
 - Never block Swift's cooperative thread pool (socket `read`/`accept`/`write`, `Process.waitUntilExit`, `Task.detached` around blocking work). The pool is about as wide as the CPU count; on GitHub's 3-core runner, socket tests blocked every thread and the servers they waited on never ran, so CI hung with no output. Run blocking work through `onBlockingQueue` (`SidebarProtocol/BlockingQueue.swift`). `just test` and `just coverage` set `LIBDISPATCH_COOPERATIVE_POOL_STRICT=1` (one pool thread) so such deadlocks reproduce locally; CI runs tests under `script` with step timeouts so a hang shows the last test that started.
 - Killing `swift test` (Ctrl-C, `timeout`) leaves its `swiftpm-testing-helper` child running, and that process keeps the tests' real sidebar panels on screen. After interrupting a run, `pkill -f swiftpm-testing-helper`.
+- ViewInspector evaluates a view's body when searched, not when `inspect()` is called, so assert pre-action text before tapping buttons that change it.
 - `swiftc` 6.3 crashes on an immediately called `#require` result (`try #require(closure)(argument)`); bind the result first.
 
 ## Boundaries
