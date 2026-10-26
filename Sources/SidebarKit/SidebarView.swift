@@ -8,16 +8,20 @@ struct SidebarView: View {
     let quit: () -> Void
 
     static let margin: CGFloat = 16
+    static let motion: Animation = .snappy
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var scrollPosition = ScrollPosition(edge: .top)
     @State private var scrollMetrics = ScrollMetrics()
     @State private var isScrolling = false
+    @State private var hoveredID: SidebarNotification.ID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Notifications")
                     .font(.headline)
+                    .lineLimit(1)
                 Spacer()
                 if !model.notifications.isEmpty {
                     Button("Clear All", action: model.clear)
@@ -35,16 +39,23 @@ struct SidebarView: View {
                     }
                 }
                 .padding(.horizontal, Self.margin)
+                .transition(.opacity)
             }
             // The list spans the full width so the scroll indicator sits in the trailing margin.
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    ForEach(model.notifications) { notification in
+                    ForEach(model.notifications, id: \.viewIdentity) { notification in
                         NotificationCard(
                             notification: notification,
+                            isHovered: hoveredID == notification.id,
+                            hover: { hoveredID = Self.hoveredID(hoveredID, card: notification.id, hovering: $0) },
                             activate: { model.activate(notification.id) },
                             dismiss: { model.dismiss(notification.id) }
                         )
+                        .transition(cardTransition)
+                        // Later cards draw above earlier ones, so when a card is removed the card
+                        // sliding up into its place covers it while it fades out.
+                        .zIndex(notification.drawingOrder)
                     }
                 }
                 .padding(.horizontal, Self.margin)
@@ -75,6 +86,30 @@ struct SidebarView: View {
         }
         .padding(.vertical, Self.margin)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Changes arrive from the model, outside any view action, so the view animates them itself.
+        .animation(Self.motion, value: model.notifications)
+        .animation(Self.motion, value: model.interception)
+    }
+
+    /// The card under the pointer after `card` reports entering or leaving. Entering the next card
+    /// can be reported before leaving the previous one, so leaving only clears the card that left.
+    static func hoveredID(
+        _ current: SidebarNotification.ID?,
+        card: SidebarNotification.ID,
+        hovering: Bool
+    ) -> SidebarNotification.ID? {
+        if hovering { return card }
+        return current == card ? nil : current
+    }
+
+    /// New cards drop in from above; removed ones fade and shrink in place, since removal also covers
+    /// expiry and restacking, not only dismissal. With Reduce Motion cards only fade.
+    private var cardTransition: AnyTransition {
+        if reduceMotion { return .opacity }
+        return .asymmetric(
+            insertion: .move(edge: .top).combined(with: .opacity),
+            removal: .scale(scale: 0.95, anchor: .top).combined(with: .opacity)
+        )
     }
 
     private var statusMessage: String? {
@@ -89,6 +124,8 @@ struct SidebarView: View {
 
 struct NotificationCard: View {
     let notification: SidebarNotification
+    let isHovered: Bool
+    let hover: (Bool) -> Void
     let activate: () -> Void
     let dismiss: () -> Void
 
@@ -97,6 +134,12 @@ struct NotificationCard: View {
     static let stackLayerHeight: CGFloat = 5
     static let stackLayerInset: CGFloat = 8
     static let maxStackLayers = 2
+    /// A card's text and dismiss button rest slightly faded and come forward under the pointer; its
+    /// background stays solid.
+    static let restingOpacity = 0.8
+    static let hoverScale: CGFloat = 1.02
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
@@ -109,7 +152,12 @@ struct NotificationCard: View {
                     .padding(.horizontal, Self.stackLayerInset * CGFloat(layer))
             }
         }
+        .scaleEffect(isHovered && !reduceMotion ? Self.hoverScale : 1)
+        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .onHover(perform: hover)
     }
+
+    private var contentOpacity: Double { isHovered ? 1 : Self.restingOpacity }
 
     /// Layers drawn under the card for notifications received more than once.
     private var stackLayers: Int { min(notification.occurrences - 1, Self.maxStackLayers) }
@@ -154,10 +202,14 @@ struct NotificationCard: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                .opacity(contentOpacity)
                 .padding(10)
                 .padding(.trailing, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(background, in: RoundedRectangle(cornerRadius: Self.cornerRadius))
+                // The tints are translucent; the material keeps a card sliding over another (when one
+                // above it is removed) from showing the other's text through it.
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Self.cornerRadius))
                 .overlay {
                     if let accent {
                         RoundedRectangle(cornerRadius: Self.cornerRadius)
@@ -175,6 +227,7 @@ struct NotificationCard: View {
                     .font(.caption)
             }
             .buttonStyle(.borderless)
+            .opacity(contentOpacity)
             .padding(8)
             .accessibilityLabel("Dismiss")
         }
@@ -213,4 +266,23 @@ struct NotificationCard: View {
         }
     }
 
+}
+
+private extension SidebarNotification {
+    struct ViewIdentity: Hashable {
+        let id: UUID
+        let occurrences: Int
+    }
+
+    /// A restacked notification gets a new card rather than moving the old one across the list: the
+    /// old copy fades out where it was and the stack drops in at its new position.
+    var viewIdentity: ViewIdentity { ViewIdentity(id: id, occurrences: occurrences) }
+
+    /// Grows down the list, which is sorted by severity, then newest first. It belongs to the
+    /// notification rather than its position, because a list index would pass a removed card's value to
+    /// the card replacing it, and SwiftUI does not define which of two equal values draws on top.
+    var drawingOrder: Double {
+        let severityRank = Double(NotificationSeverity.allCases.firstIndex(of: severity)!)
+        return -(severityRank * 1e10 + receivedAt.timeIntervalSinceReferenceDate)
+    }
 }

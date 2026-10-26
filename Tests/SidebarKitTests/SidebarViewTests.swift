@@ -104,6 +104,65 @@ struct SidebarViewTests {
         #expect(try cards.map { try $0.find(ViewType.ForEach.self).count } == [NotificationCard.maxStackLayers, 1, 0])
     }
 
+    @Test func hoverPassesFromCardToCardInEitherReportOrder() {
+        let first = UUID()
+        let second = UUID()
+
+        #expect(SidebarView.hoveredID(nil, card: first, hovering: true) == first)
+        #expect(SidebarView.hoveredID(first, card: first, hovering: false) == nil)
+        // Entering the second card before leaving the first must not lose the second.
+        #expect(SidebarView.hoveredID(first, card: second, hovering: true) == second)
+        #expect(SidebarView.hoveredID(second, card: first, hovering: false) == second)
+    }
+
+    @Test func hoverBringsTextForwardWhileBackgroundStaysSolid() throws {
+        func card(hovered: Bool) throws -> InspectableView<ViewType.ClassifiedView> {
+            try NotificationCard(
+                notification: SidebarNotification(source: "s", title: "t"),
+                isHovered: hovered,
+                hover: { _ in },
+                activate: {},
+                dismiss: {}
+            ).inspect()
+        }
+        func contentOpacity(_ card: InspectableView<ViewType.ClassifiedView>) throws -> Double {
+            try card.find(text: "t").find(ViewType.VStack.self, relation: .parent).opacity()
+        }
+        func dismissOpacity(_ card: InspectableView<ViewType.ClassifiedView>) throws -> Double {
+            try card.find(viewWithAccessibilityLabel: "Dismiss").opacity()
+        }
+
+        let resting = try card(hovered: false)
+        let hovered = try card(hovered: true)
+
+        #expect(try contentOpacity(resting) < 1)
+        #expect(try dismissOpacity(resting) < 1)
+        #expect(throws: (any Error).self) { try resting.vStack().opacity() }
+        #expect(try resting.vStack().scaleEffect() == CGSize(width: 1, height: 1))
+        #expect(try contentOpacity(hovered) == 1)
+        #expect(try dismissOpacity(hovered) == 1)
+        #expect(try hovered.vStack().scaleEffect().width > 1)
+    }
+
+    @Test func laterCardsDrawAboveEarlierOnesSoTheyCoverRemovals() throws {
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        model.add(SidebarNotification(source: "s", title: "old-normal", receivedAt: start))
+        model.add(SidebarNotification(source: "s", title: "new-normal", receivedAt: start.addingTimeInterval(1)))
+        model.add(SidebarNotification(source: "s", title: "old-critical", severity: .critical, receivedAt: start.addingTimeInterval(-3600)))
+        model.add(SidebarNotification(source: "s", title: "low", severity: .low, receivedAt: start.addingTimeInterval(3600)))
+
+        let before = try view().inspect().findAll(NotificationCard.self)
+        let zIndexBefore = try before.map { try $0.zIndex() }
+        model.dismiss(model.notifications[1].id)
+        let after = try view().inspect().findAll(NotificationCard.self)
+
+        #expect(try before.map { try $0.actualView().notification.title } == ["old-critical", "new-normal", "old-normal", "low"])
+        #expect(zIndexBefore == zIndexBefore.sorted() && Set(zIndexBefore).count == zIndexBefore.count)
+        // The card that slides into the removed card's place keeps a value above it.
+        #expect(try after[1].zIndex() == zIndexBefore[2])
+        #expect(try after[1].zIndex() > zIndexBefore[1])
+    }
+
     @Test func bodyOnlyNotificationOmitsTitle() throws {
         model.add(SidebarNotification(source: "s", title: "", body: "just a body"))
 
