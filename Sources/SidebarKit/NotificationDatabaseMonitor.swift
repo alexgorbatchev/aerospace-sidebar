@@ -30,13 +30,14 @@ public final class NotificationDatabaseMonitor {
     private var lastError: NotificationDatabase.Failure?
 
     /// - Parameters:
-    ///   - grace: How long a new record waits for its banner before it is listed.
+    ///   - grace: How long a new record waits for its banner before it is listed. macOS writes a record 5–7 s
+    ///     after delivering it, while a banner is reported within about a second, so a short grace suffices.
     ///   - appName: The display name of the app with a bundle identifier, or nil for none installed.
     public init(
         database: NotificationDatabase,
         identities: NotificationIdentities,
         defaults: UserDefaults = .standard,
-        grace: TimeInterval = 3,
+        grace: TimeInterval = 1,
         appName: @escaping @MainActor (String) -> String? = NotificationDatabaseMonitor.installedAppName,
         now: @escaping () -> Date = Date.init,
         onNotification: @escaping @MainActor (SidebarNotification) -> Void
