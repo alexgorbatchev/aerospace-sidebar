@@ -240,6 +240,7 @@ struct SettingsPaneTests {
         let sut = try GeneralPane(editor: editor, configURL: store.file.url, reveal: { revealed.append($0) }, chooseFont: { chooses += 1 }, quit: {}, close: { closed += 1 }).inspect()
 
         try sut.find(ViewType.Toggle.self).tap()
+        try sut.find(ViewType.Toggle.self, where: { try $0.labelView().text().string() == "Leave notifications with buttons to macOS" }).tap()
         try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Apps left to macOS" }).setInput("zoom.us, Calendar")
         try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Family" }).setInput("Menlo")
         try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Size" }).setInput("15")
@@ -250,7 +251,7 @@ struct SettingsPaneTests {
 
         try sut.find(button: "Save").tap()
 
-        #expect(store.settings.notifications == .init(replaceSystem: false, appsLeftToMacOS: ["zoom.us", "Calendar"]))
+        #expect(store.settings.notifications == .init(replaceSystem: false, actionableLeftToMacOS: false, appsLeftToMacOS: ["zoom.us", "Calendar"]))
         #expect(store.settings.font == SidebarSettings.Font(name: "Menlo", size: 15))
         #expect(revealed == [store.file.url])
         #expect(closed == 1)

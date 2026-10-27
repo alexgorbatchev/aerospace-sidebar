@@ -60,8 +60,24 @@ struct NotificationBannersTests {
         #expect(!NotificationBanners.needsInteraction(withCloseButton))
     }
 
-    @Test func alertsNeedInteraction() {
-        #expect(NotificationBanners.needsInteraction(FakeElement([kAXSubroleAttribute: "AXNotificationCenterAlert"])))
+    /// Alerts stay on screen until dismissed; only their actions and controls decide.
+    @Test func alertsWithoutChoicesNeedNoInteraction() {
+        let alert = FakeElement.banner()
+        alert.attributes[kAXSubroleAttribute] = "AXNotificationCenterAlert"
+        alert.childElements.append(FakeElement([kAXRoleAttribute: kAXButtonRole, kAXTitleAttribute: "Close"]))
+        alert.childElements.append(FakeElement([kAXRoleAttribute: kAXButtonRole, kAXDescriptionAttribute: "Show"]))
+
+        #expect(!NotificationBanners.needsInteraction(alert))
+
+        alert.childElements.append(FakeElement([kAXRoleAttribute: kAXMenuButtonRole, kAXTitleAttribute: "Options"]))
+        #expect(NotificationBanners.needsInteraction(alert))
+    }
+
+    @Test func buttonsOtherThanPlainActionsNeedInteraction() {
+        let banner = FakeElement.banner()
+        banner.childElements.append(FakeElement([kAXRoleAttribute: kAXButtonRole, kAXTitleAttribute: "Reply"]))
+
+        #expect(NotificationBanners.needsInteraction(banner))
     }
 
     @Test func extraActionsNeedInteraction() {
@@ -198,18 +214,54 @@ struct SystemNotificationInterceptorTests {
     @Test func leavesInteractiveNotificationsToMacOS() throws {
         var received: [SidebarNotification] = []
         let interceptor = SystemNotificationInterceptor { received.append($0) }
-        let alert = FakeElement.banner(id: "alert", app: "Calendar", title: "Standup")
-        alert.attributes[kAXSubroleAttribute] = "AXNotificationCenterAlert"
+        let interactive = FakeElement.banner(id: "alert", app: "Calendar", title: "Standup")
+        interactive.actions.append("Name:Snooze\nTarget:0x0\nSelector:(null)")
         let plain = FakeElement.banner(id: "plain", app: "Mail", title: "Hi")
-        let window = FakeElement.window(alert, plain, position: SystemNotificationInterceptor.offScreen)
+        let window = FakeElement.window(interactive, plain, position: SystemNotificationInterceptor.offScreen)
 
         interceptor.process(window: window)
 
         #expect(window.position == .zero)
-        #expect(alert.performed.isEmpty)
+        #expect(interactive.performed.isEmpty)
         #expect(plain.performed.count == 1)
         #expect(received.map(\.title) == ["Standup", "Hi"])
         #expect(received.map(\.shownByMacOS) == [true, false])
+    }
+
+    @Test func hidesAlertsWithoutChoices() throws {
+        var received: [SidebarNotification] = []
+        let interceptor = SystemNotificationInterceptor { received.append($0) }
+        let alert = FakeElement.banner(id: "disk", app: "Finder", title: "Disk Not Ejected Properly")
+        alert.attributes[kAXSubroleAttribute] = "AXNotificationCenterAlert"
+        let window = FakeElement.window(alert)
+
+        interceptor.process(window: window)
+
+        #expect(window.position == SystemNotificationInterceptor.offScreen)
+        #expect(alert.performed.count == 1)
+        #expect(received.map(\.shownByMacOS) == [false])
+    }
+
+    @Test func listsInteractiveNotificationsWithoutButtonsWhenSettingsSaySo() throws {
+        var received: [SidebarNotification] = []
+        var leavesActionable = false
+        let interceptor = SystemNotificationInterceptor(leavesActionableToMacOS: { leavesActionable }) { received.append($0) }
+        let reply = FakeElement.banner(id: "reply", app: "Messages", title: "Alex")
+        reply.childElements.append(FakeElement([kAXRoleAttribute: kAXTextFieldRole]))
+        let window = FakeElement.window(reply)
+
+        interceptor.process(window: window)
+
+        #expect(window.position == SystemNotificationInterceptor.offScreen)
+        #expect(reply.performed.count == 1)
+        #expect(received.map(\.shownByMacOS) == [false])
+        #expect(received.map(\.action) == [.activateApp(name: "Messages")])
+
+        leavesActionable = true
+        let later = FakeElement.banner(id: "reply-2", app: "Messages", title: "Sam")
+        later.childElements.append(FakeElement([kAXRoleAttribute: kAXTextFieldRole]))
+        interceptor.process(window: FakeElement.window(later))
+        #expect(received.map(\.shownByMacOS) == [false, true])
     }
 
     @Test func restoresOnlyOffScreenWindows() {

@@ -120,6 +120,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
             platform: platform,
             interceptor: SystemNotificationInterceptor(
                 leavesToMacOS: { settings.settings.notifications.leavesToMacOS($0) },
+                leavesActionableToMacOS: { settings.settings.notifications.actionableLeftToMacOS },
                 onNotification: { model.add($0) }
             ),
             onStatus: { model.interception = $0 }

@@ -30,6 +30,8 @@ public struct BannerContent: Equatable, Sendable {
 /// - Text elements carry an `AXIdentifier` of `title`, `subtitle` or `body`.
 /// - A plain banner exposes exactly the actions in `plainBannerActions`; notification actions such as
 ///   Snooze, Join or Reply appear as additional named actions or as controls inside the banner.
+/// - Alert-style notifications (`AXNotificationCenterAlert`) stay on screen until dismissed, like the
+///   sidebar's own cards. They are judged by their actions and controls like any banner.
 @MainActor
 public enum NotificationBanners {
     public static let plainBannerActions: Set<String> = ["AXPress", "AXShowMenu", "AXScrollToVisible", "Show Details", "Show", "Close"]
@@ -81,10 +83,9 @@ public enum NotificationBanners {
         return content
     }
 
-    /// Whether the notification offers buttons, a reply field or other actions that only macOS can
-    /// present: alert-style notifications, unknown actions, or controls other than a close button.
+    /// Whether the notification offers a choice that only macOS can present: an action other than
+    /// opening or closing it, a reply field, or a control other than a close, Show or Show Details button.
     public static func needsInteraction(_ banner: any AccessibilityElement) -> Bool {
-        if banner.string(kAXSubroleAttribute) == "AXNotificationCenterAlert" { return true }
         if banner.actionNames.map(actionName).contains(where: { !plainBannerActions.contains($0) }) { return true }
         return containsControl(banner)
     }
@@ -97,12 +98,19 @@ public enum NotificationBanners {
 
     private static func containsControl(_ element: any AccessibilityElement) -> Bool {
         element.children.contains { child in
-            let isCloseButton = child.string(kAXSubroleAttribute) == kAXCloseButtonSubrole
-            if let role = child.string(kAXRoleAttribute), interactiveRoles.contains(role), !isCloseButton {
+            if let role = child.string(kAXRoleAttribute), interactiveRoles.contains(role), !isPlainButton(child) {
                 return true
             }
             return containsControl(child)
         }
+    }
+
+    /// A close button, or a button that does what one of `plainBannerActions` does, such as Close or Show.
+    private static func isPlainButton(_ element: any AccessibilityElement) -> Bool {
+        guard element.string(kAXRoleAttribute) == kAXButtonRole else { return false }
+        if element.string(kAXSubroleAttribute) == kAXCloseButtonSubrole { return true }
+        let name = element.string(kAXTitleAttribute) ?? element.string(kAXDescriptionAttribute)
+        return name.map(plainBannerActions.contains) ?? false
     }
 
     /// Closes the banner with its close action, or by pressing its close button.

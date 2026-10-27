@@ -5,6 +5,7 @@ import Foundation
 /// ```toml
 /// [notifications]
 /// replace_system = true
+/// actionable_left_to_macos = true
 /// apps_left_to_macos = ["Zoom"]
 ///
 /// [history]
@@ -19,22 +20,28 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
     public struct Notifications: Codable, Equatable, Sendable {
         /// Hide native banners and list them in the sidebar.
         public var replaceSystem = true
+        /// Leave notifications with buttons, a reply field or other actions to macOS. Otherwise they are
+        /// listed like the others, without those actions.
+        public var actionableLeftToMacOS = true
         /// Apps whose notifications macOS keeps presenting; matched case-insensitively by app name.
         public var appsLeftToMacOS: [String] = []
 
         enum CodingKeys: String, CodingKey {
             case replaceSystem = "replace_system"
+            case actionableLeftToMacOS = "actionable_left_to_macos"
             case appsLeftToMacOS = "apps_left_to_macos"
         }
 
-        public init(replaceSystem: Bool = true, appsLeftToMacOS: [String] = []) {
+        public init(replaceSystem: Bool = true, actionableLeftToMacOS: Bool = true, appsLeftToMacOS: [String] = []) {
             self.replaceSystem = replaceSystem
+            self.actionableLeftToMacOS = actionableLeftToMacOS
             self.appsLeftToMacOS = appsLeftToMacOS
         }
 
         public init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             replaceSystem = try container.decodeIfPresent(Bool.self, forKey: .replaceSystem) ?? true
+            actionableLeftToMacOS = try container.decodeIfPresent(Bool.self, forKey: .actionableLeftToMacOS) ?? true
             appsLeftToMacOS = try container.decodeIfPresent([String].self, forKey: .appsLeftToMacOS) ?? []
         }
 

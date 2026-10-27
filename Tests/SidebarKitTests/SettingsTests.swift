@@ -21,7 +21,7 @@ struct SettingsFileTests {
         let directory = try TemporaryDirectory()
         let file = SettingsFile(url: directory.url.appendingPathComponent("nested/config.toml"))
         let settings = SidebarSettings(
-            notifications: .init(replaceSystem: false, appsLeftToMacOS: ["zoom.us", "Calendar"]),
+            notifications: .init(replaceSystem: false, actionableLeftToMacOS: false, appsLeftToMacOS: ["zoom.us", "Calendar"]),
             history: .init(retentionHours: 48, maxCount: 500),
             font: .init(name: "Menlo", size: 14.5)
         )
@@ -34,6 +34,7 @@ struct SettingsFileTests {
         #expect(text.contains("retention_hours = 48"))
         #expect(text.contains("[font]") && text.contains("name = \"Menlo\""))
         #expect(text.contains("apps_left_to_macos = [") && text.contains("\"zoom.us\""))
+        #expect(text.contains("actionable_left_to_macos = false"))
         #expect(try file.load() == settings)
     }
 
@@ -45,6 +46,7 @@ struct SettingsFileTests {
 
         #expect(settings == SidebarSettings(history: .init(retentionHours: 24, maxCount: 50)))
         #expect(settings.notifications.replaceSystem)
+        #expect(settings.notifications.actionableLeftToMacOS)
     }
 
     @Test func fontSizeAcceptsIntegers() throws {

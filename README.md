@@ -4,7 +4,7 @@
 
 - **Reserved screen strip**: a panel on the right edge of the main display that tiled windows never cover, on every Space and over full-screen apps.
 - **macOS notifications, kept**: native banners are hidden and listed in the sidebar instead, so nothing disappears after five seconds.
-- **Interactive alerts left alone**: notifications with buttons or reply fields stay on screen as macOS shows them, and are also listed.
+- **Interactive notifications left alone**: notifications with buttons or reply fields stay on screen as macOS shows them, and are also listed. Turn this off in Settings to list them without their buttons instead. Alerts without buttons are listed like any other notification.
 - **Push from anywhere**: the `aerospace-sidebar` command and `aerospace-sidebar://` links add notifications.
 - **Click actions**: a notification can run a shell command or open a link when clicked.
 - **Severity**: `low`, `normal`, `high` and `critical` notifications sort and look different, with critical ones always on top.
@@ -19,7 +19,7 @@
 - When an app posts a macOS notification, its banner vanishes and the notification appears at the top of its severity group in the sidebar.
 - `aerospace-sidebar notification push` sends a notification from the terminal, starting the sidebar first when it is not running.
 - A notification with the same sender, text, severity, icon and click action as a listed one is stacked onto it: the card moves up as the newest, shows `×2`, `×3`, … next to its time, and gets layered edges below it. Clicking or dismissing a stack removes all of its copies.
-- Clicking a notification runs its action, or switches to the app that posted it, and removes it. The × button removes it without acting.
+- Clicking a notification runs its action, or switches to the app that posted it, and removes it. The × button that appears on hover removes it without acting.
 - Hovering a notification shows what a click will do, including the full command.
 
 # How it Really Works
@@ -133,6 +133,7 @@ A notification needs `--title` or `--body`. `--open` and `--run` cannot be combi
 ```toml
 [notifications]
 replace_system = true                    # hide macOS banners and list them in the sidebar
+actionable_left_to_macos = true          # leave notifications with buttons (Reply, Snooze) to macOS
 apps_left_to_macos = ["zoom.us"]         # app names whose notifications stay on screen
 
 [history]

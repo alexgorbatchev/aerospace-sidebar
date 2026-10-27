@@ -5,7 +5,8 @@ import Foundation
 /// Hides native notification banners and reports each one's content once.
 ///
 /// Notifications that need interaction (`NotificationBanners.needsInteraction`) stay visible as
-/// macOS presents them and are reported with `shownByMacOS`.
+/// macOS presents them and are reported with `shownByMacOS`, unless the settings list them without
+/// their buttons instead.
 ///
 /// On macOS 26 NotificationCenter ignores position changes on the banner element, and its close
 /// action only takes effect after the slide-in animation (about 1.3 s). Moving the hosting window
@@ -19,28 +20,36 @@ public final class SystemNotificationInterceptor {
 
     private let onNotification: @MainActor (SidebarNotification) -> Void
     private let leavesToMacOS: @MainActor (String) -> Bool
+    private let leavesActionableToMacOS: @MainActor () -> Bool
     private let now: () -> Date
     private var seenIdentifiers: [String] = []
     private var recentContent: [(content: BannerContent, at: Date)] = []
 
-    /// - Parameter leavesToMacOS: Whether an app's notifications stay native, by app name.
+    /// - Parameters:
+    ///   - leavesToMacOS: Whether an app's notifications stay native, by app name.
+    ///   - leavesActionableToMacOS: Whether notifications that need interaction stay native. Otherwise
+    ///     they are hidden and listed like the others, without their buttons.
     public init(
         now: @escaping () -> Date = Date.init,
         leavesToMacOS: @escaping @MainActor (String) -> Bool = { _ in false },
+        leavesActionableToMacOS: @escaping @MainActor () -> Bool = { true },
         onNotification: @escaping @MainActor (SidebarNotification) -> Void
     ) {
         self.now = now
         self.leavesToMacOS = leavesToMacOS
+        self.leavesActionableToMacOS = leavesActionableToMacOS
         self.onNotification = onNotification
     }
 
-    /// Hides and closes the plain banners in a NotificationCenter window, reporting new ones. A window
-    /// holding an interactive notification, or one from an app left to macOS, stays on-screen and is
-    /// moved back if it was hidden.
+    /// Hides and closes the banners in a NotificationCenter window, reporting new ones. A window holding
+    /// a notification left to macOS (an interactive one, while those stay native, or one from an app left
+    /// to macOS) stays on-screen and is moved back if it was hidden.
     public func process(window: any AccessibilityElement) {
+        let leavesActionable = leavesActionableToMacOS()
         let banners = NotificationBanners.find(in: window).map { banner in
             let content = NotificationBanners.content(of: banner)
-            return (banner, content, NotificationBanners.needsInteraction(banner) || leavesToMacOS(content.appName))
+            let interactive = leavesActionable && NotificationBanners.needsInteraction(banner)
+            return (banner, content, interactive || leavesToMacOS(content.appName))
         }
         guard !banners.isEmpty else { return }
         if banners.contains(where: \.2) {

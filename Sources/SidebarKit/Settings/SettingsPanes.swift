@@ -130,6 +130,11 @@ struct GeneralPane: View {
                     Toggle("Show macOS notifications in the sidebar instead", isOn: $editor.draft.notifications.replaceSystem)
                         .toggleStyle(.checkbox)
                 }
+                SettingsRow(label: "With buttons") {
+                    Toggle("Leave notifications with buttons to macOS", isOn: $editor.draft.notifications.actionableLeftToMacOS)
+                        .toggleStyle(.checkbox)
+                }
+                SettingsHint(text: "Buttons such as Reply or Snooze only work on macOS's own banner. Otherwise these notifications are listed without them; clicking one opens its app.")
                 SettingsRow(label: "Apps left to macOS") {
                     TextField("Apps left to macOS", text: $editor.appsLeftToMacOSText, prompt: Text("zoom.us, Calendar"))
                         .labelsHidden()
