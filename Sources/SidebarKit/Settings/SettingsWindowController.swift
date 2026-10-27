@@ -13,6 +13,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     public let window: NSPanel
     public let tabs: SettingsTabsController
     let editor: SettingsEditor
+    private let store: SettingsStore
     private let onboarding: OnboardingModel
     private let aeroSpace: AeroSpaceSync
     private let fontChooser: FontChooser
@@ -38,6 +39,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         reveal: @escaping (URL) -> Void,
         terminate: @escaping @MainActor (Any?) -> Void = NSApplication.shared.terminate
     ) {
+        self.store = store
         self.onboarding = onboarding
         self.aeroSpace = aeroSpace
         self.fontChooser = fontChooser
@@ -104,7 +106,10 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     /// Fonts picked in the font panel go into the draft, like any other edit.
     func chooseFont() {
-        fontChooser.choose(editor.draft.font, beside: window) { [editor] in editor.draft.font = $0 }
+        // The saved side is where the sidebar is; an unsaved one is not applied yet.
+        fontChooser.choose(editor.draft.font, beside: window, awayFrom: store.settings.sidebar.side) { [editor] in
+            editor.draft.font = $0
+        }
     }
 
     /// Each pane reports its content size as its `preferredContentSize`, which changes with its content

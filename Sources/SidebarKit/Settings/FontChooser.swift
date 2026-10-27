@@ -27,8 +27,14 @@ final class FontChooser: NSObject, NSFontChanging {
         self.convert = convert ?? { manager.convert($0) }
     }
 
-    /// Shows the font panel beside `window` on `font` and reports every family or size picked in it.
-    func choose(_ font: SidebarSettings.Font, beside window: NSWindow, onChoose: @escaping (SidebarSettings.Font) -> Void) {
+    /// Shows the font panel beside `window`, on the side away from the sidebar's screen edge, on `font`
+    /// and reports every family or size picked in it.
+    func choose(
+        _ font: SidebarSettings.Font,
+        beside window: NSWindow,
+        awayFrom sidebarSide: SidebarSettings.Sidebar.Side,
+        onChoose: @escaping (SidebarSettings.Font) -> Void
+    ) {
         let selected = Typography(font).bodyFont
         current = selected
         self.onChoose = onChoose
@@ -38,7 +44,7 @@ final class FontChooser: NSObject, NSFontChanging {
         // Without a saved frame AppKit can open the panel off-screen. A panel already showing stays
         // where the user put it.
         if !panel.isVisible, let screen = window.screen {
-            panel.setFrame(Self.frame(of: panel.frame.size, beside: window.frame, in: screen.visibleFrame), display: false)
+            panel.setFrame(Self.frame(of: panel.frame.size, beside: window.frame, awayFrom: sidebarSide, in: screen.visibleFrame), display: false)
         }
         // The window server keeps panels that hide on deactivation off screen while their app is
         // inactive, which this app always is. Like Settings, the panel comes forward without waiting
@@ -47,12 +53,21 @@ final class FontChooser: NSObject, NSFontChanging {
         panel.orderFrontRegardless()
     }
 
-    /// Top-aligned left of `window`, or right of it when the left does not fit, kept within `visible`.
-    /// Left comes first because the sidebar, which floats above the panel, is on the right edge.
-    static func frame(of size: NSSize, beside window: NSRect, in visible: NSRect) -> NSRect {
-        var x = window.minX - spacing - size.width
-        if x < visible.minX {
-            x = window.maxX + spacing
+    /// Top-aligned beside `window` on the side away from the sidebar, which floats above the panel, or on
+    /// the other side when that does not fit; kept within `visible`.
+    static func frame(
+        of size: NSSize,
+        beside window: NSRect,
+        awayFrom sidebarSide: SidebarSettings.Sidebar.Side,
+        in visible: NSRect
+    ) -> NSRect {
+        let left = window.minX - spacing - size.width
+        let right = window.maxX + spacing
+        var x: CGFloat
+        if sidebarSide == .right {
+            x = left >= visible.minX ? left : right
+        } else {
+            x = right + size.width <= visible.maxX ? right : left
         }
         x = min(max(x, visible.minX), visible.maxX - size.width)
         let y = min(max(window.maxY - size.height, visible.minY), visible.maxY - size.height)

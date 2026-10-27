@@ -24,7 +24,7 @@ struct FontChooserTests {
         let sut = chooser(picking: try #require(NSFont(name: "Menlo-Bold", size: 17)))
         var picks: [SidebarSettings.Font] = []
 
-        sut.choose(SidebarSettings.Font(name: "Menlo", size: 15), beside: window) { picks.append($0) }
+        sut.choose(SidebarSettings.Font(name: "Menlo", size: 15), beside: window, awayFrom: .right) { picks.append($0) }
 
         #expect(panel.isVisible)
         #expect(NSFontManager.shared.target === sut)
@@ -41,7 +41,7 @@ struct FontChooserTests {
     @Test func receivesFontManagerChanges() {
         let sut = FontChooser(panel: { [panel] in panel })
         var picks: [SidebarSettings.Font] = []
-        sut.choose(SidebarSettings.Font(name: "Menlo", size: 15), beside: window) { picks.append($0) }
+        sut.choose(SidebarSettings.Font(name: "Menlo", size: 15), beside: window, awayFrom: .right) { picks.append($0) }
         let sizeUp = NSMenuItem()
         sizeUp.tag = Int(NSFontAction.sizeUpFontAction.rawValue)
 
@@ -57,7 +57,7 @@ struct FontChooserTests {
         let sut = chooser(picking: .systemFont(ofSize: 14))
         var picks: [SidebarSettings.Font] = []
 
-        sut.choose(SidebarSettings.Font(name: "Menlo"), beside: window) { picks.append($0) }
+        sut.choose(SidebarSettings.Font(name: "Menlo"), beside: window, awayFrom: .right) { picks.append($0) }
         sut.changeFont(NSFontManager.shared)
 
         #expect(picks == [SidebarSettings.Font(name: "", size: 14)])
@@ -67,7 +67,7 @@ struct FontChooserTests {
     @Test func closeHidesPanelAndStopsReporting() {
         let sut = chooser(picking: .systemFont(ofSize: 14))
         var picks = 0
-        sut.choose(SidebarSettings.Font(), beside: window) { _ in picks += 1 }
+        sut.choose(SidebarSettings.Font(), beside: window, awayFrom: .right) { _ in picks += 1 }
 
         sut.close()
         sut.changeFont(NSFontManager.shared)
@@ -78,17 +78,21 @@ struct FontChooserTests {
     }
 
     @Test(arguments: [
-        // Room on the left: left of the window, top-aligned.
-        (NSRect(x: 600, y: 300, width: 400, height: 500), NSRect(x: 192, y: 300, width: 400, height: 500)),
-        // No room on the left: right of the window.
-        (NSRect(x: 100, y: 300, width: 400, height: 500), NSRect(x: 508, y: 300, width: 400, height: 500)),
+        // Sidebar on the right, room on the left: left of the window, top-aligned.
+        (SidebarSettings.Sidebar.Side.right, NSRect(x: 600, y: 300, width: 400, height: 500), NSRect(x: 192, y: 300, width: 400, height: 500)),
+        // Sidebar on the right, no room on the left: right of the window.
+        (.right, NSRect(x: 100, y: 300, width: 400, height: 500), NSRect(x: 508, y: 300, width: 400, height: 500)),
+        // Sidebar on the left, room on the right: right of the window.
+        (.left, NSRect(x: 600, y: 300, width: 400, height: 500), NSRect(x: 1008, y: 300, width: 400, height: 500)),
+        // Sidebar on the left, no room on the right: left of the window.
+        (.left, NSRect(x: 1400, y: 300, width: 400, height: 500), NSRect(x: 992, y: 300, width: 400, height: 500)),
         // Neither fits, and the top is off-screen: pulled onto the screen.
-        (NSRect(x: 100, y: 700, width: 1700, height: 500), NSRect(x: 1520, y: 400, width: 400, height: 500)),
+        (.right, NSRect(x: 100, y: 700, width: 1700, height: 500), NSRect(x: 1520, y: 400, width: 400, height: 500)),
     ])
-    func placesPanelBesideWindowOnScreen(window: NSRect, expected: NSRect) {
+    func placesPanelAwayFromTheSidebar(side: SidebarSettings.Sidebar.Side, window: NSRect, expected: NSRect) {
         let visible = NSRect(x: 0, y: 0, width: 1920, height: 900)
 
-        #expect(FontChooser.frame(of: NSSize(width: 400, height: 500), beside: window, in: visible) == expected)
+        #expect(FontChooser.frame(of: NSSize(width: 400, height: 500), beside: window, awayFrom: side, in: visible) == expected)
     }
 
     @Test(.enabled(if: !NSScreen.screens.isEmpty, "requires a display"))
@@ -99,7 +103,7 @@ struct FontChooserTests {
         panel.setFrameOrigin(NSPoint(x: 216, y: -5000))
         let sut = chooser(picking: .systemFont(ofSize: 13))
 
-        sut.choose(SidebarSettings.Font(), beside: window) { _ in }
+        sut.choose(SidebarSettings.Font(), beside: window, awayFrom: .right) { _ in }
 
         #expect(panel.frame.maxX == window.frame.minX - FontChooser.spacing)
         #expect(panel.frame.maxY == window.frame.maxY)
@@ -123,7 +127,7 @@ struct FontChooserTests {
         window.orderFrontRegardless()
         let sut = FontChooser()
 
-        sut.choose(SidebarSettings.Font(), beside: window) { _ in }
+        sut.choose(SidebarSettings.Font(), beside: window, awayFrom: .right) { _ in }
         let panel = try #require(NSFontManager.shared.fontPanel(false))
         // The window server applies ordering asynchronously.
         for _ in 0..<100 where !Self.isOnScreen(panel) {
@@ -142,7 +146,7 @@ struct FontChooserTests {
         let showing = chooser(picking: .systemFont(ofSize: 14))
         let idle = chooser(picking: .systemFont(ofSize: 14))
         var picks = 0
-        showing.choose(SidebarSettings.Font(), beside: window) { _ in picks += 1 }
+        showing.choose(SidebarSettings.Font(), beside: window, awayFrom: .right) { _ in picks += 1 }
 
         idle.close()
         showing.changeFont(NSFontManager.shared)
