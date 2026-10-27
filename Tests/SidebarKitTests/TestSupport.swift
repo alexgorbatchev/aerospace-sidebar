@@ -95,6 +95,7 @@ final class FakePlatform: AccessibilityPlatform {
     var observeSucceeds = true
     var observedPIDs: [pid_t] = []
     var handler: (@MainActor (any AccessibilityElement) -> Void)?
+    var exitHandlers: [pid_t: @MainActor () -> Void] = [:]
 
     func isTrusted(prompt: Bool) -> Bool {
         promptRequests.append(prompt)
@@ -111,6 +112,11 @@ final class FakePlatform: AccessibilityPlatform {
         observedPIDs.append(pid)
         self.handler = handler
         return observeSucceeds ? NSObject() : nil
+    }
+
+    func watchExit(of pid: pid_t, handler: @escaping @MainActor () -> Void) -> AnyObject? {
+        exitHandlers[pid] = handler
+        return NSObject()
     }
 }
 

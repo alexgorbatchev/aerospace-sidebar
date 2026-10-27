@@ -160,13 +160,16 @@ struct NotificationCenterMonitorTests {
         #expect(mail.performed.count == 1)
     }
 
-    @Test func reportsMissingNotificationCenter() {
+    @Test func reportsMissingNotificationCenterAndRetries() {
         let harness = Harness()
         harness.platform.pid = nil
 
         harness.monitor.start()
 
         #expect(harness.statuses == [.notificationCenterUnavailable])
+        #expect(harness.monitor.isWaitingToReattach)
+        harness.monitor.stop()
+        #expect(!harness.monitor.isWaitingToReattach)
     }
 
     @Test func reportsRefusedObserver() {
@@ -174,8 +177,64 @@ struct NotificationCenterMonitorTests {
         harness.platform.observeSucceeds = false
 
         harness.monitor.start()
+        defer { harness.monitor.stop() }
 
         #expect(harness.statuses == [.notificationCenterUnavailable])
+        #expect(harness.monitor.isWaitingToReattach)
+    }
+
+    /// Launch notifications alone miss NotificationCenter relaunches, so its exit is watched and the
+    /// monitor attaches to the next NotificationCenter process.
+    @Test func reattachesAfterNotificationCenterExits() async throws {
+        let platform = FakePlatform()
+        var statuses: [InterceptionStatus] = []
+        let monitor = NotificationCenterMonitor(
+            platform: platform,
+            interceptor: SystemNotificationInterceptor { _ in },
+            workspaceCenter: NotificationCenter(),
+            initialReattachDelay: 0.01,
+            onStatus: { statuses.append($0) }
+        )
+        monitor.start()
+        defer { monitor.stop() }
+
+        monitor.notificationCenterExited(pid: 7)
+        #expect(statuses == [.active])
+
+        platform.pid = 99
+        let exited = try #require(platform.exitHandlers[42])
+        exited()
+        #expect(statuses == [.active, .notificationCenterUnavailable])
+        #expect(monitor.isWaitingToReattach)
+        for _ in 0..<200 where statuses.last != .active {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(statuses == [.active, .notificationCenterUnavailable, .active])
+        #expect(platform.observedPIDs == [42, 99])
+        #expect(!monitor.isWaitingToReattach)
+    }
+
+    @Test func attachesAgainAfterWake() {
+        let harness = Harness()
+        harness.monitor.start()
+        defer { harness.monitor.stop() }
+
+        harness.workspaceCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+
+        #expect(harness.platform.observedPIDs == [42, 42])
+    }
+
+    @Test func waitsForPermissionRatherThanWakeOrLaunch() {
+        let harness = Harness()
+        harness.platform.trusted = false
+        harness.monitor.start()
+        defer { harness.monitor.stop() }
+
+        harness.workspaceCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+
+        #expect(harness.statuses == [.needsAccessibility])
+        #expect(harness.platform.observedPIDs.isEmpty)
     }
 
     @Test(.enabled(if: !NSRunningApplication.runningApplications(withBundleIdentifier: NotificationCenterMonitor.notificationCenterBundleID).isEmpty))
@@ -247,6 +306,24 @@ struct SystemAccessibilityTests {
         if trusted {
             #expect(observation != nil)
         }
+    }
+
+    @Test func reportsWhenAProcessExits() async throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        process.arguments = ["30"]
+        try process.run()
+        var exited = false
+        let watch = platform.watchExit(of: process.processIdentifier) { exited = true }
+        #expect(watch != nil)
+
+        process.terminate()
+        for _ in 0..<200 where !exited {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(exited)
+        #expect(platform.watchExit(of: -1) { } == nil)
     }
 
     @Test func findsNotificationCenterProcess() {
