@@ -1,0 +1,13 @@
+[
+  {
+    "author": {
+      "name": "Alex Gorbatchev",
+      "email": "alex.gorbatchev@gmail.com"
+    },
+    "timestamp": 1793135705,
+    "op": "CreateTask",
+    "title": "custom priority rules",
+    "kind": "task",
+    "description": "i want to be able to customize priorities of the notifications, eg i want all slack messages to be high priority for example... im thinking regex matches against string elements and using available history of notifications to show matches'"
+  }
+]
