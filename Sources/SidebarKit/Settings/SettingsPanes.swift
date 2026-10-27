@@ -4,6 +4,9 @@ import SwiftUI
 /// Its steps take effect immediately, so it has no Cancel or Save.
 struct SetupPane: View {
     let onboarding: OnboardingModel
+    let aeroSpace: AeroSpaceSync
+    /// Shows a file in Finder.
+    let reveal: (URL) -> Void
 
     @Environment(\.typography) private var typography
 
@@ -43,6 +46,7 @@ struct SetupPane: View {
                     .fixedSize()
                 }
                 SettingsHint(text: loginHint)
+                SettingsHint(text: onboarding.message)
 
                 SettingsSectionHeader(title: "AeroSpace")
                 SettingsRow(label: "Config") {
@@ -50,35 +54,36 @@ struct SetupPane: View {
                         SetupStep(
                             title: "Update AeroSpace Config",
                             doneTitle: "AeroSpace configured",
-                            isDone: aeroSpaceConfigured,
-                            action: { Task { await onboarding.updateAeroSpace() } }
+                            isDone: aeroSpace.isConfigured,
+                            action: { Task { await aeroSpace.update() } }
                         )
-                        .disabled(onboarding.isUpdatingAeroSpace)
-                        Button("Copy Settings", font: typography.font(.body), action: onboarding.copySnippet)
+                        .disabled(aeroSpace.isUpdating)
+                        Button("Copy Settings", font: typography.font(.body), action: aeroSpace.copySnippet)
                     }
                     .fixedSize()
                 }
                 SettingsHint(text: aeroSpaceHint)
-                if case .ready(let analysis, _) = onboarding.aeroSpace {
+                if case .ready(let analysis, _) = aeroSpace.state {
                     ForEach(analysis.warnings, id: \.self) { warning in
                         SettingsHint(text: warning, color: .orange)
                     }
                 }
-                SettingsHint(text: onboarding.message)
+                SettingsHint(text: aeroSpace.message)
+                if let url = aeroSpace.configURL {
+                    SettingsFileRow(label: "Config file", url: url, reveal: reveal)
+                }
             }
         }
         .frame(width: SettingsMetrics.paneWidth * typography.scale)
         .task {
-            // Permissions change in System Settings while this window is open.
+            // Permissions change in System Settings while this window is open, and the AeroSpace config
+            // may be edited by hand.
             while !Task.isCancelled {
                 onboarding.refresh()
+                aeroSpace.refresh()
                 try? await Task.sleep(for: .seconds(1))
             }
         }
-    }
-
-    private var aeroSpaceConfigured: Bool {
-        if case .ready(let analysis, _) = onboarding.aeroSpace { analysis.isConfigured } else { false }
     }
 
     private var loginHint: String {
@@ -91,27 +96,42 @@ struct SetupPane: View {
     }
 
     private var aeroSpaceHint: String {
-        switch onboarding.aeroSpace {
+        switch aeroSpace.state {
         case .notFound:
             "No AeroSpace config found."
         case .unreadable(let reason):
             "Cannot read the AeroSpace config: \(reason)"
         case .ready(let analysis, let url):
-            if analysis.isConfigured {
-                "\(url.lastPathComponent) reserves \(Int(analysis.width ?? 0)) points for the sidebar."
-            } else {
-                "\(url.lastPathComponent) is missing " + [
-                    analysis.missingGap ? "the sidebar gap" : nil,
-                    analysis.missingFloatRule ? "the floating rule" : nil,
-                ].compactMap { $0 }.joined(separator: " and ") + "."
-            }
+            Self.describe(analysis, file: url.lastPathComponent)
         }
+    }
+
+    static func describe(_ analysis: AeroSpaceConfigEditor.Analysis, file: String) -> String {
+        let sidebar = analysis.sidebar
+        if analysis.isConfigured {
+            return "\(file) reserves \(sidebar.width) points on the \(sidebar.side.rawValue) for the sidebar."
+        }
+        var problems: [String] = []
+        switch analysis.reservedWidth {
+        case nil: problems.append("reserves no sidebar strip on the \(sidebar.side.rawValue)")
+        case let width? where width != sidebar.width: problems.append("reserves \(width) points on the \(sidebar.side.rawValue), not \(sidebar.width)")
+        default: break
+        }
+        if let width = analysis.oppositeReservedWidth {
+            problems.append("also reserves \(width) points on the \(sidebar.side.opposite.rawValue)")
+        }
+        if analysis.missingFloatRule {
+            problems.append("lacks the floating rule")
+        }
+        return "\(file) " + problems.formatted(.list(type: .and)) + "."
     }
 }
 
-/// General: notification, history and font settings from `config.toml`.
+/// General: sidebar, notification, history and font settings from `config.toml`.
 struct GeneralPane: View {
     @Bindable var editor: SettingsEditor
+    /// Reports the AeroSpace update that saving a new side or width starts.
+    let aeroSpace: AeroSpaceSync
     let configURL: URL
     let reveal: (URL) -> Void
     /// Opens the font panel on the draft font.
@@ -125,7 +145,24 @@ struct GeneralPane: View {
     var body: some View {
         VStack(spacing: 0) {
             SettingsGrid {
-                SettingsSectionHeader(title: "Notifications", isFirst: true)
+                SettingsSectionHeader(title: "Sidebar", isFirst: true)
+                SettingsRow(label: "Side") {
+                    Picker("Side", selection: $editor.draft.sidebar.side) {
+                        Text("Left").tag(SidebarSettings.Sidebar.Side.left)
+                        Text("Right").tag(SidebarSettings.Sidebar.Side.right)
+                    }
+                    .pickerStyle(.radioGroup)
+                    .horizontalRadioGroupLayout()
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                SettingsRow(label: "Width") {
+                    NumberField(title: "Width", value: $editor.draft.sidebar.width, stepRange: SidebarSettings.Sidebar.widthRange, unit: "points")
+                }
+                SettingsHint(text: "The sidebar sits on the main display. Saving a new side or width updates the AeroSpace config so tiled windows leave the same strip free, and reloads AeroSpace.")
+                SettingsHint(text: aeroSpace.message)
+
+                SettingsSectionHeader(title: "Notifications")
                 SettingsRow(label: "macOS banners") {
                     Toggle("Show macOS notifications in the sidebar instead", isOn: $editor.draft.notifications.replaceSystem)
                         .toggleStyle(.checkbox)
@@ -171,16 +208,7 @@ struct GeneralPane: View {
                 SettingsHint(text: "Leave empty for the system font. All text sizes scale with Size.")
 
                 SettingsSectionHeader(title: "File")
-                SettingsRow(label: "Settings file") {
-                    Text((configURL.path as NSString).abbreviatingWithTildeInPath)
-                        .font(typography.font(.subheadline))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(configURL.path)
-                        .textSelection(.enabled)
-                } accessory: {
-                    Button("Show in Finder", font: typography.font(.body)) { reveal(configURL) }
-                }
+                SettingsFileRow(label: "Settings file", url: configURL, reveal: reveal)
 
                 SettingsSectionHeader(title: "App")
                 SettingsRow(label: "Sidebar") {
@@ -192,6 +220,28 @@ struct GeneralPane: View {
             SettingsButtonBar(editor: editor, close: close)
         }
         .frame(width: SettingsMetrics.paneWidth * typography.scale)
+    }
+}
+
+/// `Label:` | a file's path, with `~` for the home folder and truncated in the middle | Show in Finder.
+struct SettingsFileRow: View {
+    let label: String
+    let url: URL
+    let reveal: (URL) -> Void
+
+    @Environment(\.typography) private var typography
+
+    var body: some View {
+        SettingsRow(label: label) {
+            Text((url.path as NSString).abbreviatingWithTildeInPath)
+                .font(typography.font(.subheadline))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(url.path)
+                .textSelection(.enabled)
+        } accessory: {
+            Button("Show in Finder", font: typography.font(.body)) { reveal(url) }
+        }
     }
 }
 

@@ -61,12 +61,20 @@ struct SettingsEditorTests {
         (24, 5000, "Keep at most must be between 10 and 2000 notifications."),
     ])
     func rejectsOutOfRangeValues(hours: Int, count: Int, status: String) {
+        rejectsDraft(status: status) { $0.history = SidebarSettings.History(retentionHours: hours, maxCount: count) }
+    }
+
+    @Test func rejectsOutOfRangeWidth() {
+        rejectsDraft(status: "Width must be between 150 and 1000 points.") { $0.sidebar.width = 20 }
+    }
+
+    func rejectsDraft(status: String, _ change: (inout SidebarSettings) -> Void) {
         let editor = SettingsEditor(store: store)
-        editor.draft.history = SidebarSettings.History(retentionHours: hours, maxCount: count)
+        change(&editor.draft)
 
         #expect(!editor.save())
         #expect(editor.status == status)
-        #expect(store.settings.history == SidebarSettings.History())
+        #expect(store.settings == SidebarSettings())
     }
 
     @Test(arguments: [
@@ -144,31 +152,29 @@ struct SettingsPaneTests {
     let platform = FakePlatform()
     let loginItems = FakeLoginItems()
     let onboarding: OnboardingModel
+    let aeroSpace: AeroSpaceSync
 
     init() throws {
         directory = try TemporaryDirectory()
-        store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        self.store = store
         editor = SettingsEditor(store: store)
-        onboarding = OnboardingModel(
-            accessibility: platform,
-            loginItems: loginItems,
-            setup: AeroSpaceSetup(home: directory.url, environment: [:], cli: FakeAeroSpaceCLI()),
-            performer: RecordingPerformer(),
-            copy: { _ in }
-        )
+        onboarding = OnboardingModel(accessibility: platform, loginItems: loginItems, performer: RecordingPerformer())
+        aeroSpace = .fake(store: store, home: directory.url)
     }
 
-    func setup() -> SetupPane {
-        SetupPane(onboarding: onboarding)
+    func setup(reveal: @escaping (URL) -> Void = { _ in }) -> SetupPane {
+        SetupPane(onboarding: onboarding, aeroSpace: aeroSpace, reveal: reveal)
     }
 
     func general(configURL: URL? = nil, close: @escaping () -> Void = {}) -> GeneralPane {
-        GeneralPane(editor: editor, configURL: configURL ?? store.file.url, reveal: { _ in }, chooseFont: {}, quit: {}, close: close)
+        GeneralPane(editor: editor, aeroSpace: aeroSpace, configURL: configURL ?? store.file.url, reveal: { _ in }, chooseFont: {}, quit: {}, close: close)
     }
 
     @Test func setupOffersActionsForMissingSteps() throws {
         platform.trusted = false
         onboarding.refresh()
+        aeroSpace.refresh()
         let sut = try setup().inspect()
         #expect(throws: Never.self) { try sut.find(text: "AerospaceSidebar does not open at login.") }
         #expect(try sut.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Not done" }).count == 3)
@@ -190,6 +196,7 @@ struct SettingsPaneTests {
         loginItems.status = .enabled
         try directory.write("[gaps]\nouter.right = [{ monitor.main = 305 }, 5]\n\n\(AeroSpaceConfigEditor.floatRule)\n", to: ".aerospace.toml")
         onboarding.refresh()
+        aeroSpace.refresh()
         let sut = try setup().inspect()
 
         for done in ["Accessibility granted", "Opens at login", "AeroSpace configured"] {
@@ -197,7 +204,7 @@ struct SettingsPaneTests {
         }
         #expect(try sut.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Done" }).count == 3)
         #expect(throws: (any Error).self) { try sut.find(button: "Open Accessibility") }
-        #expect(throws: Never.self) { try sut.find(text: ".aerospace.toml reserves 300 points for the sidebar.") }
+        #expect(throws: Never.self) { try sut.find(text: ".aerospace.toml reserves 300 points on the right for the sidebar.") }
         try sut.find(button: "Remove").tap()
         #expect(loginItems.status == .disabled)
     }
@@ -206,39 +213,86 @@ struct SettingsPaneTests {
         loginItems.status = .requiresApproval
         try directory.write("[mode.main.binding]\nalt-f = 'fullscreen --no-outer-gaps'\n", to: ".aerospace.toml")
         onboarding.refresh()
+        aeroSpace.refresh()
         let sut = try setup().inspect()
 
         try sut.find(button: "Open Login Items").tap()
         #expect(loginItems.openedSettings == 1)
-        #expect(throws: Never.self) { try sut.find(text: ".aerospace.toml is missing the sidebar gap and the floating rule.") }
+        #expect(throws: Never.self) { try sut.find(text: ".aerospace.toml reserves no sidebar strip on the right and lacks the floating rule.") }
         #expect(throws: Never.self) { try sut.find(textWhere: { text, _ in text.contains("--no-outer-gaps") }) }
 
         try directory.write("", to: ".config/aerospace/aerospace.toml")
         loginItems.status = .unavailable
         onboarding.refresh()
+        aeroSpace.refresh()
         let refreshed = try setup().inspect()
         #expect(throws: Never.self) { try refreshed.find(textWhere: { text, _ in text.hasPrefix("Cannot read the AeroSpace config") }) }
         #expect(throws: Never.self) { try refreshed.find(text: "Install the app in Applications to open it at login.") }
     }
 
+    @Test(arguments: [
+        (300, nil as Int?, false, "a.toml reserves 300 points on the left for the sidebar."),
+        (250, nil, true, "a.toml reserves 250 points on the left, not 300 and lacks the floating rule."),
+        (nil, 300, false, "a.toml reserves no sidebar strip on the left and also reserves 300 points on the right."),
+    ] as [(Int?, Int?, Bool, String)])
+    func describesAeroSpaceConfigAgainstSettings(reserved: Int?, opposite: Int?, missingFloatRule: Bool, hint: String) {
+        let analysis = AeroSpaceConfigEditor.Analysis(
+            sidebar: .init(side: .left, width: 300),
+            reservedWidth: reserved,
+            oppositeReservedWidth: opposite,
+            missingFloatRule: missingFloatRule,
+            warnings: []
+        )
+
+        #expect(SetupPane.describe(analysis, file: "a.toml") == hint)
+    }
+
+    @Test func setupShowsTheAeroSpaceConfigInFinder() throws {
+        var revealed: [URL] = []
+        #expect(throws: (any Error).self) { try setup().inspect().find(text: "Config file:") }
+
+        try directory.write("", to: ".aerospace.toml")
+        aeroSpace.refresh()
+        let sut = try setup(reveal: { revealed.append($0) }).inspect()
+        try sut.find(button: "Show in Finder").tap()
+
+        #expect(revealed == [directory.url.appendingPathComponent(".aerospace.toml")])
+        #expect(throws: Never.self) { try sut.find(text: directory.url.appendingPathComponent(".aerospace.toml").path) }
+    }
+
+    @Test func setupChecksAeroSpaceAgainstSavedSidebar() throws {
+        try directory.write("[gaps]\nouter.right = [{ monitor.main = 305 }, 5]\n\n\(AeroSpaceConfigEditor.floatRule)\n", to: ".aerospace.toml")
+        store.update { $0.sidebar.side = .left }
+        onboarding.refresh()
+        aeroSpace.refresh()
+
+        let sut = try setup().inspect()
+
+        #expect(throws: Never.self) { try sut.find(button: "Update AeroSpace Config") }
+        #expect(throws: Never.self) { try sut.find(text: ".aerospace.toml reserves no sidebar strip on the left and also reserves 300 points on the right.") }
+    }
+
     @Test func updateButtonEditsAeroSpaceConfig() async throws {
         try directory.write("[gaps]\nouter.right = 5\n", to: ".config/aerospace/aerospace.toml")
         onboarding.refresh()
+        aeroSpace.refresh()
 
         try setup().inspect().find(button: "Update AeroSpace Config").tap()
-        for _ in 0..<100 where onboarding.message == nil {
+        for _ in 0..<100 where aeroSpace.message == nil {
             try await Task.sleep(for: .milliseconds(10))
         }
 
-        #expect(onboarding.message?.hasPrefix("Updated and reloaded AeroSpace.") == true)
+        #expect(aeroSpace.message?.hasPrefix("Updated and reloaded AeroSpace.") == true)
     }
 
     @Test func generalPaneEditsDraftAndSaves() throws {
         var closed = 0
         var revealed: [URL] = []
         var chooses = 0
-        let sut = try GeneralPane(editor: editor, configURL: store.file.url, reveal: { revealed.append($0) }, chooseFont: { chooses += 1 }, quit: {}, close: { closed += 1 }).inspect()
+        let sut = try GeneralPane(editor: editor, aeroSpace: aeroSpace, configURL: store.file.url, reveal: { revealed.append($0) }, chooseFont: { chooses += 1 }, quit: {}, close: { closed += 1 }).inspect()
 
+        try sut.find(ViewType.Picker.self).select(value: SidebarSettings.Sidebar.Side.left)
+        try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Width" }).setInput("420")
         try sut.find(ViewType.Toggle.self).tap()
         try sut.find(ViewType.Toggle.self, where: { try $0.labelView().text().string() == "Leave notifications with buttons to macOS" }).tap()
         try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Apps left to macOS" }).setInput("zoom.us, Calendar")
@@ -251,6 +305,7 @@ struct SettingsPaneTests {
 
         try sut.find(button: "Save").tap()
 
+        #expect(store.settings.sidebar == .init(side: .left, width: 420))
         #expect(store.settings.notifications == .init(replaceSystem: false, actionableLeftToMacOS: false, appsLeftToMacOS: ["zoom.us", "Calendar"]))
         #expect(store.settings.font == SidebarSettings.Font(name: "Menlo", size: 15))
         #expect(revealed == [store.file.url])
@@ -262,8 +317,9 @@ struct SettingsPaneTests {
         platform.trusted = false
         loginItems.status = .enabled
         onboarding.refresh()
+        aeroSpace.refresh()
         let typography = Typography(SidebarSettings.Font(name: "Menlo", size: 18))
-        let general = try GeneralPane(editor: editor, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, quit: {}, close: {})
+        let general = try GeneralPane(editor: editor, aeroSpace: aeroSpace, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, quit: {}, close: {})
             .environment(\.typography, typography).inspect()
         let setupPane = try setup().environment(\.typography, typography).inspect()
         #expect(throws: Never.self) { try general.find(text: "Family:") }
@@ -281,7 +337,7 @@ struct SettingsPaneTests {
     @Test func quitButtonQuits() throws {
         var quits = 0
 
-        try GeneralPane(editor: editor, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, quit: { quits += 1 }, close: {}).inspect()
+        try GeneralPane(editor: editor, aeroSpace: aeroSpace, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, quit: { quits += 1 }, close: {}).inspect()
             .find(button: "Quit Sidebar").tap()
 
         #expect(quits == 1)
@@ -291,7 +347,7 @@ struct SettingsPaneTests {
         var closed = 0
         editor.draft.history.maxCount = 900
 
-        try GeneralPane(editor: editor, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, quit: {}, close: { closed += 1 }).inspect()
+        try GeneralPane(editor: editor, aeroSpace: aeroSpace, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, quit: {}, close: { closed += 1 }).inspect()
             .find(button: "Cancel").tap()
 
         #expect(editor.draft == store.settings)
@@ -316,7 +372,7 @@ struct SettingsPaneTests {
     }
 
     @Test func everyNumberFieldHasArrows() throws {
-        #expect(try general().inspect().findAll(ViewType.Stepper.self).count == 3)
+        #expect(try general().inspect().findAll(ViewType.Stepper.self).count == 4)
     }
 
     @Test func numberFieldShowsUnit() throws {
@@ -328,7 +384,7 @@ struct SettingsPaneTests {
 
     @Test func fontSizeArrowsStepWithinRange() throws {
         _ = NSApplication.shared
-        let host = NSHostingView(rootView: GeneralPane(editor: editor, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, quit: {}, close: {}))
+        let host = NSHostingView(rootView: GeneralPane(editor: editor, aeroSpace: aeroSpace, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, quit: {}, close: {}))
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: host.fittingSize), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
         host.layoutSubtreeIfNeeded()
@@ -371,13 +427,7 @@ struct SettingsWindowControllerTests {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
-        let controller = SettingsWindowController(store: store, onboarding: OnboardingModel(
-            accessibility: FakePlatform(),
-            loginItems: FakeLoginItems(),
-            setup: AeroSpaceSetup(home: directory.url, environment: [:], cli: FakeAeroSpaceCLI()),
-            performer: RecordingPerformer(),
-            copy: { _ in }
-        ), reveal: { _ in })
+        let controller = SettingsWindowController(store: store, onboarding: .fake(), aeroSpace: .fake(store: store, home: directory.url), reveal: { _ in })
         controller.tabs.selectedTabViewItemIndex = 1
         controller.editor.draft.history.maxCount = 999
 
@@ -404,13 +454,7 @@ struct SettingsWindowControllerTests {
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
         var terminateCalls = 0
-        let controller = SettingsWindowController(store: store, onboarding: OnboardingModel(
-            accessibility: FakePlatform(),
-            loginItems: FakeLoginItems(),
-            setup: AeroSpaceSetup(home: directory.url, environment: [:], cli: FakeAeroSpaceCLI()),
-            performer: RecordingPerformer(),
-            copy: { _ in }
-        ), reveal: { _ in }, terminate: { _ in terminateCalls += 1 })
+        let controller = SettingsWindowController(store: store, onboarding: .fake(), aeroSpace: .fake(store: store, home: directory.url), reveal: { _ in }, terminate: { _ in terminateCalls += 1 })
         let general = try #require(
             controller.tabs.tabViewItems[1].viewController as? NSHostingController<ModifiedContent<GeneralPane, TypographyModifier>>
         )
@@ -426,13 +470,7 @@ struct SettingsWindowControllerTests {
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
         let picked = try #require(NSFont(name: "Menlo-Regular", size: 16))
-        let controller = SettingsWindowController(store: store, onboarding: OnboardingModel(
-            accessibility: FakePlatform(),
-            loginItems: FakeLoginItems(),
-            setup: AeroSpaceSetup(home: directory.url, environment: [:], cli: FakeAeroSpaceCLI()),
-            performer: RecordingPerformer(),
-            copy: { _ in }
-        ), fontChooser: FontChooser(panel: { panel }, convert: { _ in picked }), reveal: { _ in })
+        let controller = SettingsWindowController(store: store, onboarding: .fake(), aeroSpace: .fake(store: store, home: directory.url), fontChooser: FontChooser(panel: { panel }, convert: { _ in picked }), reveal: { _ in })
         controller.show()
 
         controller.chooseFont()
@@ -449,13 +487,7 @@ struct SettingsWindowControllerTests {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
-        let controller = SettingsWindowController(store: store, onboarding: OnboardingModel(
-            accessibility: FakePlatform(),
-            loginItems: FakeLoginItems(),
-            setup: AeroSpaceSetup(home: directory.url, environment: [:], cli: FakeAeroSpaceCLI()),
-            performer: RecordingPerformer(),
-            copy: { _ in }
-        ), reveal: { _ in })
+        let controller = SettingsWindowController(store: store, onboarding: .fake(), aeroSpace: .fake(store: store, home: directory.url), reveal: { _ in })
         controller.show()
         let setup = controller.window.frame
 
@@ -473,20 +505,14 @@ struct SettingsWindowControllerTests {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
-        let onboarding = OnboardingModel(
-            accessibility: FakePlatform(),
-            loginItems: FakeLoginItems(),
-            setup: AeroSpaceSetup(home: directory.url, environment: [:], cli: FakeAeroSpaceCLI()),
-            performer: RecordingPerformer(),
-            copy: { _ in }
-        )
-        let controller = SettingsWindowController(store: store, onboarding: onboarding, reveal: { _ in })
+        let aeroSpace = AeroSpaceSync.fake(store: store, home: directory.url)
+        let controller = SettingsWindowController(store: store, onboarding: .fake(), aeroSpace: aeroSpace, reveal: { _ in })
         controller.show()
         let before = controller.window.frame
 
         // A config with problems adds warning lines to the Setup pane.
         try directory.write("[mode.main.binding]\nalt-f = 'fullscreen --no-outer-gaps'\n", to: ".aerospace.toml")
-        onboarding.refresh()
+        aeroSpace.refresh()
         for _ in 0..<100 where controller.window.frame.height == before.height {
             try await Task.sleep(for: .milliseconds(10))
         }
@@ -500,13 +526,7 @@ struct SettingsWindowControllerTests {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
-        let controller = SettingsWindowController(store: store, onboarding: OnboardingModel(
-            accessibility: FakePlatform(),
-            loginItems: FakeLoginItems(),
-            setup: AeroSpaceSetup(home: directory.url, environment: [:], cli: FakeAeroSpaceCLI()),
-            performer: RecordingPerformer(),
-            copy: { _ in }
-        ), reveal: { _ in })
+        let controller = SettingsWindowController(store: store, onboarding: .fake(), aeroSpace: .fake(store: store, home: directory.url), reveal: { _ in })
         controller.show()
         let before = controller.window.frame
 
@@ -522,13 +542,7 @@ struct SettingsWindowControllerTests {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
-        let controller = SettingsWindowController(store: store, onboarding: OnboardingModel(
-            accessibility: FakePlatform(),
-            loginItems: FakeLoginItems(),
-            setup: AeroSpaceSetup(home: directory.url, environment: [:], cli: FakeAeroSpaceCLI()),
-            performer: RecordingPerformer(),
-            copy: { _ in }
-        ), reveal: { _ in })
+        let controller = SettingsWindowController(store: store, onboarding: .fake(), aeroSpace: .fake(store: store, home: directory.url), reveal: { _ in })
         let before = controller.window.frame
 
         store.update { $0.font.size = 26 }

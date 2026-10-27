@@ -1,9 +1,9 @@
 import Foundation
-import SidebarKit
+@testable import SidebarKit
 import Testing
 
 struct AeroSpaceConfigTests {
-    @Test func sidebarWidthIsMainGapMinusFallback() throws {
+    @Test func readsBothOuterGaps() throws {
         let toml = """
             start-at-login = true
 
@@ -22,44 +22,48 @@ struct AeroSpaceConfigTests {
 
         let config = try AeroSpaceConfig(toml: toml)
 
-        #expect(config.sidebarWidth == 300)
+        #expect(config.gap(on: .left) == AeroSpaceConfig.Gap(fallback: 5))
+        #expect(config.gap(on: .right) == AeroSpaceConfig.Gap(fallback: 5, monitors: [.init(pattern: "^LG.*", value: 50), .init(pattern: "main", value: 305)]))
+        #expect(config.gap(on: .right).main == 305)
+        #expect(config.gap(on: .left).reservedWidth == nil)
+        #expect(config.gap(on: .right).reservedWidth == 300)
     }
 
     @Test(arguments: [
-        "",
-        "[gaps]\nouter.left = 5",
-        "[gaps]\nouter.right = 305",
-        "[gaps]\nouter.right = [{ monitor.secondary = 305 }, 5]",
+        ("", nil as Int?),
+        ("[gaps]\nouter.left = 305", nil),
+        ("[gaps]\nouter.left = [{ monitor.secondary = 305 }, 5]", nil),
+        ("[gaps]\nouter.left = [{ monitor.main = 5 }, 5]", nil),
+        ("[gaps.outer]\nleft = [{ monitor.main = 250 }, 10]", 240),
     ])
-    func rejectsConfigWithoutMainMonitorGap(toml: String) {
-        #expect(throws: AeroSpaceConfig.Error.noMainMonitorGap) {
+    func reservesOnlyAMainEntryWiderThanTheFallback(toml: String, reserved: Int?) throws {
+        #expect(try AeroSpaceConfig(toml: toml).gap(on: .left).reservedWidth == reserved)
+    }
+
+    @Test(arguments: [
+        "[gaps]\nouter.right = [{ monitor.main = 305 }]",
+        "[gaps]\nouter.right = [{ monitor = { main = 1, secondary = 2 } }, 0]",
+    ])
+    func rejectsGapsItCannotKeepInOrder(toml: String) {
+        #expect(throws: AeroSpaceConfig.Error.unsupportedGap(side: .right)) {
             try AeroSpaceConfig(toml: toml)
         }
     }
 
-    @Test func rejectsMainGapNotWiderThanFallback() {
-        #expect(throws: AeroSpaceConfig.Error.gapNotWiderThanFallback(main: 5, fallback: 5)) {
-            try AeroSpaceConfig(toml: "[gaps]\nouter.right = [{ monitor.main = 5 }, 5]")
-        }
-    }
-
-    @Test func loadsFromXDGConfigHome() throws {
+    @Test func locatesXDGConfigHome() throws {
         let home = try TemporaryDirectory()
         let xdg = home.url.appendingPathComponent("xdg")
-        try home.write("[gaps]\nouter.right = [{ monitor.main = 250 }, 10]", to: "xdg/aerospace/aerospace.toml")
+        try home.write("", to: "xdg/aerospace/aerospace.toml")
 
-        let config = try AeroSpaceConfig.load(home: home.url, environment: ["XDG_CONFIG_HOME": xdg.path])
-
-        #expect(config.sidebarWidth == 240)
+        #expect(try AeroSpaceConfig.locate(home: home.url, environment: ["XDG_CONFIG_HOME": xdg.path])
+            == xdg.appendingPathComponent("aerospace/aerospace.toml"))
     }
 
-    @Test func loadsFromHomeDotfile() throws {
+    @Test func locatesHomeDotfile() throws {
         let home = try TemporaryDirectory()
-        try home.write("[gaps]\nouter.right = [{ monitor.main = 305 }, 5]", to: ".aerospace.toml")
+        try home.write("", to: ".aerospace.toml")
 
-        let config = try AeroSpaceConfig.load(home: home.url, environment: [:])
-
-        #expect(config.sidebarWidth == 300)
+        #expect(try AeroSpaceConfig.locate(home: home.url, environment: [:]) == home.url.appendingPathComponent(".aerospace.toml"))
     }
 
     @Test func rejectsAmbiguousConfigLocations() throws {
@@ -71,7 +75,7 @@ struct AeroSpaceConfigTests {
             home.url.appendingPathComponent(".aerospace.toml"),
             home.url.appendingPathComponent(".config/aerospace/aerospace.toml"),
         ])) {
-            try AeroSpaceConfig.load(home: home.url, environment: [:])
+            try AeroSpaceConfig.locate(home: home.url, environment: [:])
         }
     }
 
@@ -82,7 +86,7 @@ struct AeroSpaceConfigTests {
             home.url.appendingPathComponent(".aerospace.toml"),
             home.url.appendingPathComponent(".config/aerospace/aerospace.toml"),
         ])) {
-            try AeroSpaceConfig.load(home: home.url, environment: [:])
+            try AeroSpaceConfig.locate(home: home.url, environment: [:])
         }
     }
 }

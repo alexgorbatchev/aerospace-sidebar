@@ -151,3 +151,73 @@ final class FakeAeroSpaceCLI: AeroSpaceCommandRunning, @unchecked Sendable {
         return results[arguments.dropFirst().first ?? ""] ?? CommandResult(status: 0, output: "")
     }
 }
+
+/// Holds every `aerospace` call until `resumeAll()`, so a test can act while an update is in flight.
+final class SuspendingAeroSpaceCLI: AeroSpaceCommandRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var held: [CheckedContinuation<Void, Never>] = []
+    private var callObservers: [CheckedContinuation<Void, Never>] = []
+    private var isReleased = false
+
+    func run(_ arguments: [String]) async -> CommandResult {
+        await withCheckedContinuation { continuation in
+            let resumeNow = lock.withLock {
+                callObservers.forEach { $0.resume() }
+                callObservers = []
+                if !isReleased { held.append(continuation) }
+                return isReleased
+            }
+            if resumeNow { continuation.resume() }
+        }
+        return CommandResult(status: 0, output: "")
+    }
+
+    /// Returns once a call is being held.
+    func waitForCall() async {
+        await withCheckedContinuation { continuation in
+            lock.withLock {
+                if held.isEmpty { callObservers.append(continuation) } else { continuation.resume() }
+            }
+        }
+    }
+
+    /// Lets held and later calls finish.
+    func resumeAll() {
+        let released = lock.withLock {
+            isReleased = true
+            defer { held = [] }
+            return held
+        }
+        released.forEach { $0.resume() }
+    }
+}
+
+extension AeroSpaceSetup {
+    /// Reports AeroSpace as running unless told otherwise, so tests take the same path on machines with
+    /// and without AeroSpace.
+    static func forTesting(
+        home: URL,
+        environment: [String: String],
+        cli: any AeroSpaceCommandRunning,
+        isAeroSpaceRunning: Bool = true
+    ) -> AeroSpaceSetup {
+        AeroSpaceSetup(home: home, environment: environment, cli: cli, isAeroSpaceRunning: { isAeroSpaceRunning })
+    }
+}
+
+extension OnboardingModel {
+    static func fake() -> OnboardingModel {
+        OnboardingModel(accessibility: FakePlatform(), loginItems: FakeLoginItems(), performer: RecordingPerformer())
+    }
+}
+
+extension AeroSpaceSync {
+    /// Syncs `store`'s sidebar with a config under `home`, never the real AeroSpace config.
+    static func fake(store: SettingsStore, home: URL, cli: any AeroSpaceCommandRunning = FakeAeroSpaceCLI()) -> AeroSpaceSync {
+        AeroSpaceSync(
+            setup: .forTesting(home: home, environment: [:], cli: cli),
+            sidebar: { store.settings.sidebar },
+            copy: { _ in }
+        )
+    }
+}

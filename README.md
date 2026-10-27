@@ -1,8 +1,8 @@
-`aerospace-sidebar` is a permanent notification sidebar for macOS users of the [AeroSpace](https://github.com/nikitabobko/AeroSpace) tiling window manager. It takes over the right edge of the main display, replaces macOS notification banners with a list that stays until you deal with it, and lets scripts, agents and web pages push their own notifications with click actions.
+`aerospace-sidebar` is a permanent notification sidebar for macOS users of the [AeroSpace](https://github.com/nikitabobko/AeroSpace) tiling window manager. It takes over the right or left edge of the main display, replaces macOS notification banners with a list that stays until you deal with it, and lets scripts, agents and web pages push their own notifications with click actions.
 
 # What It Does
 
-- **Reserved screen strip**: a panel on the right edge of the main display that tiled windows never cover, on every Space and over full-screen apps.
+- **Reserved screen strip**: a panel on the right or left edge of the main display that tiled windows never cover, on every Space and over full-screen apps.
 - **macOS notifications, kept**: native banners are hidden and listed in the sidebar instead, so nothing disappears after five seconds.
 - **Interactive notifications left alone**: notifications with buttons or reply fields stay on screen as macOS shows them, and are also listed. Turn this off in Settings to list them without their buttons instead. Alerts without buttons are listed like any other notification.
 - **Push from anywhere**: the `aerospace-sidebar` command and `aerospace-sidebar://` links add notifications.
@@ -15,7 +15,7 @@
 
 # How It Works
 
-- AeroSpace leaves an empty strip on the right edge of the main display, and the sidebar fills it.
+- AeroSpace leaves an empty strip on one edge of the main display, and the sidebar fills it.
 - When an app posts a macOS notification, its banner vanishes and the notification appears at the top of its severity group in the sidebar.
 - `aerospace-sidebar notification push` sends a notification from the terminal, starting the sidebar first when it is not running.
 - A notification with the same sender, text, severity, icon and click action as a listed one is stacked onto it: the card moves up as the newest, shows `×2`, `×3`, … next to its time, and gets layered edges below it. Clicking or dismissing a stack removes all of its copies.
@@ -24,7 +24,7 @@
 
 # How it Really Works
 
-- The sidebar's width is read from AeroSpace's own config: the `monitor.main` entry of `gaps.outer.right` minus its fallback value. With `[{ monitor.main = 305 }, 5]`, the sidebar is 300 points wide and keeps AeroSpace's 5-point gap to your windows. The width is read at launch and when displays change.
+- The sidebar's side and width come from its own settings (`[sidebar]` in `config.toml`). AeroSpace has to leave the same strip free: the `monitor.main` entry of `gaps.outer.<side>` minus that side's fallback value is the reserved width. With `outer.right = [{ monitor.main = 305 }, 5]`, a 300-point sidebar on the right keeps AeroSpace's 5-point gap to your windows. The sidebar keeps AeroSpace's config in step: at launch, whenever the AeroSpace config file changes, and whenever you change the side or width (in Settings or in `config.toml`), it rewrites its block in that file when the strip is missing or wrong, then reloads AeroSpace. The block sits in the `[gaps]` table between `# >>> aerospace-sidebar` and `# <<< aerospace-sidebar <<<` and owns `outer.left` and `outer.right`; the sidebar keeps the other monitors' entries and fallback values in it. A config written by a generator is repaired after each regeneration; to avoid the round trip, keep the block in the generator's source and carry it over from the previous output.
 - Notifications are read through the macOS Accessibility API from the Notification Center process, which is why the app needs the Accessibility permission. Focus and Do Not Disturb suppress notifications before the sidebar sees them.
 - Banners are hidden by moving Notification Center's banner window off-screen and closing the banner. Quitting the sidebar moves that window back.
 - `aerospace-sidebar notification push` talks to the app over a socket in your private temporary directory (`$(getconf DARWIN_USER_TEMP_DIR)com.alexgorbatchev.aerospace-sidebar.sock`) that only your user account can open. This is the only way to attach a `--run` command.
@@ -32,9 +32,9 @@
 - App icons come from sketchybar-app-font (CC0), which ships inside the app, so nothing needs installing. An icon id is written `slack` or `:slack:`; one the font does not have leaves the notification without an icon and adds a small `Invalid icon: <id>` note under its text. Several apps can share one icon, such as `mail` for Mail, Spark and HEY. [`icon_map.json`](Resources/sketchybar-app-font/icon_map.json) lists every id with the apps it stands for.
 - `--run` commands run with your login shell (`$SHELL -lc`) in the directory where you ran `aerospace-sidebar`. Their output is discarded.
 - The list is saved to `~/Library/Application Support/com.alexgorbatchev.aerospace-sidebar/notifications.json` on every change and holds at most 200 notifications by default; a stack counts as one.
-- The list draws its own thin scroll indicator in the right margin instead of the system scroll bar, so the cards keep their width when a mouse is attached. It appears while scrolling or when the pointer is over that margin, and can be dragged.
+- The list draws its own thin scroll indicator in the margin on the sidebar's screen edge instead of the system scroll bar, so the cards keep their width when a mouse is attached. It appears while scrolling or when the pointer is over that margin, and can be dragged.
 - Settings live in `${XDG_CONFIG_HOME:-~/.config}/aerospace-sidebar/config.toml`. Edits to that file apply immediately; saving from the Settings window rewrites it and drops comments.
-- Settings › Setup › Update AeroSpace Config edits your AeroSpace config in place, keeping its comments, saves the original next to it as `aerospace.toml.bak-<timestamp>`, checks the result with `aerospace reload-config --dry-run`, and puts the original back if AeroSpace rejects it. It leaves files marked as generated alone.
+- Each edit keeps the rest of your AeroSpace config and its comments, saves the previous version next to it as `aerospace.toml.bak`, checks the result with `aerospace reload-config --dry-run`, and puts the previous version back if AeroSpace rejects it. While AeroSpace is not running the edit is kept unchecked, and AeroSpace reads it when it starts. Settings › Setup shows the result, and **Update AeroSpace Config** runs the same edit on demand.
 - Success messages go to stdout and errors to stderr. Exit codes: `0` success, `1` notification rejected or undeliverable, `64` invalid arguments, `74` output could not be written. With `AGENT=1`, output is compact: `OK: pushed`, or `ERR: <code>: <detail>`.
 
 # Installation
@@ -49,12 +49,15 @@ curl -sSL https://github.com/alexgorbatchev/aerospace-sidebar/releases/latest/do
 
 # Setup
 
-Open `~/Applications/AerospaceSidebar.app`, click the gear button at the top of the sidebar, and use the **Setup** tab. Each step can also be done by hand:
+Open `~/Applications/AerospaceSidebar.app`, click the gear button at the top of the sidebar, choose the sidebar's side and width in the **General** tab if the default (300 points on the right) does not suit you, and use the **Setup** tab. Each step can also be done by hand:
 
-- [AeroSpace](https://nikitabobko.github.io/AeroSpace/guide) - Reserves the strip. **Update AeroSpace Config** adds the gap and a floating rule; by hand, add them to `~/.config/aerospace/aerospace.toml` and run `aerospace reload-config`:
+- [AeroSpace](https://nikitabobko.github.io/AeroSpace/guide) - Reserves the strip. The sidebar adds its gap block and a floating rule to an existing AeroSpace config at launch; it never creates the file. **Copy Settings** copies them for adding by hand, after which you run `aerospace reload-config`:
   ```toml
   [gaps]
-  outer.right = [{ monitor.main = 305 }, 5]
+  # >>> aerospace-sidebar: managed block, rewritten when the sidebar's side or width changes >>>
+  outer.left = 5
+  outer.right = [{ monitor.main = 305 }, 5]   # sidebar width + the fallback gap
+  # <<< aerospace-sidebar <<<
 
   [[on-window-detected]]
   if = 'test %{app-bundle-id} = com.alexgorbatchev.aerospace-sidebar'
@@ -131,6 +134,10 @@ A notification needs `--title` or `--body`. `--open` and `--run` cannot be combi
 `~/.config/aerospace-sidebar/config.toml` (or under `$XDG_CONFIG_HOME`), also editable in Settings › General:
 
 ```toml
+[sidebar]
+side = "right"                           # "right" or "left" edge of the main display
+width = 300                              # 150 to 1000 points; changing side or width updates and reloads the AeroSpace config
+
 [notifications]
 replace_system = true                    # hide macOS banners and list them in the sidebar
 actionable_left_to_macos = true          # leave notifications with buttons (Reply, Snooze) to macOS

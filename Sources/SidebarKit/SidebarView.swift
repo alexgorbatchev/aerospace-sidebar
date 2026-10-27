@@ -4,6 +4,8 @@ import SwiftUI
 /// Root content of the sidebar panel.
 struct SidebarView: View {
     let model: SidebarModel
+    /// The screen edge the sidebar is pinned to; the top buttons and the scroll indicator align to it.
+    let side: SidebarSettings.Sidebar.Side
     let openSettings: () -> Void
 
     static let margin: CGFloat = 16
@@ -19,7 +21,7 @@ struct SidebarView: View {
     @State private var hoveredID: SidebarNotification.ID?
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 6) {
+        VStack(alignment: screenEdge, spacing: 6) {
             controls
             if let message = statusMessage {
                 VStack(alignment: .leading, spacing: 6) {
@@ -38,7 +40,7 @@ struct SidebarView: View {
                 .padding(.horizontal, Self.margin)
                 .transition(.opacity)
             }
-            // The list spans the full width so the scroll indicator sits in the trailing margin.
+            // The list spans the full width so the scroll indicator sits in the margin on the sidebar's screen edge.
             ScrollView {
                 LazyVStack(spacing: 8) {
                     ForEach(model.notifications, id: \.viewIdentity) { notification in
@@ -66,7 +68,7 @@ struct SidebarView: View {
             .onScrollGeometryChange(for: ScrollMetrics.self, of: ScrollMetrics.init) { scrollMetrics = $1 }
             .onScrollPhaseChange { isScrolling = $1.isScrolling }
             .mask { EdgeFadeMask(fadesTop: scrollMetrics.hasContentAbove, fadesBottom: scrollMetrics.hasContentBelow) }
-            .overlay(alignment: .trailing) {
+            .overlay(alignment: Alignment(horizontal: screenEdge, vertical: .center)) {
                 if scrollMetrics.isScrollable {
                     ScrollIndicator(metrics: scrollMetrics, isScrolling: isScrolling) { scrollPosition.scrollTo(y: $0) }
                 }
@@ -89,14 +91,25 @@ struct SidebarView: View {
         .animation(Self.motion, value: model.interception)
     }
 
-    /// Clear All and Settings as small round icon buttons in the top trailing corner. Their labels open
-    /// toward the leading edge, so the icon under the pointer stays put.
+    /// The sidebar's screen edge, where the top buttons and the scroll indicator sit.
+    var screenEdge: HorizontalAlignment { side == .left ? .leading : .trailing }
+
+    /// Clear All and Settings as small round icon buttons in the top corner on the sidebar's screen edge,
+    /// Settings outermost. Their labels open away from that edge, so the icon under the pointer stays put.
     private var controls: some View {
-        HStack(spacing: 4) {
-            ExpandingIconButton("Clear All", systemImage: "xmark", expandsToward: .leading, action: model.clear)
-                .disabled(model.notifications.isEmpty)
-            ExpandingIconButton("Settings", systemImage: "gearshape", expandsToward: .leading, action: openSettings)
-                .keyboardShortcut(",", modifiers: .command)
+        let expandsToward: HorizontalEdge = side == .left ? .trailing : .leading
+        let clearAll = ExpandingIconButton("Clear All", systemImage: "xmark", expandsToward: expandsToward, action: model.clear)
+            .disabled(model.notifications.isEmpty)
+        let settings = ExpandingIconButton("Settings", systemImage: "gearshape", expandsToward: expandsToward, action: openSettings)
+            .keyboardShortcut(",", modifiers: .command)
+        return HStack(spacing: 4) {
+            if side == .left {
+                settings
+                clearAll
+            } else {
+                clearAll
+                settings
+            }
         }
         .padding(.horizontal, Self.margin)
     }

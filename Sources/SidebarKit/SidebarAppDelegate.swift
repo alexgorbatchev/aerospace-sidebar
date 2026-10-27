@@ -10,6 +10,11 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     public let settings: SettingsStore
     public let model: SidebarModel
     public let icons: AppIconFont
+    /// Keeps the AeroSpace config in line with the sidebar's side and width from launch on, whether or
+    /// not Settings is ever opened.
+    public let aeroSpace: AeroSpaceSync
+    /// The side and width the AeroSpace config was last synced for.
+    private var syncedSidebar: SidebarSettings.Sidebar
     public private(set) var controller: SidebarPanelController?
     public private(set) var settingsWindow: SettingsWindowController?
     public private(set) var monitor: NotificationCenterMonitor?
@@ -18,7 +23,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     private let makeController: @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor () -> Void) -> SidebarPanelController
     private let makeMonitor: @MainActor (SidebarModel, SettingsStore) -> NotificationCenterMonitor
     private let makeServer: @MainActor (SidebarModel, AppIconFont) -> ControlServer
-    private let makeSettingsWindow: @MainActor (SettingsStore, _ onAeroSpaceUpdated: @escaping @MainActor () -> Void) -> SettingsWindowController
+    private let makeSettingsWindow: @MainActor (SettingsStore, AeroSpaceSync) -> SettingsWindowController
     private let urlSender: @MainActor () -> String?
 
     /// - Parameter urlSender: Name of the process that opened the URL being handled.
@@ -34,12 +39,17 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         },
         makeMonitor: @escaping @MainActor (SidebarModel, SettingsStore) -> NotificationCenterMonitor = { SidebarAppDelegate.makeMonitor(model: $0, settings: $1) },
         makeServer: @escaping @MainActor (SidebarModel, AppIconFont) -> ControlServer = { SidebarAppDelegate.makeServer(model: $0, icons: $1) },
-        makeSettingsWindow: @escaping @MainActor (SettingsStore, _ onAeroSpaceUpdated: @escaping @MainActor () -> Void) -> SettingsWindowController = SidebarAppDelegate.makeSettingsWindow,
+        makeAeroSpaceSync: @MainActor (SettingsStore) -> AeroSpaceSync = SidebarAppDelegate.makeAeroSpaceSync,
+        makeSettingsWindow: @escaping @MainActor (SettingsStore, AeroSpaceSync) -> SettingsWindowController = {
+            SettingsWindowController(store: $0, onboarding: SidebarAppDelegate.makeOnboarding(), aeroSpace: $1)
+        },
         urlSender: @escaping @MainActor () -> String? = SidebarAppDelegate.currentAppleEventSender
     ) {
         self.settings = settings
         self.model = makeModel(settings.settings)
         self.icons = icons
+        self.aeroSpace = makeAeroSpaceSync(settings)
+        self.syncedSidebar = settings.settings.sidebar
         self.makeController = makeController
         self.makeMonitor = makeMonitor
         self.makeServer = makeServer
@@ -52,9 +62,12 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         controller.pin()
         self.controller = controller
 
+        aeroSpace.start()
+
         let monitor = makeMonitor(model, settings)
         self.monitor = monitor
-        settings.observe { [model] settings in
+        settings.observe { [weak self, model] settings in
+            self?.syncAeroSpace(for: settings.sidebar)
             model.apply(history: settings.history)
             if settings.notifications.replaceSystem {
                 monitor.start()
@@ -85,15 +98,22 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     public func applicationWillTerminate(_ notification: Notification) {
         pruneTimer?.invalidate()
         settings.stopWatching()
+        aeroSpace.stop()
         monitor?.stop()
         server?.stop()
     }
 
     /// Opens the Settings window, creating it on first use.
     public func showSettings() {
-        let window = settingsWindow ?? makeSettingsWindow(settings) { [weak self] in self?.controller?.pin() }
+        let window = settingsWindow ?? makeSettingsWindow(settings, aeroSpace)
         settingsWindow = window
         window.show()
+    }
+
+    private func syncAeroSpace(for sidebar: SidebarSettings.Sidebar) {
+        guard sidebar != syncedSidebar else { return }
+        syncedSidebar = sidebar
+        Task { await aeroSpace.sync() }
     }
 
     /// Handles `aerospace-sidebar://` URLs; see `SidebarRequest` for the routes.
@@ -141,17 +161,12 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    public static func makeSettingsWindow(
-        settings: SettingsStore,
-        onAeroSpaceUpdated: @escaping @MainActor () -> Void
-    ) -> SettingsWindowController {
-        SettingsWindowController(store: settings, onboarding: OnboardingModel(
-            accessibility: SystemAccessibility(),
-            loginItems: MainAppLoginItem(),
-            setup: AeroSpaceSetup(),
-            performer: WorkspaceActionPerformer(),
-            onAeroSpaceUpdated: onAeroSpaceUpdated
-        ))
+    public static func makeOnboarding() -> OnboardingModel {
+        OnboardingModel(accessibility: SystemAccessibility(), loginItems: MainAppLoginItem(), performer: WorkspaceActionPerformer())
+    }
+
+    public static func makeAeroSpaceSync(settings: SettingsStore) -> AeroSpaceSync {
+        AeroSpaceSync(setup: AeroSpaceSetup(), sidebar: { settings.settings.sidebar })
     }
 
     /// The app that sent the Apple Event currently being handled, such as the browser that opened a URL.

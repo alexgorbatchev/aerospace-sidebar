@@ -44,7 +44,7 @@ struct ScrollMetrics: Equatable {
     }
 }
 
-/// A thin knob over the trailing gutter of a scroll view, used instead of the system scroller. With a
+/// A thin knob over a side gutter of a scroll view, used instead of the system scroller. With a
 /// mouse attached macOS uses legacy scrollers, which are wide, draw a track, and take their width from
 /// the content. The knob takes no layout space, appears while the view scrolls or the pointer is over
 /// the gutter, fades out shortly after, and can be dragged.

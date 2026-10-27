@@ -15,11 +15,11 @@ struct SidebarPanelControllerTests {
         settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
     }
 
-    @Test func pinShowsPanelOnReservedStrip() {
+    @Test func pinShowsPanelOnConfiguredStrip() {
+        settings.update { $0.sidebar.width = 240 }
         let controller = SidebarPanelController(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
             settings: settings,
-            layout: { SidebarLayout(width: 240) },
             targetVisibleFrame: { CGRect(x: 0, y: 40, width: 1440, height: 860) },
             notificationCenter: NotificationCenter()
         )
@@ -28,6 +28,34 @@ struct SidebarPanelControllerTests {
 
         #expect(controller.panel.frame == CGRect(x: 1200, y: 40, width: 240, height: 860))
         #expect(controller.panel.isVisible)
+    }
+
+    @Test func repinsWhenSideOrWidthChanges() {
+        let controller = SidebarPanelController(
+            model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
+            settings: settings,
+            targetVisibleFrame: { CGRect(x: 0, y: 40, width: 1440, height: 860) },
+            notificationCenter: NotificationCenter()
+        )
+        controller.pin()
+        #expect(controller.panel.frame == CGRect(x: 1140, y: 40, width: 300, height: 860))
+
+        settings.update { $0.sidebar = SidebarSettings.Sidebar(side: .left, width: 400) }
+
+        #expect(controller.panel.frame == CGRect(x: 0, y: 40, width: 400, height: 860))
+    }
+
+    @Test func otherSettingsLeaveTheHiddenPanelAlone() {
+        let controller = SidebarPanelController(
+            model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
+            settings: settings,
+            targetVisibleFrame: { CGRect(x: 0, y: 40, width: 1440, height: 860) },
+            notificationCenter: NotificationCenter()
+        )
+
+        settings.update { $0.history.maxCount = 50 }
+
+        #expect(!controller.panel.isVisible)
     }
 
     @Test func pinHidesPanelWhenTargetScreenIsGone() {
@@ -52,7 +80,6 @@ struct SidebarPanelControllerTests {
         let controller = SidebarPanelController(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
             settings: settings,
-            layout: { SidebarLayout(width: 300) },
             targetVisibleFrame: { visibleFrame },
             notificationCenter: notificationCenter
         )
@@ -113,7 +140,7 @@ struct SidebarPanelControllerTests {
         contentView.layoutSubtreeIfNeeded()
 
         // The SwiftUI content fills the panel directly.
-        #expect(contentView is NSHostingView<ModifiedContent<SidebarView, TypographyModifier>>)
+        #expect(contentView is NSHostingView<SidebarPanelContent>)
         #expect(contentView.frame.size == controller.panel.frame.size)
     }
 

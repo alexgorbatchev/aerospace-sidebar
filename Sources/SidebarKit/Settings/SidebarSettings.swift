@@ -3,6 +3,10 @@ import Foundation
 /// User settings stored in `config.toml`.
 ///
 /// ```toml
+/// [sidebar]
+/// side = "right"
+/// width = 300
+///
 /// [notifications]
 /// replace_system = true
 /// actionable_left_to_macos = true
@@ -17,6 +21,40 @@ import Foundation
 /// size = 13
 /// ```
 public struct SidebarSettings: Codable, Equatable, Sendable {
+    /// The strip the sidebar occupies on the main display. AeroSpace must reserve the same strip with a
+    /// `monitor.main` outer gap on `side`; Settings › Setup writes it.
+    public struct Sidebar: Codable, Equatable, Sendable {
+        public enum Side: String, Codable, CaseIterable, Sendable {
+            case left, right
+
+            public var opposite: Side { self == .left ? .right : .left }
+        }
+
+        public static let widthRange = 150...1000
+        public static let defaultWidth = 300
+
+        public var side = Side.right
+        /// Width in points, excluding AeroSpace's regular outer gap between the sidebar and tiled windows.
+        public var width = defaultWidth
+
+        public init(side: Side = .right, width: Int = defaultWidth) {
+            self.side = side
+            self.width = width
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            side = try container.decodeIfPresent(Side.self, forKey: .side) ?? .right
+            width = try container.decodeIfPresent(Int.self, forKey: .width) ?? Self.defaultWidth
+            guard Self.widthRange.contains(width) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .width, in: container,
+                    debugDescription: "width must be between \(Self.widthRange.lowerBound) and \(Self.widthRange.upperBound)"
+                )
+            }
+        }
+    }
+
     public struct Notifications: Codable, Equatable, Sendable {
         /// Hide native banners and list them in the sidebar.
         public var replaceSystem = true
@@ -118,11 +156,18 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
         }
     }
 
+    public var sidebar = Sidebar()
     public var notifications = Notifications()
     public var history = History()
     public var font = Font()
 
-    public init(notifications: Notifications = Notifications(), history: History = History(), font: Font = Font()) {
+    public init(
+        sidebar: Sidebar = Sidebar(),
+        notifications: Notifications = Notifications(),
+        history: History = History(),
+        font: Font = Font()
+    ) {
+        self.sidebar = sidebar
         self.notifications = notifications
         self.history = history
         self.font = font
@@ -130,6 +175,7 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        sidebar = try container.decodeIfPresent(Sidebar.self, forKey: .sidebar) ?? Sidebar()
         notifications = try container.decodeIfPresent(Notifications.self, forKey: .notifications) ?? Notifications()
         history = try container.decodeIfPresent(History.self, forKey: .history) ?? History()
         font = try container.decodeIfPresent(Font.self, forKey: .font) ?? Font()

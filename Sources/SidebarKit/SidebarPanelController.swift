@@ -10,26 +10,30 @@ public final class SidebarPanelController: NSObject {
     }
 
     public let panel: NSPanel
-    private let layout: @MainActor () -> SidebarLayout
+    private let settings: SettingsStore
     private let targetVisibleFrame: @MainActor () -> CGRect?
+    private var pinnedSidebar: SidebarSettings.Sidebar
 
     /// - Parameters:
     ///   - model: State the sidebar renders.
-    ///   - settings: Supplies the font settings.
-    ///   - layout: Resolved on every pin, so screen changes also pick up a changed AeroSpace gap.
+    ///   - settings: Supplies the sidebar's side, width and font; side and width changes re-pin the panel.
     ///   - openSettings: Shows the Settings window.
     public init(
         model: SidebarModel,
         settings: SettingsStore,
-        layout: @escaping @MainActor () -> SidebarLayout = { SidebarLayout.fromAeroSpaceConfig() },
         targetVisibleFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenVisibleFrame,
         notificationCenter: NotificationCenter = .default,
         openSettings: @escaping @MainActor () -> Void = {}
     ) {
-        self.layout = layout
+        self.settings = settings
         self.targetVisibleFrame = targetVisibleFrame
+        self.pinnedSidebar = settings.settings.sidebar
         self.panel = Self.makePanel(model: model, settings: settings, openSettings: openSettings)
         super.init()
+        settings.observe { [weak self] settings in
+            guard let self, settings.sidebar != self.pinnedSidebar else { return }
+            self.pin()
+        }
         notificationCenter.addObserver(
             self,
             selector: #selector(screenParametersDidChange(_:)),
@@ -40,11 +44,12 @@ public final class SidebarPanelController: NSObject {
 
     /// Moves the panel onto the reserved strip and shows it, or hides it when no target screen exists.
     public func pin() {
+        pinnedSidebar = settings.settings.sidebar
         guard let visibleFrame = targetVisibleFrame() else {
             panel.orderOut(nil)
             return
         }
-        panel.setFrame(layout().frame(in: visibleFrame), display: true)
+        panel.setFrame(SidebarLayout(pinnedSidebar).frame(in: visibleFrame), display: true)
         panel.orderFrontRegardless()
     }
 
@@ -76,9 +81,21 @@ public final class SidebarPanelController: NSObject {
         panel.backgroundColor = NSColor.black.withAlphaComponent(0.01)
         panel.hasShadow = false
 
-        let content = NSHostingView(rootView: SidebarView(model: model, openSettings: openSettings).typography(settings))
+        let content = NSHostingView(rootView: SidebarPanelContent(model: model, settings: settings, openSettings: openSettings))
         panel.contentView = content
         return panel
+    }
+}
+
+/// Renders `SidebarView` on the configured side; reading the settings in a view body keeps it current.
+struct SidebarPanelContent: View {
+    let model: SidebarModel
+    let settings: SettingsStore
+    let openSettings: () -> Void
+
+    var body: some View {
+        SidebarView(model: model, side: settings.settings.sidebar.side, openSettings: openSettings)
+            .typography(settings)
     }
 }
 

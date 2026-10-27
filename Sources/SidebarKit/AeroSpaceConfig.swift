@@ -1,52 +1,60 @@
-import CoreGraphics
 import Foundation
 import TOMLDecoder
 
-/// The sidebar strip reserved by AeroSpace's `gaps.outer.right` on the `main` monitor.
+/// The `gaps.outer.left` and `gaps.outer.right` settings of an AeroSpace config.
 ///
-/// AeroSpace's config is the single source of truth for the sidebar width:
-/// `outer.right = [{ monitor.main = 305 }, 5]` reserves 305pt on the main monitor and 5pt
-/// elsewhere, so the sidebar is 300pt wide and keeps the regular 5pt gap to tiled windows.
+/// AeroSpace reserves the sidebar's strip with a `monitor.main` entry on the sidebar's side:
+/// `outer.right = [{ monitor.main = 305 }, 5]` reserves 305pt on the main monitor and 5pt elsewhere,
+/// which leaves a 300pt sidebar and the regular 5pt gap to tiled windows.
 public struct AeroSpaceConfig: Equatable, Sendable {
     public enum Error: Swift.Error, Equatable {
         case notFound(searched: [URL])
         case ambiguous([URL])
-        case noMainMonitorGap
-        case gapNotWiderThanFallback(main: Int, fallback: Int)
+        /// A per-monitor gap array that does not end in a fallback number, or has a table with several monitors.
+        case unsupportedGap(side: SidebarSettings.Sidebar.Side)
     }
 
-    public let sidebarWidth: CGFloat
+    /// One `{ monitor.<pattern> = <value> }` entry of a per-monitor gap.
+    public struct MonitorGap: Equatable, Sendable {
+        public var pattern: String
+        public var value: Int
+    }
 
-    /// Parses AeroSpace config TOML and derives the sidebar width from `gaps.outer.right`.
+    /// One side's outer gap.
+    public struct Gap: Equatable, Sendable {
+        /// The gap on monitors without their own entry; 0 when the side is unset.
+        public var fallback: Int
+        /// The per-monitor entries in order; empty for a constant gap.
+        public var monitors: [MonitorGap] = []
+
+        /// The `monitor.main` entry, when there is one.
+        public var main: Int? { monitors.first { $0.pattern == "main" }?.value }
+
+        /// The strip the `monitor.main` entry reserves beyond the fallback; nil when it reserves none.
+        public var reservedWidth: Int? {
+            guard let main, main > fallback else { return nil }
+            return main - fallback
+        }
+    }
+
+    public let left: Gap
+    public let right: Gap
+
+    public func gap(on side: SidebarSettings.Sidebar.Side) -> Gap {
+        side == .left ? left : right
+    }
+
+    /// Parses AeroSpace config TOML.
     public init(toml: String) throws {
-        let config = try TOMLDecoder().decode(ConfigFile.self, from: toml)
-        guard case .perMonitor(let entries)? = config.gaps?.outer?.right,
-              case .value(let fallback)? = entries.last,
-              let main = entries.lazy.compactMap({ $0.mainMonitorValue }).first
-        else {
-            throw Error.noMainMonitorGap
-        }
-        guard main > fallback else {
-            throw Error.gapNotWiderThanFallback(main: main, fallback: fallback)
-        }
-        sidebarWidth = CGFloat(main - fallback)
+        let outer = try TOMLDecoder().decode(ConfigFile.self, from: toml).gaps?.outer
+        left = try Self.gap(outer?.left, side: .left)
+        right = try Self.gap(outer?.right, side: .right)
     }
 
-    /// Loads the config AeroSpace itself would load, using the same discovery rules:
-    /// `~/.aerospace.toml` or `${XDG_CONFIG_HOME:-~/.config}/aerospace/aerospace.toml`,
-    /// and an error when both exist.
-    public static func load(home: URL, environment: [String: String]) throws -> AeroSpaceConfig {
-        try AeroSpaceConfig(toml: String(contentsOf: locate(home: home, environment: environment), encoding: .utf8))
-    }
-
-    /// The config file AeroSpace reads.
+    /// The config file AeroSpace reads, found by AeroSpace's own rules: `~/.aerospace.toml` or
+    /// `${XDG_CONFIG_HOME:-~/.config}/aerospace/aerospace.toml`, and an error when both exist.
     public static func locate(home: URL, environment: [String: String]) throws(Error) -> URL {
-        let configHome = environment["XDG_CONFIG_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
-            ?? home.appendingPathComponent(".config", isDirectory: true)
-        let candidates = [
-            home.appendingPathComponent(".aerospace.toml"),
-            configHome.appendingPathComponent("aerospace/aerospace.toml"),
-        ]
+        let candidates = candidates(home: home, environment: environment)
         let existing = candidates.filter { FileManager.default.fileExists(atPath: $0.path) }
         switch existing.count {
         case 0: throw .notFound(searched: candidates)
@@ -55,15 +63,30 @@ public struct AeroSpaceConfig: Equatable, Sendable {
         }
     }
 
-    /// The `gaps.outer.right` fallback: the constant, or the last entry of a per-monitor array; 0 when unset.
-    static func rightGapFallback(toml: String) throws -> (fallback: Int, hasMainEntry: Bool) {
-        let config = try TOMLDecoder().decode(ConfigFile.self, from: toml)
-        switch config.gaps?.outer?.right {
-        case nil: return (0, false)
-        case .constant(let value): return (value, false)
+    /// Where AeroSpace looks for its config, in order.
+    static func candidates(home: URL, environment: [String: String]) -> [URL] {
+        let configHome = environment["XDG_CONFIG_HOME"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? home.appendingPathComponent(".config", isDirectory: true)
+        return [
+            home.appendingPathComponent(".aerospace.toml"),
+            configHome.appendingPathComponent("aerospace/aerospace.toml"),
+        ]
+    }
+
+    private static func gap(_ setting: GapSetting?, side: SidebarSettings.Sidebar.Side) throws(Error) -> Gap {
+        switch setting {
+        case nil: return Gap(fallback: 0)
+        case .constant(let value): return Gap(fallback: value)
         case .perMonitor(let entries):
-            guard case .value(let fallback)? = entries.last else { throw Error.noMainMonitorGap }
-            return (fallback, entries.contains { $0.mainMonitorValue != nil })
+            guard case .value(let fallback)? = entries.last else { throw .unsupportedGap(side: side) }
+            var monitors: [MonitorGap] = []
+            for entry in entries.dropLast() {
+                guard case .monitor(let patterns) = entry, patterns.count == 1, let (pattern, value) = patterns.first else {
+                    throw .unsupportedGap(side: side)
+                }
+                monitors.append(MonitorGap(pattern: pattern, value: value))
+            }
+            return Gap(fallback: fallback, monitors: monitors)
         }
     }
 }
@@ -74,6 +97,7 @@ private struct ConfigFile: Decodable {
     }
 
     struct Outer: Decodable {
+        let left: GapSetting?
         let right: GapSetting?
     }
 
@@ -109,10 +133,6 @@ private enum GapEntry: Decodable {
         } else {
             self = .monitor(try MonitorTable(from: decoder).monitor)
         }
-    }
-
-    var mainMonitorValue: Int? {
-        if case .monitor(let patterns) = self { patterns["main"] } else { nil }
     }
 
     private struct MonitorTable: Decodable {

@@ -14,8 +14,8 @@ struct SidebarViewTests {
         model = SidebarModel(performer: performer, store: InMemoryStore())
     }
 
-    func view(openSettings: @escaping () -> Void = {}) -> SidebarView {
-        SidebarView(model: model, openSettings: openSettings)
+    func view(side: SidebarSettings.Sidebar.Side = .right, openSettings: @escaping () -> Void = {}) -> SidebarView {
+        SidebarView(model: model, side: side, openSettings: openSettings)
     }
 
     func button(_ title: String, in sut: InspectableView<ViewType.ClassifiedView>) throws -> InspectableView<ViewType.Button> {
@@ -225,6 +225,24 @@ struct SidebarViewTests {
         try button("Settings", in: view(openSettings: { opened += 1 }).inspect()).tap()
 
         #expect(opened == 1)
+    }
+
+    /// The top buttons hug the sidebar's screen edge, Settings outermost, and open their labels away from it.
+    @Test(arguments: [
+        (SidebarSettings.Sidebar.Side.right, ["Clear All", "Settings"], HorizontalEdge.leading),
+        (.left, ["Settings", "Clear All"], .trailing),
+    ])
+    func controlsFollowTheSidebarSide(side: SidebarSettings.Sidebar.Side, order: [String], expandsToward: HorizontalEdge) throws {
+        let buttons = try view(side: side).inspect().findAll(ExpandingIconButton.self).map { try $0.actualView() }
+
+        #expect(buttons.map(\.title) == order)
+        #expect(buttons.allSatisfy { $0.expandsToward == expandsToward })
+    }
+
+    /// The scroll indicator only exists while the list scrolls, so this checks the edge it is placed on.
+    @Test(arguments: [(SidebarSettings.Sidebar.Side.right, HorizontalAlignment.trailing), (.left, .leading)])
+    func buttonsAndScrollIndicatorSitOnTheScreenEdge(side: SidebarSettings.Sidebar.Side, edge: HorizontalAlignment) {
+        #expect(view(side: side).screenEdge == edge)
     }
 
     @Test func explainsDisabledInterception() throws {

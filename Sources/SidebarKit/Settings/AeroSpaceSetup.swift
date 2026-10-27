@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import SidebarProtocol
 
 /// Output of an `aerospace` CLI invocation.
@@ -46,8 +46,6 @@ public struct LoginShellAeroSpaceCLI: AeroSpaceCommandRunning {
 
 /// Reports and applies the AeroSpace configuration the sidebar needs.
 public struct AeroSpaceSetup: Sendable {
-    public static let defaultWidth = 300
-
     public enum State: Equatable, Sendable {
         case ready(AeroSpaceConfigEditor.Analysis, url: URL)
         case notFound
@@ -58,11 +56,12 @@ public struct AeroSpaceSetup: Sendable {
         case updated(backup: URL)
         /// Written, but the `aerospace` CLI was unavailable to validate and reload it.
         case updatedWithoutReload(backup: URL)
+        /// Written while AeroSpace was not running; it reads the config when it starts.
+        case updatedWhileStopped(backup: URL)
     }
 
     public enum SetupError: Error, Equatable {
         case notFound
-        case generated(URL)
         case unsupported(String)
         /// AeroSpace rejected the edited config; the original was restored.
         case rejected(String)
@@ -72,24 +71,40 @@ public struct AeroSpaceSetup: Sendable {
     let home: URL
     let environment: [String: String]
     let cli: any AeroSpaceCommandRunning
-    let now: @Sendable () -> Date
+    let isAeroSpaceRunning: @Sendable () -> Bool
 
+    /// - Parameter isAeroSpaceRunning: The CLI talks to the running AeroSpace app, so it cannot validate
+    ///   or reload a config while AeroSpace is stopped.
     public init(
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         cli: any AeroSpaceCommandRunning = LoginShellAeroSpaceCLI(),
-        now: @escaping @Sendable () -> Date = Date.init
+        isAeroSpaceRunning: @escaping @Sendable () -> Bool = AeroSpaceSetup.aeroSpaceAppIsRunning
     ) {
         self.home = home
         self.environment = environment
         self.cli = cli
-        self.now = now
+        self.isAeroSpaceRunning = isAeroSpaceRunning
     }
 
-    public func state() -> State {
+    public static let aeroSpaceBundleIdentifier = "bobko.aerospace"
+
+    @Sendable public static func aeroSpaceAppIsRunning() -> Bool {
+        !NSRunningApplication.runningApplications(withBundleIdentifier: aeroSpaceBundleIdentifier).isEmpty
+    }
+
+    /// The file to watch for changes: the config AeroSpace loads, or where AeroSpace looks first under
+    /// `XDG_CONFIG_HOME` when there is none yet. Symlinks are resolved, since edits land at the target.
+    public func configToWatch() -> URL {
+        let located = try? AeroSpaceConfig.locate(home: home, environment: environment)
+        return (located ?? AeroSpaceConfig.candidates(home: home, environment: environment)[1]).resolvingSymlinksInPath()
+    }
+
+    /// The config compared with `sidebar`.
+    public func state(for sidebar: SidebarSettings.Sidebar) -> State {
         do {
             let url = try AeroSpaceConfig.locate(home: home, environment: environment)
-            return .ready(AeroSpaceConfigEditor.analyze(try String(contentsOf: url, encoding: .utf8)), url: url)
+            return .ready(AeroSpaceConfigEditor.analyze(try String(contentsOf: url, encoding: .utf8), sidebar: sidebar), url: url)
         } catch AeroSpaceConfig.Error.notFound {
             return .notFound
         } catch {
@@ -97,10 +112,12 @@ public struct AeroSpaceSetup: Sendable {
         }
     }
 
-    /// Edits the config, validates it with `aerospace reload-config --dry-run`, restores the original
-    /// when AeroSpace rejects it, and reloads AeroSpace. The original is kept next to the config as
-    /// `aerospace.toml.bak-<timestamp>`. Symlinked configs are edited at their target.
-    public func apply(width: Int = AeroSpaceSetup.defaultWidth) async throws(SetupError) -> Outcome {
+    /// Edits the config to reserve `sidebar`'s strip, validates it with `aerospace reload-config --dry-run`,
+    /// restores the original when AeroSpace rejects it, and reloads AeroSpace. While AeroSpace is not
+    /// running the edit is kept without either step. The previous config is kept next to it as
+    /// `aerospace.toml.bak`, replacing an older backup. Symlinked configs are edited at their target.
+    /// Generated configs are edited too: the sidebar puts its block back after each regeneration.
+    public func apply(sidebar: SidebarSettings.Sidebar) async throws(SetupError) -> Outcome {
         let url: URL
         do {
             url = try AeroSpaceConfig.locate(home: home, environment: environment).resolvingSymlinksInPath()
@@ -115,19 +132,16 @@ public struct AeroSpaceSetup: Sendable {
         } catch {
             throw .io(String(describing: error))
         }
-        guard !AeroSpaceConfigEditor.isGenerated(original) else { throw .generated(url) }
         let edited: String
         do {
-            edited = try AeroSpaceConfigEditor.apply(to: original, width: width)
+            edited = try AeroSpaceConfigEditor.apply(to: original, sidebar: sidebar)
         } catch let AeroSpaceConfigEditor.EditError.unsupported(reason) {
             throw .unsupported(reason)
         } catch {
             throw .unsupported(String(describing: error))
         }
 
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
-        let backup = url.appendingPathExtension("bak-\(formatter.string(from: now()))")
+        let backup = url.appendingPathExtension("bak")
         do {
             try original.write(to: backup, atomically: true, encoding: .utf8)
             try edited.write(to: url, atomically: true, encoding: .utf8)
@@ -135,6 +149,7 @@ public struct AeroSpaceSetup: Sendable {
             throw .io(String(describing: error))
         }
 
+        guard isAeroSpaceRunning() else { return .updatedWhileStopped(backup: backup) }
         let validation = await cli.run(["reload-config", "--dry-run", "--no-gui"])
         if validation.status == 127 {
             return .updatedWithoutReload(backup: backup)

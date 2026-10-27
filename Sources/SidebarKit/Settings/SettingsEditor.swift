@@ -53,6 +53,10 @@ public final class SettingsEditor {
     /// Validates and writes the draft. Returns false and sets `status` when it cannot.
     @discardableResult
     public func save() -> Bool {
+        if !SidebarSettings.Sidebar.widthRange.contains(draft.sidebar.width) {
+            status = "Width must be between \(SidebarSettings.Sidebar.widthRange.lowerBound) and \(SidebarSettings.Sidebar.widthRange.upperBound) points."
+            return false
+        }
         let history = draft.history
         if !SidebarSettings.History.retentionRange.contains(history.retentionHours) {
             status = "Keep for must be between \(SidebarSettings.History.retentionRange.lowerBound) and \(SidebarSettings.History.retentionRange.upperBound) hours."

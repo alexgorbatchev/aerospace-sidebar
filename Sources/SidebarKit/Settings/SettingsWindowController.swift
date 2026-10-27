@@ -14,6 +14,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     public let tabs: SettingsTabsController
     let editor: SettingsEditor
     private let onboarding: OnboardingModel
+    private let aeroSpace: AeroSpaceSync
     private let fontChooser: FontChooser
 
     /// - Parameters:
@@ -22,20 +23,23 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     public convenience init(
         store: SettingsStore,
         onboarding: OnboardingModel,
+        aeroSpace: AeroSpaceSync,
         reveal: @escaping (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
         terminate: @escaping @MainActor (Any?) -> Void = NSApplication.shared.terminate
     ) {
-        self.init(store: store, onboarding: onboarding, fontChooser: FontChooser(), reveal: reveal, terminate: terminate)
+        self.init(store: store, onboarding: onboarding, aeroSpace: aeroSpace, fontChooser: FontChooser(), reveal: reveal, terminate: terminate)
     }
 
     init(
         store: SettingsStore,
         onboarding: OnboardingModel,
+        aeroSpace: AeroSpaceSync,
         fontChooser: FontChooser,
         reveal: @escaping (URL) -> Void,
         terminate: @escaping @MainActor (Any?) -> Void = NSApplication.shared.terminate
     ) {
         self.onboarding = onboarding
+        self.aeroSpace = aeroSpace
         self.fontChooser = fontChooser
         editor = SettingsEditor(store: store)
         tabs = SettingsTabsController()
@@ -56,12 +60,12 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         tabs.transitionOptions = []
         tabs.addTabViewItem(Self.item(
             "Setup", symbol: "checklist",
-            SetupPane(onboarding: onboarding).typography(store)
+            SetupPane(onboarding: onboarding, aeroSpace: aeroSpace, reveal: reveal).typography(store)
         ))
         tabs.addTabViewItem(Self.item(
             "General", symbol: "gearshape",
             GeneralPane(
-                editor: editor, configURL: store.file.url, reveal: reveal,
+                editor: editor, aeroSpace: aeroSpace, configURL: store.file.url, reveal: reveal,
                 chooseFont: { [weak self] in self?.chooseFont() }, quit: { terminate(nil) }, close: close
             ).typography(store)
         ))
@@ -86,6 +90,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     public func show() {
         editor.revert()
         onboarding.refresh()
+        aeroSpace.refresh()
         tabs.selectedTabViewItemIndex = 0
         window.orderFrontRegardless()
         window.makeKey()

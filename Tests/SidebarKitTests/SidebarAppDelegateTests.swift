@@ -8,11 +8,17 @@ struct SidebarAppDelegateTests {
     let directory: TemporaryDirectory
     let settings: SettingsStore
     let platform = FakePlatform()
+    let cli = FakeAeroSpaceCLI()
 
     init() throws {
         _ = NSApplication.shared
         directory = try TemporaryDirectory()
         settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+    }
+
+    /// Edits a config in the test's directory, never the real AeroSpace config.
+    func makeAeroSpaceSync(_ settings: SettingsStore) -> AeroSpaceSync {
+        .fake(store: settings, home: directory.url, cli: cli)
     }
 
     func makeDelegate(socketPath: String = ControlServerTests.socketPath(), sender: String? = "Safari") -> SidebarAppDelegate {
@@ -41,16 +47,8 @@ struct SidebarAppDelegateTests {
                 )
             },
             makeServer: { SidebarAppDelegate.makeServer(model: $0, icons: $1, path: socketPath) },
-            makeSettingsWindow: { [directory] settings, onAeroSpaceUpdated in
-                SettingsWindowController(store: settings, onboarding: OnboardingModel(
-                    accessibility: FakePlatform(),
-                    loginItems: FakeLoginItems(),
-                    setup: AeroSpaceSetup(home: directory.url, environment: [:], cli: FakeAeroSpaceCLI()),
-                    performer: RecordingPerformer(),
-                    copy: { _ in },
-                    onAeroSpaceUpdated: onAeroSpaceUpdated
-                ), reveal: { _ in })
-            },
+            makeAeroSpaceSync: makeAeroSpaceSync,
+            makeSettingsWindow: { SettingsWindowController(store: $0, onboarding: .fake(), aeroSpace: $1, reveal: { _ in }) },
             urlSender: { sender }
         )
     }
@@ -142,7 +140,8 @@ struct SidebarAppDelegateTests {
                 NotificationCenterMonitor(platform: platform, interceptor: SystemNotificationInterceptor { model.add($0) },
                                           workspaceCenter: NotificationCenter(), onStatus: { _ in })
             },
-            makeServer: { SidebarAppDelegate.makeServer(model: $0, icons: $1, path: ControlServerTests.socketPath()) }
+            makeServer: { SidebarAppDelegate.makeServer(model: $0, icons: $1, path: ControlServerTests.socketPath()) },
+            makeAeroSpaceSync: makeAeroSpaceSync
         )
 
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
@@ -162,6 +161,25 @@ struct SidebarAppDelegateTests {
         #expect(delegate.model.notifications.first?.icon == SidebarNotification.Icon(id: "safari"))
     }
 
+    @Test func changingSideOrWidthUpdatesAndReloadsAeroSpace() async throws {
+        try directory.write("[gaps]\nouter.right = [{ monitor.main = 305 }, 5]\n\n\(AeroSpaceConfigEditor.floatRule)\n", to: ".aerospace.toml")
+        let delegate = makeDelegate()
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        settings.update { $0.notifications.replaceSystem = false }
+        #expect(cli.calls.isEmpty)
+
+        settings.update { $0.sidebar = SidebarSettings.Sidebar(side: .left, width: 400) }
+        for _ in 0..<200 where cli.calls.count < 2 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(cli.calls == [["reload-config", "--dry-run", "--no-gui"], ["reload-config", "--no-gui"]])
+        let config = try String(contentsOf: directory.url.appendingPathComponent(".aerospace.toml"), encoding: .utf8)
+        #expect(config.hasPrefix("[gaps]\n" + [
+            AeroSpaceConfigEditor.blockStart, "outer.left = [{ monitor.main = 400 }, 0]", "outer.right = 5", AeroSpaceConfigEditor.blockEnd,
+        ].joined(separator: "\n")))
+    }
+
     @Test func urlsWithoutKnownSenderAreLabeledURL() throws {
         let delegate = makeDelegate(sender: nil)
 
@@ -178,7 +196,11 @@ struct SidebarAppDelegateTests {
         let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
 
         let monitor = SidebarAppDelegate.makeMonitor(model: model, settings: settings)
-        let window = SidebarAppDelegate.makeSettingsWindow(settings: settings, onAeroSpaceUpdated: {})
+        let window = SettingsWindowController(
+            store: settings,
+            onboarding: SidebarAppDelegate.makeOnboarding(),
+            aeroSpace: SidebarAppDelegate.makeAeroSpaceSync(settings: settings)
+        )
 
         #expect(!monitor.isRunning)
         #expect(model.interception == .starting)

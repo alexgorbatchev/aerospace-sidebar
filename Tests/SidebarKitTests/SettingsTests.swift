@@ -21,6 +21,7 @@ struct SettingsFileTests {
         let directory = try TemporaryDirectory()
         let file = SettingsFile(url: directory.url.appendingPathComponent("nested/config.toml"))
         let settings = SidebarSettings(
+            sidebar: .init(side: .left, width: 420),
             notifications: .init(replaceSystem: false, actionableLeftToMacOS: false, appsLeftToMacOS: ["zoom.us", "Calendar"]),
             history: .init(retentionHours: 48, maxCount: 500),
             font: .init(name: "Menlo", size: 14.5)
@@ -30,6 +31,7 @@ struct SettingsFileTests {
         let text = try String(contentsOf: file.url, encoding: .utf8)
 
         #expect(text.hasPrefix(SettingsFile.header))
+        #expect(text.contains("[sidebar]") && text.contains("side = \"left\"") && text.contains("width = 420"))
         #expect(text.contains("[history]"))
         #expect(text.contains("retention_hours = 48"))
         #expect(text.contains("[font]") && text.contains("name = \"Menlo\""))
@@ -62,6 +64,8 @@ struct SettingsFileTests {
         ("[history]\nretention_hours = 0\n", "retention_hours must be between 1 and 720"),
         ("[history]\nmax_count = 5\n", "max_count must be between 10 and 2000"),
         ("[font]\nsize = 4\n", "font.size: size must be between 8 and 32"),
+        ("[sidebar]\nwidth = 100\n", "sidebar.width: width must be between 150 and 1000"),
+        ("[sidebar]\nside = \"top\"\n", "sidebar.side"),
         ("[notifications]\nreplace_system = \"yes\"\n", "notifications.replace_system"),
     ])
     func rejectsInvalidValues(toml: String, fragment: String) throws {
