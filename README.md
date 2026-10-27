@@ -11,7 +11,8 @@
 - **App icons**: a pushed notification can name an app icon from [sketchybar-app-font](https://github.com/kvndrsslr/sketchybar-app-font), such as `slack` or `google_chrome`, shown before its sender.
 - **Repeats stacked**: a notification identical to one already listed joins it as a single card with a count, instead of filling the list with copies.
 - **History**: the list survives quitting and relaunching; notifications are kept for 24 hours by default.
-- **Guided setup**: Settings grants the Accessibility permission, adds the app to Login Items and adds the sidebar's settings to your AeroSpace config, one button each.
+- **Missed notifications**: with Full Disk Access, notifications that never showed a banner are listed too: those during Focus or Do Not Disturb, those macOS drops when several arrive at once, and those delivered while the sidebar was not running.
+- **Guided setup**: Settings grants the Accessibility permission, opens Full Disk Access, adds the app to Login Items and adds the sidebar's settings to your AeroSpace config, one button each.
 
 # How It Works
 
@@ -25,8 +26,9 @@
 # How it Really Works
 
 - The sidebar's side and width come from its own settings (`[sidebar]` in `config.toml`). AeroSpace has to leave the same strip free: the `monitor.main` entry of `gaps.outer.<side>` minus that side's fallback value is the reserved width. With `outer.right = [{ monitor.main = 305 }, 5]`, a 300-point sidebar on the right keeps AeroSpace's 5-point gap to your windows. The sidebar keeps AeroSpace's config in step: at launch, whenever the AeroSpace config file changes, and whenever you change the side or width (in Settings or in `config.toml`), it rewrites its block in that file when the strip is missing or wrong, then reloads AeroSpace. The block sits in the `[gaps]` table between `# >>> aerospace-sidebar` and `# <<< aerospace-sidebar <<<` and owns `outer.left` and `outer.right`; the sidebar keeps the other monitors' entries and fallback values in it. A config written by a generator is repaired after each regeneration; to avoid the round trip, keep the block in the generator's source and carry it over from the previous output.
-- Notifications are read through the macOS Accessibility API from the Notification Center process, which is why the app needs the Accessibility permission. Focus and Do Not Disturb suppress notifications before the sidebar sees them.
-- Banners are hidden by moving Notification Center's banner window off-screen and closing the banner. Quitting the sidebar moves that window back.
+- Notifications are read through the macOS Accessibility API from the Notification Center process, which is why the app needs the Accessibility permission. Several alerts from one app that macOS collapses into a stack are expanded and listed one by one. While Notification Center's own panel is open, the sidebar leaves it alone.
+- Banners are hidden by moving Notification Center's banner window off-screen and closing the banner. When that window also holds a notification left to macOS, it stays on screen, so a banner arriving meanwhile shows for about a second until it closes. Quitting the sidebar moves the window back.
+- Focus and Do Not Disturb suppress banners entirely. With Full Disk Access, the sidebar also reads the database in which macOS records every delivered notification (`~/Library/Group Containers/group.com.apple.usernoted/db2/db`, read-only) and lists the ones no banner showed. That database is private to macOS and may change with a macOS update; the sidebar then logs the error and keeps intercepting banners.
 - `aerospace-sidebar notification push` talks to the app over a socket in your private temporary directory (`$(getconf DARWIN_USER_TEMP_DIR)com.alexgorbatchev.aerospace-sidebar.sock`) that only your user account can open. This is the only way to attach a `--run` command.
 - `aerospace-sidebar://` links can be opened by any app, and by web pages after your browser asks for permission. They therefore never carry commands, and their `open` links must be `http` or `https`. A notification from a link is labeled with the app that opened it when macOS reports one, otherwise `URL`.
 - App icons come from sketchybar-app-font (CC0), which ships inside the app, so nothing needs installing. An icon id is written `slack` or `:slack:`; one the font does not have leaves the notification without an icon and adds a small `Invalid icon: <id>` note under its text. Several apps can share one icon, such as `mail` for Mail, Spark and HEY. [`icon_map.json`](Resources/sketchybar-app-font/icon_map.json) lists every id with the apps it stands for.
@@ -65,6 +67,7 @@ Open `~/Applications/AerospaceSidebar.app`, click the gear button at the top of 
   ```
   Bind fullscreen as `fullscreen`, not `fullscreen --no-outer-gaps`, or fullscreen windows cover the sidebar.
 - [Accessibility permission](https://support.apple.com/guide/mac-help/allow-accessibility-apps-to-access-your-mac-mh43185/mac) - Needed to read and hide macOS notifications. **Open Accessibility** opens System Settings › Privacy & Security › Accessibility, where you enable AerospaceSidebar. Release builds are not signed with a developer certificate, so after each update remove AerospaceSidebar from that list and enable it again.
+- Full Disk Access (optional) - Needed to list notifications that showed no banner. **Open Full Disk Access** opens System Settings › Privacy & Security › Full Disk Access, where you add AerospaceSidebar. Like Accessibility, release builds need it granted again after each update.
 - Login item - **Add to Login Items** opens the sidebar when you log in. It needs the app in `~/Applications` or `/Applications`.
 - Quit other apps that restyle or hide notification banners, such as NotifyMeHow, so only one app handles them.
 
