@@ -17,6 +17,9 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let onboarding: OnboardingModel
     private let aeroSpace: AeroSpaceSync
     private let fontChooser: FontChooser
+    private let workspaceCenter: NotificationCenter
+    private var activationObserver: NSObjectProtocol?
+    static let systemSettingsBundleID = "com.apple.systempreferences"
 
     /// - Parameters:
     ///   - reveal: Shows a file in Finder.
@@ -28,7 +31,10 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         reveal: @escaping (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
         terminate: @escaping @MainActor (Any?) -> Void = NSApplication.shared.terminate
     ) {
-        self.init(store: store, onboarding: onboarding, aeroSpace: aeroSpace, fontChooser: FontChooser(), reveal: reveal, terminate: terminate)
+        self.init(
+            store: store, onboarding: onboarding, aeroSpace: aeroSpace, fontChooser: FontChooser(),
+            workspaceCenter: NSWorkspace.shared.notificationCenter, reveal: reveal, terminate: terminate
+        )
     }
 
     init(
@@ -36,6 +42,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         onboarding: OnboardingModel,
         aeroSpace: AeroSpaceSync,
         fontChooser: FontChooser,
+        workspaceCenter: NotificationCenter,
         reveal: @escaping (URL) -> Void,
         terminate: @escaping @MainActor (Any?) -> Void = NSApplication.shared.terminate
     ) {
@@ -43,6 +50,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         self.onboarding = onboarding
         self.aeroSpace = aeroSpace
         self.fontChooser = fontChooser
+        self.workspaceCenter = workspaceCenter
         editor = SettingsEditor(store: store)
         tabs = SettingsTabsController()
         window = NSPanel(
@@ -78,14 +86,40 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         // Panels hide when their app deactivates by default; this app is never active.
         window.hidesOnDeactivate = false
-        // Settings stays above other apps' windows until it is closed, for example while the user
-        // grants Accessibility in System Settings.
-        window.isFloatingPanel = true
+        // Settings stays above other apps' windows until it is closed, except System Settings, where the
+        // Setup steps send the user: floating over it, Settings would cover the permission lists and their
+        // switches.
+        window.isFloatingPanel = NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Self.systemSettingsBundleID
+        activationObserver = workspaceCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let bundleIdentifier = app?.bundleIdentifier
+            MainActor.assumeIsolated { self?.follow(frontmostApp: bundleIdentifier) }
+        }
         window.delegate = self
         sizePanes()
         window.center()
         // Text sizes follow the font, previewed or saved, so the panes grow and shrink with it.
         store.observeFont { [weak self] _ in self?.sizePanes() }
+    }
+
+    isolated deinit {
+        activationObserver.map(workspaceCenter.removeObserver)
+    }
+
+    /// Floats unless System Settings is in front. A window keeps its place in the stack when its level
+    /// changes, so it is also ordered behind or in front explicitly.
+    func follow(frontmostApp bundleIdentifier: String?) {
+        let floats = bundleIdentifier != Self.systemSettingsBundleID
+        guard window.isFloatingPanel != floats else { return }
+        window.isFloatingPanel = floats
+        guard window.isVisible else { return }
+        if floats {
+            window.orderFrontRegardless()
+        } else {
+            window.orderBack(nil)
+        }
     }
 
     /// Opens on the Setup tab with a fresh draft and status.

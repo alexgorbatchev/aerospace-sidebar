@@ -159,10 +159,6 @@ public protocol NotificationStore {
 @MainActor
 @Observable
 public final class SidebarModel {
-    public static let accessibilitySettingsURL = URL(
-        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-    )!
-
     /// Most severe first, newest first within a severity.
     public private(set) var notifications: [SidebarNotification] = []
     public var interception: InterceptionStatus = .starting

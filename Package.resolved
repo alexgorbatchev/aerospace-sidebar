@@ -1,6 +1,15 @@
 {
-  "originHash" : "6fd5cc9c4a867a017621e73e84325b463cf77ad64199a741648d039a96ff71e7",
+  "originHash" : "b5c822f995257147d90bf43fb1e92ddddccabe5f964bd1d8462d678b943a7ab4",
   "pins" : [
+    {
+      "identity" : "permissionflow",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jaywcjlove/PermissionFlow",
+      "state" : {
+        "revision" : "65434c9ae04dba97cf52c1dffbe3e4e62b547c82",
+        "version" : "2.11.4"
+      }
+    },
     {
       "identity" : "swift-argument-parser",
       "kind" : "remoteSourceControl",

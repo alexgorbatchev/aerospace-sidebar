@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import PermissionFlow
 @testable import SidebarKit
 
 /// In-memory accessibility element.
@@ -234,14 +235,22 @@ extension AeroSpaceSetup {
     }
 }
 
+/// Permissions whose state a test sets; `authorize` records the pane instead of opening System Settings.
+@MainActor
+final class FakePermissions: PermissionGuiding {
+    var states: [PermissionFlowPane: PermissionAuthorizationState] = [:]
+    var authorized: [PermissionFlowPane] = []
+
+    func state(of pane: PermissionFlowPane) -> PermissionAuthorizationState { states[pane] ?? .notGranted }
+
+    func authorize(_ pane: PermissionFlowPane) {
+        authorized.append(pane)
+    }
+}
+
 extension OnboardingModel {
     static func fake() -> OnboardingModel {
-        OnboardingModel(
-            accessibility: FakePlatform(),
-            loginItems: FakeLoginItems(),
-            performer: RecordingPerformer(),
-            notificationDatabase: NotificationDatabase(url: URL(fileURLWithPath: "/nonexistent/notifications.db"))
-        )
+        OnboardingModel(permissions: FakePermissions(), loginItems: FakeLoginItems())
     }
 }
 

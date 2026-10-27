@@ -12,7 +12,7 @@
 - **Repeats stacked**: a notification identical to one already listed joins it as a single card with a count, instead of filling the list with copies.
 - **History**: the list survives quitting and relaunching; notifications are kept for 24 hours by default.
 - **Missed notifications**: with Full Disk Access, notifications that never showed a banner are listed too: those during Focus or Do Not Disturb, those macOS drops when several arrive at once, and those delivered while the sidebar was not running.
-- **Guided setup**: Settings grants the Accessibility permission, opens Full Disk Access, adds the app to Login Items and adds the sidebar's settings to your AeroSpace config, one button each.
+- **Guided setup**: Settings opens the Accessibility and Full Disk Access settings next to a panel from which you drag the app into the list, adds the app to Login Items and adds the sidebar's settings to your AeroSpace config, one button each.
 
 # How It Works
 
@@ -66,8 +66,8 @@ Open `~/Applications/AerospaceSidebar.app`, click the gear button at the top of 
   run = 'layout floating'
   ```
   Bind fullscreen as `fullscreen`, not `fullscreen --no-outer-gaps`, or fullscreen windows cover the sidebar.
-- [Accessibility permission](https://support.apple.com/guide/mac-help/allow-accessibility-apps-to-access-your-mac-mh43185/mac) - Needed to read and hide macOS notifications. **Open Accessibility** opens System Settings › Privacy & Security › Accessibility, where you enable AerospaceSidebar. Release builds are not signed with a developer certificate, so after each update remove AerospaceSidebar from that list and enable it again.
-- Full Disk Access (optional) - Needed to list notifications that showed no banner. **Open Full Disk Access** opens System Settings › Privacy & Security › Full Disk Access, where you add AerospaceSidebar. Like Accessibility, release builds need it granted again after each update.
+- [Accessibility permission](https://support.apple.com/guide/mac-help/allow-accessibility-apps-to-access-your-mac-mh43185/mac) - Needed to read and hide macOS notifications. **Open Accessibility** opens System Settings › Privacy & Security › Accessibility with a panel below it; drag AerospaceSidebar from the panel into the list, or enable it if it is already there. Release builds are not signed with a developer certificate, so after each update remove AerospaceSidebar from that list and enable it again.
+- Full Disk Access (optional) - Needed to list notifications that showed no banner. **Open Full Disk Access** opens System Settings › Privacy & Security › Full Disk Access the same way; drag AerospaceSidebar into the list, or enable it if macOS already lists it. Like Accessibility, release builds need it granted again after each update.
 - Login item - **Add to Login Items** opens the sidebar when you log in. It needs the app in `~/Applications` or `/Applications`.
 - Quit other apps that restyle or hide notification banners, such as NotifyMeHow, so only one app handles them.
 

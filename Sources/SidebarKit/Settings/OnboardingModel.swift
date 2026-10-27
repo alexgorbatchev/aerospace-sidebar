@@ -1,15 +1,12 @@
 import Foundation
 import Observation
+import PermissionFlow
 
 /// State and actions for the macOS steps of Settings › Setup: Accessibility, Full Disk Access and launch
 /// at login. `AeroSpaceSync` covers the AeroSpace step.
 @MainActor
 @Observable
 public final class OnboardingModel {
-    public static let fullDiskAccessSettingsURL = URL(
-        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
-    )!
-
     public private(set) var accessibilityGranted = false
     /// Whether the notification database can be read, which takes Full Disk Access.
     public private(set) var fullDiskAccessGranted = false
@@ -17,40 +14,31 @@ public final class OnboardingModel {
     /// Result of the last login item action.
     public private(set) var message: String?
 
-    @ObservationIgnored private let accessibility: any AccessibilityPlatform
+    @ObservationIgnored private let permissions: any PermissionGuiding
     @ObservationIgnored private let loginItems: any LoginItemService
-    @ObservationIgnored private let performer: any NotificationActionPerforming
-    @ObservationIgnored private let notificationDatabase: NotificationDatabase
 
-    public init(
-        accessibility: any AccessibilityPlatform,
-        loginItems: any LoginItemService,
-        performer: any NotificationActionPerforming,
-        notificationDatabase: NotificationDatabase
-    ) {
-        self.accessibility = accessibility
+    public init(permissions: any PermissionGuiding, loginItems: any LoginItemService) {
+        self.permissions = permissions
         self.loginItems = loginItems
-        self.performer = performer
-        self.notificationDatabase = notificationDatabase
         refresh()
     }
 
     public func refresh() {
-        accessibilityGranted = accessibility.isTrusted(prompt: false)
-        fullDiskAccessGranted = (try? notificationDatabase.latestRecordID()) != nil
+        accessibilityGranted = permissions.state(of: .accessibility) == .granted
+        fullDiskAccessGranted = permissions.state(of: .fullDiskAccess) == .granted
         loginItem = loginItems.status
     }
 
-    /// Opens the Full Disk Access pane, where the user adds the app; macOS offers no prompt for it.
+    /// Opens the Full Disk Access pane with the drag panel; macOS offers no prompt for it.
     public func requestFullDiskAccess() {
-        performer.perform(.open(Self.fullDiskAccessSettingsURL))
+        permissions.authorize(.fullDiskAccess)
         refresh()
     }
 
-    /// Shows the system prompt when macOS still allows it, and opens the Accessibility pane.
+    /// Opens the Accessibility pane with the drag panel. The prompt that adds the app to the pane's list
+    /// comes from `NotificationCenterMonitor` at launch.
     public func requestAccessibility() {
-        _ = accessibility.isTrusted(prompt: true)
-        performer.perform(.open(SidebarModel.accessibilitySettingsURL))
+        permissions.authorize(.accessibility)
         refresh()
     }
 

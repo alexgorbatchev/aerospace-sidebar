@@ -1,4 +1,5 @@
 import AppKit
+import PermissionFlow
 @testable import SidebarKit
 import SidebarProtocol
 import SwiftUI
@@ -7,49 +8,35 @@ import ViewInspector
 
 @MainActor
 struct OnboardingModelTests {
-    let platform = FakePlatform()
+    let permissions = FakePermissions()
     let loginItems = FakeLoginItems()
-    let performer = RecordingPerformer()
 
-    init() {
-        platform.trusted = false
-    }
-
-    func model(database: NotificationDatabase = NotificationDatabase(url: URL(fileURLWithPath: "/nonexistent/db"))) -> OnboardingModel {
-        OnboardingModel(accessibility: platform, loginItems: loginItems, performer: performer, notificationDatabase: database)
+    func model() -> OnboardingModel {
+        OnboardingModel(permissions: permissions, loginItems: loginItems)
     }
 
     @Test func refreshesLiveState() throws {
-        let fixture = try NotificationDatabaseFixture()
-        let sut = model(database: fixture.database)
+        let sut = model()
         #expect(!sut.accessibilityGranted && sut.loginItem == .disabled)
         #expect(!sut.fullDiskAccessGranted)
 
-        platform.trusted = true
+        permissions.states = [.accessibility: .granted, .fullDiskAccess: .granted]
         loginItems.status = .enabled
-        try fixture.create()
         sut.refresh()
 
         #expect(sut.accessibilityGranted && sut.loginItem == .enabled)
         #expect(sut.fullDiskAccessGranted)
     }
 
-    @Test func opensFullDiskAccessSettings() {
-        let sut = model()
-
-        sut.requestFullDiskAccess()
-
-        #expect(performer.actions == [.open(OnboardingModel.fullDiskAccessSettingsURL)])
-        #expect(!sut.fullDiskAccessGranted)
-    }
-
-    @Test func requestsAccessibilityWithPromptAndOpensSettings() {
+    /// Both privacy permissions go through PermissionFlow's drag panel.
+    @Test func guidesThroughPrivacyPanes() {
         let sut = model()
 
         sut.requestAccessibility()
+        sut.requestFullDiskAccess()
 
-        #expect(platform.promptRequests.contains(true))
-        #expect(performer.actions == [.open(SidebarModel.accessibilitySettingsURL)])
+        #expect(permissions.authorized == [.accessibility, .fullDiskAccess])
+        #expect(!sut.accessibilityGranted && !sut.fullDiskAccessGranted)
     }
 
     @Test func managesLoginItem() {

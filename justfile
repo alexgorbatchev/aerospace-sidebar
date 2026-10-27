@@ -21,6 +21,8 @@ bundle version="":
     cp "$(swift build -c release --show-bin-path)/AerospaceSidebar" {{ app }}/Contents/MacOS/
     cp Resources/Info.plist {{ app }}/Contents/Info.plist
     cp -R {{ app_font }} {{ app }}/Contents/Resources/
+    # PermissionFlow looks for its resource bundle in Contents/Resources; codesign rejects one at the .app root.
+    cp -R "$(swift build -c release --show-bin-path)/PermissionFlow_PermissionFlow.bundle" {{ app }}/Contents/Resources/
     {{ if version != "" { "plutil -replace CFBundleShortVersionString -string " + quote(version) + " " + app + "/Contents/Info.plist" } else { "true" } }}
     codesign --force --sign "{{ signing_identity }}" {{ app }}
     cp "$(swift build -c release --show-bin-path)/aerospace-sidebar" {{ cli }}

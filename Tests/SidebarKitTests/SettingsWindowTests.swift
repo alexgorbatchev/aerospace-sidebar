@@ -1,4 +1,5 @@
 import AppKit
+import PermissionFlow
 @testable import SidebarKit
 import SwiftUI
 import Testing
@@ -149,25 +150,17 @@ struct SettingsPaneTests {
     let directory: TemporaryDirectory
     let store: SettingsStore
     let editor: SettingsEditor
-    let platform = FakePlatform()
+    let permissions = FakePermissions()
     let loginItems = FakeLoginItems()
-    let performer = RecordingPerformer()
-    let notifications: NotificationDatabaseFixture
     let onboarding: OnboardingModel
     let aeroSpace: AeroSpaceSync
 
     init() throws {
-        notifications = try NotificationDatabaseFixture()
         directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
         self.store = store
         editor = SettingsEditor(store: store)
-        onboarding = OnboardingModel(
-            accessibility: platform,
-            loginItems: loginItems,
-            performer: performer,
-            notificationDatabase: notifications.database
-        )
+        onboarding = OnboardingModel(permissions: permissions, loginItems: loginItems)
         aeroSpace = .fake(store: store, home: directory.url)
     }
 
@@ -180,7 +173,6 @@ struct SettingsPaneTests {
     }
 
     @Test func setupOffersActionsForMissingSteps() throws {
-        platform.trusted = false
         onboarding.refresh()
         aeroSpace.refresh()
         let sut = try setup().inspect()
@@ -189,12 +181,11 @@ struct SettingsPaneTests {
         #expect(throws: Never.self) { try sut.find(text: "Optional. Add AerospaceSidebar to list notifications that showed no banner: during Focus, in quick bursts, or while the sidebar was not running.") }
 
         try sut.find(button: "Open Full Disk Access").tap()
-        #expect(performer.actions.contains(.open(OnboardingModel.fullDiskAccessSettingsURL)))
         try sut.find(button: "Open Accessibility").tap()
         try sut.find(button: "Add to Login Items").tap()
         try sut.find(button: "Copy Settings").tap()
 
-        #expect(platform.promptRequests.contains(true))
+        #expect(permissions.authorized == [.fullDiskAccess, .accessibility])
         #expect(loginItems.status == .enabled)
         #expect(throws: Never.self) { try sut.find(text: "No AeroSpace config found.") }
         #expect(throws: Never.self) { try sut.find(button: "Update AeroSpace Config") }
@@ -205,7 +196,7 @@ struct SettingsPaneTests {
 
     @Test func finishedStepsShowCheckmarks() throws {
         loginItems.status = .enabled
-        try notifications.create()
+        permissions.states = [.accessibility: .granted, .fullDiskAccess: .granted]
         try directory.write("[gaps]\nouter.right = [{ monitor.main = 305 }, 5]\n\n\(AeroSpaceConfigEditor.floatRule)\n", to: ".aerospace.toml")
         onboarding.refresh()
         aeroSpace.refresh()
@@ -327,7 +318,6 @@ struct SettingsPaneTests {
     }
 
     @Test func panesUseFontSettings() throws {
-        platform.trusted = false
         loginItems.status = .enabled
         onboarding.refresh()
         aeroSpace.refresh()
@@ -477,13 +467,39 @@ struct SettingsWindowControllerTests {
         #expect(terminateCalls == 1)
     }
 
+    /// Settings floats above other apps, but steps behind System Settings so the permission lists and
+    /// their switches stay visible.
+    @Test func stepsBehindSystemSettings() throws {
+        _ = NSApplication.shared
+        let directory = try TemporaryDirectory()
+        let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        let workspaceCenter = NotificationCenter()
+        let controller = SettingsWindowController(
+            store: store, onboarding: .fake(), aeroSpace: .fake(store: store, home: directory.url),
+            fontChooser: FontChooser(), workspaceCenter: workspaceCenter, reveal: { _ in }
+        )
+        controller.follow(frontmostApp: SettingsWindowController.systemSettingsBundleID)
+        #expect(!controller.window.isFloatingPanel)
+        controller.show()
+        defer { controller.window.orderOut(nil) }
+
+        workspaceCenter.post(name: NSWorkspace.didActivateApplicationNotification, object: nil,
+                             userInfo: [NSWorkspace.applicationUserInfoKey: NSRunningApplication.current])
+        #expect(controller.window.isFloatingPanel)
+        #expect(controller.window.isVisible)
+
+        controller.follow(frontmostApp: SettingsWindowController.systemSettingsBundleID)
+        #expect(!controller.window.isFloatingPanel)
+        #expect(controller.window.isVisible)
+    }
+
     @Test func fontPanelPicksGoIntoTheDraftUntilTheWindowCloses() throws {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
         let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
         let picked = try #require(NSFont(name: "Menlo-Regular", size: 16))
-        let controller = SettingsWindowController(store: store, onboarding: .fake(), aeroSpace: .fake(store: store, home: directory.url), fontChooser: FontChooser(panel: { panel }, convert: { _ in picked }), reveal: { _ in })
+        let controller = SettingsWindowController(store: store, onboarding: .fake(), aeroSpace: .fake(store: store, home: directory.url), fontChooser: FontChooser(panel: { panel }, convert: { _ in picked }), workspaceCenter: NotificationCenter(), reveal: { _ in })
         controller.show()
 
         controller.chooseFont()

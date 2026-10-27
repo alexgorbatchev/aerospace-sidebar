@@ -189,10 +189,10 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
 
     public static func makeOnboarding() -> OnboardingModel {
         OnboardingModel(
-            accessibility: SystemAccessibility(),
-            loginItems: MainAppLoginItem(),
-            performer: WorkspaceActionPerformer(),
-            notificationDatabase: NotificationDatabase(home: FileManager.default.homeDirectoryForCurrentUser)
+            permissions: PermissionFlowGuide(
+                notificationDatabase: NotificationDatabase(home: FileManager.default.homeDirectoryForCurrentUser)
+            ),
+            loginItems: MainAppLoginItem()
         )
     }
 
