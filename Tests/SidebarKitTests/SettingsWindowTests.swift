@@ -332,7 +332,10 @@ struct SettingsPaneTests {
     private static func subviews(of view: NSView) -> [NSView] {
         view.subviews + view.subviews.flatMap(subviews(of:))
     }
+}
 
+@MainActor
+struct SettingsWindowControllerTests {
     @Test func opensOnSetupTabInFrontWithoutActivatingTheApp() throws {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
