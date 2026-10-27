@@ -25,10 +25,21 @@ struct NotificationPayloadTests {
         }
     }
 
+    @Test func iconIsOptionalAndLimited() throws {
+        #expect(try NotificationPayload(title: "t", icon: "slack").icon == "slack")
+        #expect(try NotificationPayload(title: "t", icon: "").icon == nil)
+        let long = String(repeating: "x", count: NotificationPayload.maxIconLength + 1)
+        #expect(throws: SidebarRequestError.fieldTooLong(field: "icon", limit: NotificationPayload.maxIconLength)) {
+            try NotificationPayload(title: "t", icon: long)
+        }
+    }
+
     @Test func decodingAppliesValidation() throws {
         let valid = Data(#"{"title":"t","action":{"open":{"_0":"https://example.com"}}}"#.utf8)
         #expect(try JSONDecoder().decode(NotificationPayload.self, from: valid)
             == NotificationPayload(title: "t", action: .open(URL(string: "https://example.com")!)))
+        let withIcon = try NotificationPayload(title: "t", icon: ":slack:")
+        #expect(try JSONDecoder().decode(NotificationPayload.self, from: JSONEncoder().encode(withIcon)) == withIcon)
         #expect(throws: SidebarRequestError.emptyNotification) {
             try JSONDecoder().decode(NotificationPayload.self, from: Data(#"{"subtitle":"s"}"#.utf8))
         }
@@ -41,6 +52,7 @@ struct SidebarRequestTests {
             title: "a+b & c=d",
             subtitle: "50% done",
             body: "line 1\nline 2 #hash",
+            icon: ":slack:",
             action: .open(URL(string: "https://example.com/path?x=1&y=2")!)
         )
 
@@ -58,10 +70,11 @@ struct SidebarRequestTests {
     }
 
     @Test func parsesHandWrittenURL() throws {
-        let url = URL(string: "AEROSPACE-SIDEBAR://notification/push?body=from%20a%20page&body=last&open=http://example.com")!
+        let url = URL(string: "AEROSPACE-SIDEBAR://notification/push?body=from%20a%20page&body=last&icon=slack&open=http://example.com")!
 
         #expect(try SidebarRequest(url: url) == .pushNotification(NotificationPayload(
             body: "last",
+            icon: "slack",
             action: .open(URL(string: "http://example.com")!)
         )))
     }

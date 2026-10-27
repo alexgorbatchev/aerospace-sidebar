@@ -216,6 +216,11 @@ struct NotificationCard: View {
         Button(action: activate) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 4) {
+                    if let icon = notification.icon {
+                        Text(icon.glyph)
+                            .font(.custom(AppIconFont.family, fixedSize: typography.size(.caption1)))
+                            .accessibilityLabel(icon.accessibilityLabel)
+                    }
                     if let symbol = severitySymbol {
                         Image(systemName: symbol)
                             .foregroundStyle(accent ?? .secondary)

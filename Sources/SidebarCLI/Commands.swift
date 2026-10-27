@@ -42,11 +42,17 @@ struct NotificationFields: ParsableArguments {
     @Option(help: "How important it is; more severe notifications are listed first.")
     var severity: NotificationSeverity = .normal
 
+    @Option(help: ArgumentHelp(
+        "App icon from sketchybar-app-font, such as slack or :slack:. An unknown id is named in the body.",
+        valueName: "id"
+    ))
+    var icon: String?
+
     @Option(name: .customLong("open"), help: ArgumentHelp("URL to open when the notification is clicked.", valueName: "url"))
     var openURL: String?
 
     func payload(action: NotificationAction?) throws -> NotificationPayload {
-        try NotificationPayload(title: title, subtitle: subtitle, body: body, severity: severity, action: action)
+        try NotificationPayload(title: title, subtitle: subtitle, body: body, severity: severity, icon: icon, action: action)
     }
 
     func openAction() throws -> NotificationAction? {

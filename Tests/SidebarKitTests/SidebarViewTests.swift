@@ -105,6 +105,15 @@ struct SidebarViewTests {
         #expect(throws: (any Error).self) { try sut.find(viewWithAccessibilityLabel: "normal") }
     }
 
+    @Test func drawsIconInTheAppIconFontLabeledWithItsApp() throws {
+        model.add(SidebarNotification(source: "cli", title: "Browse", icon: AppIconFont.vendored.icon(for: "google_chrome")))
+
+        let icon = try view().inspect().find(viewWithAccessibilityLabel: "Google Chrome").text()
+
+        #expect(try icon.string() == ":google_chrome:")
+        #expect(try icon.attributes().font() == .custom(AppIconFont.family, fixedSize: 10))
+    }
+
     @Test func marksNotificationsMacOSStillShows() throws {
         model.add(SidebarNotification(source: "Calendar", title: "Standup", shownByMacOS: true))
 

@@ -53,6 +53,7 @@ struct SidebarModelTests {
         SidebarNotification(source: "s", title: "t", subtitle: "other", body: "b"),
         SidebarNotification(source: "s", title: "t", body: "other"),
         SidebarNotification(source: "s", title: "t", body: "b", severity: .high),
+        SidebarNotification(source: "s", title: "t", body: "b", icon: .init(id: "slack")),
         SidebarNotification(source: "s", title: "t", body: "b", action: .activateApp(name: "s")),
         SidebarNotification(source: "s", title: "t", body: "b", shownByMacOS: true),
     ])
@@ -126,14 +127,37 @@ struct SidebarModelTests {
         let open = try NotificationPayload(title: "t", severity: .high, action: .open(URL(string: "https://a.example")!))
         let run = try NotificationPayload(body: "b", action: .run(command: "ls", workingDirectory: "/"))
 
-        let opened = SidebarNotification(payload: open, source: "url", receivedAt: date)
-        let ran = SidebarNotification(payload: run, source: "cli")
+        let opened = SidebarNotification(payload: open, source: "url", icons: .vendored, receivedAt: date)
+        let ran = SidebarNotification(payload: run, source: "cli", icons: .vendored)
 
         #expect(opened.action == .open(URL(string: "https://a.example")!))
         #expect(opened.severity == .high)
         #expect(opened.receivedAt == date)
         #expect(ran.action == .run(command: "ls", workingDirectory: "/"))
-        #expect(SidebarNotification(payload: try NotificationPayload(title: "t"), source: "x").action == nil)
+        #expect(SidebarNotification(payload: try NotificationPayload(title: "t"), source: "x", icons: .vendored).action == nil)
+    }
+
+    @Test func resolvesPayloadIcon() throws {
+        let notification = SidebarNotification(
+            payload: try NotificationPayload(title: "t", body: "b", icon: ":Slack:"),
+            source: "cli",
+            icons: .vendored
+        )
+
+        #expect(notification.icon == SidebarNotification.Icon(id: "slack"))
+        #expect(notification.body == "b")
+    }
+
+    @Test(arguments: [("b", "b\n\nInvalid icon: :nope:"), ("", "Invalid icon: :nope:")])
+    func namesUnknownIconAtTheEndOfTheBody(body: String, expected: String) throws {
+        let notification = SidebarNotification(
+            payload: try NotificationPayload(title: "t", body: body, icon: ":nope:"),
+            source: "cli",
+            icons: .vendored
+        )
+
+        #expect(notification.icon == nil)
+        #expect(notification.body == expected)
     }
 
     @Test(arguments: [

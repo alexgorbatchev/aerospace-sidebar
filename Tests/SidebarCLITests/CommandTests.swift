@@ -10,13 +10,13 @@ struct PushCommandTests {
 
         let result = await invoke([
             "notification", "push", "--title", "Build", "--subtitle", "main", "--body", "passed",
-            "--severity", "high", "--run", "open .",
+            "--severity", "high", "--icon", "ghostty", "--run", "open .",
         ], sender: sender)
 
         #expect(result.status == 0)
         #expect(result.output == "[OK] Notification sent to the sidebar.\n")
         #expect(sender.payloads == [try NotificationPayload(
-            title: "Build", subtitle: "main", body: "passed", severity: .high,
+            title: "Build", subtitle: "main", body: "passed", severity: .high, icon: "ghostty",
             action: .run(command: "open .", workingDirectory: "/Users/dev/project")
         )])
     }
@@ -94,13 +94,14 @@ struct PushCommandTests {
 struct URLCommandTests {
     @Test func printsDecodableURL() async throws {
         let result = await invoke([
-            "notification", "url", "--title", "a+b", "--body", "c & d", "--severity", "critical", "--open", "https://example.com",
+            "notification", "url", "--title", "a+b", "--body", "c & d", "--severity", "critical", "--icon", ":slack:",
+            "--open", "https://example.com",
         ])
         let url = try #require(URL(string: result.output.trimmingCharacters(in: .newlines)))
 
         #expect(result.status == 0)
         #expect(try SidebarRequest(url: url) == .pushNotification(NotificationPayload(
-            title: "a+b", body: "c & d", severity: .critical, action: .open(URL(string: "https://example.com")!)
+            title: "a+b", body: "c & d", severity: .critical, icon: ":slack:", action: .open(URL(string: "https://example.com")!)
         )))
     }
 

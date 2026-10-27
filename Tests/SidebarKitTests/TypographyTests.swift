@@ -15,6 +15,7 @@ struct TypographyTests {
         #expect(typography.font(.callout) == .system(size: 12))
         #expect(typography.font(.subheadline) == .system(size: 11))
         #expect(typography.font(.caption1) == .system(size: 10))
+        #expect(typography.size(.caption1) == 10)
     }
 
     @Test func everyStyleScalesWithTheBaseSize() {

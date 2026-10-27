@@ -41,11 +41,15 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
     public static let maxTitleLength = 256
     public static let maxSubtitleLength = 256
     public static let maxBodyLength = 4096
+    public static let maxIconLength = 64
 
     public let title: String
     public let subtitle: String
     public let body: String
     public let severity: NotificationSeverity
+    /// sketchybar-app-font icon id, such as `slack` or `:slack:`. The app resolves it; an unknown id is
+    /// reported in the notification's body rather than rejected.
+    public let icon: String?
     public let action: NotificationAction?
 
     /// - Throws: `SidebarRequestError` when both title and body are empty or a field exceeds its limit.
@@ -54,6 +58,7 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
         subtitle: String = "",
         body: String = "",
         severity: NotificationSeverity = .normal,
+        icon: String? = nil,
         action: NotificationAction? = nil
     ) throws(SidebarRequestError) {
         guard !title.isEmpty || !body.isEmpty else {
@@ -63,6 +68,7 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
             ("title", title, Self.maxTitleLength),
             ("subtitle", subtitle, Self.maxSubtitleLength),
             ("body", body, Self.maxBodyLength),
+            ("icon", icon ?? "", Self.maxIconLength),
         ] where value.count > limit {
             throw .fieldTooLong(field: field, limit: limit)
         }
@@ -70,11 +76,12 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
         self.subtitle = subtitle
         self.body = body
         self.severity = severity
+        self.icon = icon?.isEmpty == false ? icon : nil
         self.action = action
     }
 
     private enum CodingKeys: String, CodingKey {
-        case title, subtitle, body, severity, action
+        case title, subtitle, body, severity, icon, action
     }
 
     public init(from decoder: Decoder) throws {
@@ -84,6 +91,7 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
             subtitle: container.decodeIfPresent(String.self, forKey: .subtitle) ?? "",
             body: container.decodeIfPresent(String.self, forKey: .body) ?? "",
             severity: container.decodeIfPresent(NotificationSeverity.self, forKey: .severity) ?? .normal,
+            icon: container.decodeIfPresent(String.self, forKey: .icon),
             action: container.decodeIfPresent(NotificationAction.self, forKey: .action)
         )
     }
@@ -121,7 +129,7 @@ extension SidebarRequestError: CustomStringConvertible {
 /// so they never carry commands and only open `http`/`https` links on click.
 ///
 /// Supported routes:
-/// - `aerospace-sidebar://notification/push?title=…&subtitle=…&body=…&severity=high&open=https://…`
+/// - `aerospace-sidebar://notification/push?title=…&subtitle=…&body=…&severity=high&icon=slack&open=https://…`
 public enum SidebarRequest: Equatable, Sendable {
     case pushNotification(NotificationPayload)
 
@@ -151,6 +159,7 @@ public enum SidebarRequest: Equatable, Sendable {
             subtitle: query["subtitle"] ?? "",
             body: query["body"] ?? "",
             severity: severity ?? .normal,
+            icon: query["icon"],
             action: action
         ))
     }
@@ -172,7 +181,8 @@ public enum SidebarRequest: Equatable, Sendable {
             components.path = "/push"
             components.queryItems = [
                 ("title", payload.title), ("subtitle", payload.subtitle), ("body", payload.body),
-                ("severity", payload.severity == .normal ? "" : payload.severity.rawValue), ("open", openValue ?? ""),
+                ("severity", payload.severity == .normal ? "" : payload.severity.rawValue), ("icon", payload.icon ?? ""),
+                ("open", openValue ?? ""),
             ]
             .filter { !$0.1.isEmpty }
             .map { URLQueryItem(name: $0.0, value: $0.1) }

@@ -11,6 +11,19 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         case activateApp(name: String)
     }
 
+    /// A sketchybar-app-font icon (`AppIconFont`).
+    public struct Icon: Codable, Equatable, Sendable {
+        /// Icon id without the surrounding colons, such as `slack`.
+        public let id: String
+
+        /// The ligature that the font draws as the icon.
+        var glyph: String { ":\(id):" }
+
+        /// The id in words, such as "Google Chrome". Several apps can share an icon (`mail` stands for Mail,
+        /// Spark, HEY and others), so the label names the icon rather than one of its apps.
+        var accessibilityLabel: String { id.replacingOccurrences(of: "_", with: " ").capitalized }
+    }
+
     public let id: UUID
     /// The app that posted the notification, or the process that pushed it.
     public let source: String
@@ -18,6 +31,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
     public let subtitle: String
     public let body: String
     public let severity: NotificationSeverity
+    public let icon: Icon?
     public let action: ClickAction?
     /// macOS kept presenting the original notification because it needs interaction.
     public let shownByMacOS: Bool
@@ -33,6 +47,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         subtitle: String = "",
         body: String = "",
         severity: NotificationSeverity = .normal,
+        icon: Icon? = nil,
         action: ClickAction? = nil,
         shownByMacOS: Bool = false,
         receivedAt: Date = Date(),
@@ -44,13 +59,20 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         self.subtitle = subtitle
         self.body = body
         self.severity = severity
+        self.icon = icon
         self.action = action
         self.shownByMacOS = shownByMacOS
         self.receivedAt = receivedAt
         self.occurrences = occurrences
     }
 
-    public init(payload: NotificationPayload, source: String, receivedAt: Date = Date()) {
+    /// A pushed notification. An icon id that `icons` does not know is named at the end of the body.
+    public init(payload: NotificationPayload, source: String, icons: AppIconFont, receivedAt: Date = Date()) {
+        let icon = payload.icon.flatMap(icons.icon(for:))
+        var body = payload.body
+        if let value = payload.icon, icon == nil {
+            body = [body, "Invalid icon: \(value)"].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        }
         let action: ClickAction? = switch payload.action {
         case nil: nil
         case .open(let url): .open(url)
@@ -60,8 +82,9 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
             source: source,
             title: payload.title,
             subtitle: payload.subtitle,
-            body: payload.body,
+            body: body,
             severity: payload.severity,
+            icon: icon,
             action: action,
             receivedAt: receivedAt
         )
@@ -69,10 +92,11 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
 }
 
 extension SidebarNotification {
-    /// Same sender, text, severity, click action and presentation; only identity, time and count may differ.
+    /// Same sender, text, severity, icon, click action and presentation; only identity, time and count may differ.
     func hasSameContent(as other: SidebarNotification) -> Bool {
         source == other.source && title == other.title && subtitle == other.subtitle && body == other.body
-            && severity == other.severity && action == other.action && shownByMacOS == other.shownByMacOS
+            && severity == other.severity && icon == other.icon && action == other.action
+            && shownByMacOS == other.shownByMacOS
     }
 
     /// This entry with `newer` folded in: it keeps its identity, takes `newer`'s time, and adds its count.
@@ -84,6 +108,7 @@ extension SidebarNotification {
             subtitle: subtitle,
             body: body,
             severity: severity,
+            icon: icon,
             action: action,
             shownByMacOS: shownByMacOS,
             receivedAt: max(receivedAt, newer.receivedAt),

@@ -8,6 +8,7 @@
 - **Push from anywhere**: the `aerospace-sidebar` command and `aerospace-sidebar://` links add notifications.
 - **Click actions**: a notification can run a shell command or open a link when clicked.
 - **Severity**: `low`, `normal`, `high` and `critical` notifications sort and look different, with critical ones always on top.
+- **App icons**: a pushed notification can name an app icon from [sketchybar-app-font](https://github.com/kvndrsslr/sketchybar-app-font), such as `slack` or `google_chrome`, shown before its sender.
 - **Repeats stacked**: a notification identical to one already listed joins it as a single card with a count, instead of filling the list with copies.
 - **History**: the list survives quitting and relaunching; notifications are kept for 24 hours by default.
 - **Guided setup**: Settings grants the Accessibility permission, adds the app to Login Items and adds the sidebar's settings to your AeroSpace config, one button each.
@@ -17,7 +18,7 @@
 - AeroSpace leaves an empty strip on the right edge of the main display, and the sidebar fills it.
 - When an app posts a macOS notification, its banner vanishes and the notification appears at the top of its severity group in the sidebar.
 - `aerospace-sidebar notification push` sends a notification from the terminal, starting the sidebar first when it is not running.
-- A notification with the same sender, text, severity and click action as a listed one is stacked onto it: the card moves up as the newest, shows `×2`, `×3`, … next to its time, and gets layered edges below it. Clicking or dismissing a stack removes all of its copies.
+- A notification with the same sender, text, severity, icon and click action as a listed one is stacked onto it: the card moves up as the newest, shows `×2`, `×3`, … next to its time, and gets layered edges below it. Clicking or dismissing a stack removes all of its copies.
 - Clicking a notification runs its action, or switches to the app that posted it, and removes it. The × button removes it without acting.
 - Hovering a notification shows what a click will do, including the full command.
 
@@ -28,6 +29,7 @@
 - Banners are hidden by moving Notification Center's banner window off-screen and closing the banner. Quitting the sidebar moves that window back.
 - `aerospace-sidebar notification push` talks to the app over a socket in your private temporary directory (`$(getconf DARWIN_USER_TEMP_DIR)com.alexgorbatchev.aerospace-sidebar.sock`) that only your user account can open. This is the only way to attach a `--run` command.
 - `aerospace-sidebar://` links can be opened by any app, and by web pages after your browser asks for permission. They therefore never carry commands, and their `open` links must be `http` or `https`. A notification from a link is labeled with the app that opened it when macOS reports one, otherwise `URL`.
+- App icons come from sketchybar-app-font (CC0), which ships inside the app, so nothing needs installing. An icon id is written `slack` or `:slack:`; one the font does not have is listed at the end of the notification's body as `Invalid icon: <id>`, and the notification shows without an icon. Several apps can share one icon, such as `mail` for Mail, Spark and HEY. [`icon_map.json`](Resources/sketchybar-app-font/icon_map.json) lists every id with the apps it stands for.
 - `--run` commands run with your login shell (`$SHELL -lc`) in the directory where you ran `aerospace-sidebar`. Their output is discarded.
 - The list is saved to `~/Library/Application Support/com.alexgorbatchev.aerospace-sidebar/notifications.json` on every change and holds at most 200 notifications by default; a stack counts as one.
 - The list draws its own thin scroll indicator in the right margin instead of the system scroll bar, so the cards keep their width when a mouse is attached. It appears while scrolling or when the pointer is over that margin, and can be dragged.
@@ -66,8 +68,8 @@ Open `~/Applications/AerospaceSidebar.app`, click the gear button at the top of 
 # Quick Start
 
 ```bash
-# Show a notification
-aerospace-sidebar notification push --title "Tests passed" --body "142 passed in 31s"
+# Show a notification with the Ghostty icon
+aerospace-sidebar notification push --icon ghostty --title "Tests passed" --body "142 passed in 31s"
 
 # A critical notification that reopens the CI run when clicked
 aerospace-sidebar notification push --severity critical --title "Deploy failed" --run "open https://ci.example.com/runs/42"
@@ -107,6 +109,7 @@ Skill:
 | `--subtitle <subtitle>` | | empty | Line under the title, up to 256 characters |
 | `--body <body>` | | empty | Main text, up to 4096 characters |
 | `--severity <severity>` | | `normal` | `low`, `normal`, `high` or `critical`; more severe notifications are listed first |
+| `--icon <id>` | | none | sketchybar-app-font icon id such as `slack` or `:slack:`, up to 64 characters |
 | `--open <url>` | | none | URL to open when the notification is clicked |
 | `--run <command>` | | none | Shell command to run in the current directory when the notification is clicked |
 
@@ -120,6 +123,7 @@ A notification needs `--title` or `--body`. `--open` and `--run` cannot be combi
 | `--subtitle <subtitle>` | | empty | Line under the title, up to 256 characters |
 | `--body <body>` | | empty | Main text, up to 4096 characters |
 | `--severity <severity>` | | `normal` | `low`, `normal`, `high` or `critical` |
+| `--icon <id>` | | none | sketchybar-app-font icon id such as `slack` or `:slack:` |
 | `--open <url>` | | none | `http` or `https` URL to open when the notification is clicked |
 
 # Configuration
@@ -144,7 +148,7 @@ A missing file or key uses the defaults shown. An invalid file keeps the previou
 
 # URL Scheme
 
-Opening `aerospace-sidebar://notification/push` with any of the query parameters `title`, `subtitle`, `body`, `severity` and `open` shows a notification, for example from a web page link, the Shortcuts Open URL action, or `open -g "<url>"` in a script. Values are percent-encoded; `aerospace-sidebar notification url` builds the link for you.
+Opening `aerospace-sidebar://notification/push` with any of the query parameters `title`, `subtitle`, `body`, `severity`, `icon` and `open` shows a notification, for example from a web page link, the Shortcuts Open URL action, or `open -g "<url>"` in a script. Values are percent-encoded; `aerospace-sidebar notification url` builds the link for you.
 
 ```html
 <a href="aerospace-sidebar://notification/push?title=Build%20done&severity=high&open=https%3A%2F%2Fci.example.com">Notify me</a>

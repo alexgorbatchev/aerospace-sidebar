@@ -25,10 +25,14 @@ struct Typography: Equatable {
     }
 
     func font(_ style: NSFont.TextStyle) -> Font {
-        let system = NSFont.preferredFont(forTextStyle: style)
-        let size = size * system.pointSize / NSFont.preferredFont(forTextStyle: .body).pointSize
+        let size = size(style)
         let font: Font = if let family { .custom(family, fixedSize: size) } else { .system(size: size) }
-        return system.fontDescriptor.symbolicTraits.contains(.bold) ? font.bold() : font
+        return NSFont.preferredFont(forTextStyle: style).fontDescriptor.symbolicTraits.contains(.bold) ? font.bold() : font
+    }
+
+    /// The point size of `style`, for text set in another font, such as app icons, to match.
+    func size(_ style: NSFont.TextStyle) -> CGFloat {
+        size * NSFont.preferredFont(forTextStyle: style).pointSize / NSFont.preferredFont(forTextStyle: .body).pointSize
     }
 
     /// The body font as an `NSFont`, for AppKit APIs such as the font panel.

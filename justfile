@@ -1,6 +1,8 @@
 app := ".build/AerospaceSidebar.app"
 cli := "bin/aerospace-sidebar"
 bundle_id := "com.alexgorbatchev.aerospace-sidebar"
+# Vendored sketchybar-app-font release (CC0), copied into the bundle's Resources
+app_font := "Resources/sketchybar-app-font"
 # NotifyMeHow (this user's fork and upstream) also hides native banners; the sidebar replaces it
 notifymehow_bundle_ids := "com.alexgorbatchev.notifymehow com.motleywoods.NotifyMeHow"
 # A stable signing identity keeps the Accessibility permission across rebuilds; ad-hoc builds lose it
@@ -15,9 +17,10 @@ bundle version="":
     swift build -c release --product AerospaceSidebar
     swift build -c release --product aerospace-sidebar
     rm -rf {{ app }}
-    mkdir -p {{ app }}/Contents/MacOS bin
+    mkdir -p {{ app }}/Contents/MacOS {{ app }}/Contents/Resources bin
     cp "$(swift build -c release --show-bin-path)/AerospaceSidebar" {{ app }}/Contents/MacOS/
     cp Resources/Info.plist {{ app }}/Contents/Info.plist
+    cp -R {{ app_font }} {{ app }}/Contents/Resources/
     {{ if version != "" { "plutil -replace CFBundleShortVersionString -string " + quote(version) + " " + app + "/Contents/Info.plist" } else { "true" } }}
     codesign --force --sign "{{ signing_identity }}" {{ app }}
     cp "$(swift build -c release --show-bin-path)/aerospace-sidebar" {{ cli }}
@@ -58,6 +61,13 @@ release-archives version:
     tar -czf "dist/aerospace-sidebar_{{ version }}_darwin_arm64.tar.gz" -C bin aerospace-sidebar
     cd dist && shasum -a 256 *.tar.gz > checksums.txt
 
+# Replace the vendored sketchybar-app-font with a release (tag such as v3.0.13) and record its tag
+update-app-font tag:
+    gh release download {{ quote(tag) }} --repo kvndrsslr/sketchybar-app-font --dir {{ app_font }} --clobber \
+        --pattern sketchybar-app-font.ttf --pattern icon_map.json
+    gh api "repos/kvndrsslr/sketchybar-app-font/contents/LICENSE?ref={{ tag }}" -H "Accept: application/vnd.github.raw" > {{ app_font }}/LICENSE
+    echo {{ quote(tag) }} > {{ app_font }}/VERSION
+
 # Run the CLI
 cli *args:
     {{ cli }} {{ args }}
@@ -73,7 +83,8 @@ reset-permissions:
 # Push test notifications through the CLI, the URL scheme and macOS itself
 test-notifications:
     {{ cli }} notification push --severity low --title "Low severity" --body "Dimmed and listed below everything else."
-    {{ cli }} notification push --title "CLI notification" --body "Pushed with aerospace-sidebar notification push."
+    {{ cli }} notification push --icon ghostty --title "CLI notification" --body "Pushed with aerospace-sidebar notification push, with the Ghostty icon."
+    {{ cli }} notification push --icon no_such_app --title "Unknown icon" --body "The body names an icon id the font does not have."
     {{ cli }} notification push --title "Click to run a command" --body "Runs 'say clicked' in this directory." --run "say clicked"
     {{ cli }} notification push --title "Click to open a link" --subtitle "Opens the AeroSpace guide" --open "https://nikitabobko.github.io/AeroSpace/guide"
     open -g "$({{ cli }} notification url --title 'URL notification' --body 'Delivered through the aerospace-sidebar:// URL scheme.')"

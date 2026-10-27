@@ -9,6 +9,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
 
     public let settings: SettingsStore
     public let model: SidebarModel
+    public let icons: AppIconFont
     public private(set) var controller: SidebarPanelController?
     public private(set) var settingsWindow: SettingsWindowController?
     public private(set) var monitor: NotificationCenterMonitor?
@@ -16,7 +17,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     private var pruneTimer: Timer?
     private let makeController: @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor () -> Void) -> SidebarPanelController
     private let makeMonitor: @MainActor (SidebarModel, SettingsStore) -> NotificationCenterMonitor
-    private let makeServer: @MainActor (SidebarModel) -> ControlServer
+    private let makeServer: @MainActor (SidebarModel, AppIconFont) -> ControlServer
     private let makeSettingsWindow: @MainActor (SettingsStore, _ onAeroSpaceUpdated: @escaping @MainActor () -> Void) -> SettingsWindowController
     private let urlSender: @MainActor () -> String?
 
@@ -27,16 +28,18 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
             environment: ProcessInfo.processInfo.environment
         )),
         makeModel: @MainActor (SidebarSettings) -> SidebarModel = { SidebarModel(store: FileNotificationStore(), history: $0.history) },
+        icons: AppIconFont = .bundled(),
         makeController: @escaping @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor () -> Void) -> SidebarPanelController = {
             SidebarPanelController(model: $0, settings: $1, openSettings: $2)
         },
         makeMonitor: @escaping @MainActor (SidebarModel, SettingsStore) -> NotificationCenterMonitor = { SidebarAppDelegate.makeMonitor(model: $0, settings: $1) },
-        makeServer: @escaping @MainActor (SidebarModel) -> ControlServer = { SidebarAppDelegate.makeServer(model: $0) },
+        makeServer: @escaping @MainActor (SidebarModel, AppIconFont) -> ControlServer = { SidebarAppDelegate.makeServer(model: $0, icons: $1) },
         makeSettingsWindow: @escaping @MainActor (SettingsStore, _ onAeroSpaceUpdated: @escaping @MainActor () -> Void) -> SettingsWindowController = SidebarAppDelegate.makeSettingsWindow,
         urlSender: @escaping @MainActor () -> String? = SidebarAppDelegate.currentAppleEventSender
     ) {
         self.settings = settings
         self.model = makeModel(settings.settings)
+        self.icons = icons
         self.makeController = makeController
         self.makeMonitor = makeMonitor
         self.makeServer = makeServer
@@ -70,7 +73,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { model.pruneExpired() }
         }
 
-        let server = makeServer(model)
+        let server = makeServer(model, icons)
         do {
             try server.start()
             self.server = server
@@ -100,7 +103,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
             do {
                 switch try SidebarRequest(url: url) {
                 case .pushNotification(let payload):
-                    model.add(SidebarNotification(payload: payload, source: source))
+                    model.add(SidebarNotification(payload: payload, source: source, icons: icons))
                 }
             } catch {
                 Self.logger.error("Rejected \(url.absoluteString, privacy: .public): \(error.description, privacy: .public)")
@@ -123,11 +126,15 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    public static func makeServer(model: SidebarModel, path: String = SidebarApp.controlSocketPath) -> ControlServer {
+    public static func makeServer(
+        model: SidebarModel,
+        icons: AppIconFont,
+        path: String = SidebarApp.controlSocketPath
+    ) -> ControlServer {
         ControlServer(path: path) { request in
             switch request {
             case .pushNotification(let payload):
-                model.add(SidebarNotification(payload: payload, source: "aerospace-sidebar"))
+                model.add(SidebarNotification(payload: payload, source: "aerospace-sidebar", icons: icons))
                 return ControlResponse(error: nil)
             }
         }

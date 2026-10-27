@@ -19,6 +19,7 @@ struct SidebarAppDelegateTests {
         SidebarAppDelegate(
             settings: settings,
             makeModel: { SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), history: $0.history) },
+            icons: .vendored,
             makeController: { model, settings, openSettings in
                 SidebarPanelController(
                     model: model,
@@ -39,7 +40,7 @@ struct SidebarAppDelegateTests {
                     onStatus: { model.interception = $0 }
                 )
             },
-            makeServer: { SidebarAppDelegate.makeServer(model: $0, path: socketPath) },
+            makeServer: { SidebarAppDelegate.makeServer(model: $0, icons: $1, path: socketPath) },
             makeSettingsWindow: { [directory] settings, onAeroSpaceUpdated in
                 SettingsWindowController(store: settings, onboarding: OnboardingModel(
                     accessibility: FakePlatform(),
@@ -60,13 +61,14 @@ struct SidebarAppDelegateTests {
         let delegate = makeDelegate(socketPath: path)
 
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
-        let payload = try NotificationPayload(title: "from cli", severity: .critical)
+        let payload = try NotificationPayload(title: "from cli", severity: .critical, icon: "ghostty")
         let response = try await UnixSocket.exchange(.pushNotification(payload), path: path)
 
         #expect(try #require(delegate.controller).panel.isVisible)
         #expect(delegate.model.interception == .active)
         #expect(response == ControlResponse(error: nil))
         #expect(delegate.model.notifications.map(\.source) == ["aerospace-sidebar", "Mail"])
+        #expect(delegate.model.notifications.map(\.icon?.id) == ["ghostty", nil])
 
         delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
         #expect(!FileManager.default.fileExists(atPath: path))
@@ -140,7 +142,7 @@ struct SidebarAppDelegateTests {
                 NotificationCenterMonitor(platform: platform, interceptor: SystemNotificationInterceptor { model.add($0) },
                                           workspaceCenter: NotificationCenter(), onStatus: { _ in })
             },
-            makeServer: { SidebarAppDelegate.makeServer(model: $0, path: ControlServerTests.socketPath()) }
+            makeServer: { SidebarAppDelegate.makeServer(model: $0, icons: $1, path: ControlServerTests.socketPath()) }
         )
 
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
@@ -151,12 +153,13 @@ struct SidebarAppDelegateTests {
 
     @Test func urlsPushNotificationsLabeledWithSender() throws {
         let delegate = makeDelegate()
-        let url = try SidebarRequest.pushNotification(NotificationPayload(title: "From a page", severity: .high)).url()
+        let url = try SidebarRequest.pushNotification(NotificationPayload(title: "From a page", severity: .high, icon: "safari")).url()
 
         delegate.application(NSApplication.shared, open: [url, URL(string: "aerospace-sidebar://bogus")!])
 
         #expect(delegate.model.notifications.map(\.title) == ["From a page"])
         #expect(delegate.model.notifications.first?.source == "Safari")
+        #expect(delegate.model.notifications.first?.icon == SidebarNotification.Icon(id: "safari"))
     }
 
     @Test func urlsWithoutKnownSenderAreLabeledURL() throws {
