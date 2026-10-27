@@ -262,6 +262,24 @@ struct NotificationDatabaseMonitorTests {
 
 @MainActor
 struct NotificationIdentitiesTests {
+    /// Saved identities come back in a new instance, oldest first, up to `capacity`.
+    @Test func keepsIdentitiesAcrossLaunchesInDefaults() throws {
+        let fixture = try NotificationDatabaseFixture()
+        let first = NotificationIdentities(defaults: fixture.defaults)
+        first.insert("a")
+        first.insert("b")
+
+        let relaunched = NotificationIdentities(defaults: fixture.defaults)
+        #expect(relaunched.contains("A"))
+        #expect(!relaunched.insert("b"))
+
+        fixture.defaults.set((0...NotificationIdentities.capacity).map { "ID-\($0)" }, forKey: NotificationIdentities.defaultsKey)
+        let trimmed = NotificationIdentities(defaults: fixture.defaults)
+        #expect(!trimmed.contains("id-0"))
+        #expect(trimmed.contains("id-\(NotificationIdentities.capacity)"))
+        #expect(!NotificationIdentities().contains("a"))
+    }
+
     @Test func remembersIdentifiersCaseInsensitivelyUpToCapacity() {
         let identities = NotificationIdentities()
 

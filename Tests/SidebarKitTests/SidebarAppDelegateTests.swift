@@ -10,12 +10,15 @@ struct SidebarAppDelegateTests {
     let platform = FakePlatform()
     let cli = FakeAeroSpaceCLI()
     let database: NotificationDatabaseFixture
+    /// Kept in the fixture's defaults domain, never `UserDefaults.standard`.
+    let identities: NotificationIdentities
 
     init() throws {
         _ = NSApplication.shared
         directory = try TemporaryDirectory()
         settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
         database = try NotificationDatabaseFixture()
+        identities = NotificationIdentities(defaults: database.defaults)
     }
 
     /// Reads a database in the test's directory, never the real one.
@@ -33,6 +36,7 @@ struct SidebarAppDelegateTests {
             settings: settings,
             makeModel: { SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), history: $0.history) },
             icons: .vendored,
+            identities: identities,
             makeController: { model, settings, openSettings in
                 SidebarPanelController(
                     model: model,
@@ -137,6 +141,46 @@ struct SidebarAppDelegateTests {
         #expect(first.window.isVisible)
     }
 
+    /// A notification still on screen when the sidebar relaunches is the one already listed: it is
+    /// neither listed again nor stacked onto its card as a repeat.
+    @Test func relaunchingDoesNotListNotificationsOnScreenAgain() throws {
+        settings.update { $0.notifications.appsLeftToMacOS = ["Zoom"] }
+        platform.windowsByPID[42] = [FakeElement.window(FakeElement.banner(id: "meeting", app: "Zoom", title: "Meeting"))]
+        let first = makeDelegate()
+        first.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        first.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+        #expect(first.model.notifications.map(\.title) == ["Meeting"])
+
+        let relaunched = SidebarAppDelegate(
+            settings: settings,
+            makeModel: { _ in first.model },
+            icons: .vendored,
+            identities: NotificationIdentities(defaults: database.defaults),
+            makeController: { model, settings, _ in
+                SidebarPanelController(model: model, settings: settings, targetVisibleFrame: { nil }, notificationCenter: NotificationCenter())
+            },
+            makeMonitor: { [platform] model, settings, identities in
+                NotificationCenterMonitor(
+                    platform: platform,
+                    interceptor: SystemNotificationInterceptor(
+                        identities: identities,
+                        leavesToMacOS: { settings.settings.notifications.leavesToMacOS($0) },
+                        onNotification: { model.add($0) }
+                    ),
+                    workspaceCenter: NotificationCenter(),
+                    onStatus: { _ in }
+                )
+            },
+            makeDatabaseMonitor: makeDatabaseMonitor,
+            makeServer: { SidebarAppDelegate.makeServer(model: $0, icons: $1, path: ControlServerTests.socketPath()) },
+            makeAeroSpaceSync: makeAeroSpaceSync
+        )
+        relaunched.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        relaunched.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+
+        #expect(relaunched.model.notifications.map(\.occurrences) == [1])
+    }
+
     @Test func launchSurvivesUnavailableControlSocket() throws {
         let path = ControlServerTests.socketPath()
         let occupant = ControlServer(path: path) { _ in ControlResponse(error: nil) }
@@ -156,6 +200,7 @@ struct SidebarAppDelegateTests {
         let delegate = SidebarAppDelegate(
             settings: unwatchable,
             makeModel: { SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), history: $0.history) },
+            identities: identities,
             makeController: { model, settings, _ in
                 SidebarPanelController(model: model, settings: settings, targetVisibleFrame: { nil }, notificationCenter: NotificationCenter())
             },

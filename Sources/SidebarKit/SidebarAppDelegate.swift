@@ -19,8 +19,9 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     public private(set) var settingsWindow: SettingsWindowController?
     public private(set) var monitor: NotificationCenterMonitor?
     public private(set) var databaseMonitor: NotificationDatabaseMonitor?
-    /// Notifications listed from NotificationCenter or its database, shared so neither lists one twice.
-    private let identities = NotificationIdentities()
+    /// Notifications listed from NotificationCenter or its database, shared so neither lists one twice,
+    /// and kept across launches.
+    private let identities: NotificationIdentities
     private var server: ControlServer?
     private var pruneTimer: Timer?
     private let makeController: @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor () -> Void) -> SidebarPanelController
@@ -30,7 +31,9 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     private let makeSettingsWindow: @MainActor (SettingsStore, AeroSpaceSync) -> SettingsWindowController
     private let urlSender: @MainActor () -> String?
 
-    /// - Parameter urlSender: Name of the process that opened the URL being handled.
+    /// - Parameters:
+    ///   - identities: Notifications already listed; tests pass one that is not saved in `UserDefaults.standard`.
+    ///   - urlSender: Name of the process that opened the URL being handled.
     public init(
         settings: SettingsStore = SettingsStore(file: SettingsFile(
             home: FileManager.default.homeDirectoryForCurrentUser,
@@ -38,6 +41,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         )),
         makeModel: @MainActor (SidebarSettings) -> SidebarModel = { SidebarModel(store: FileNotificationStore(), history: $0.history) },
         icons: AppIconFont = .bundled(),
+        identities: NotificationIdentities = NotificationIdentities(defaults: .standard),
         makeController: @escaping @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor () -> Void) -> SidebarPanelController = {
             SidebarPanelController(model: $0, settings: $1, openSettings: $2)
         },
@@ -57,6 +61,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         self.settings = settings
         self.model = makeModel(settings.settings)
         self.icons = icons
+        self.identities = identities
         self.aeroSpace = makeAeroSpaceSync(settings)
         self.syncedSidebar = settings.settings.sidebar
         self.makeController = makeController
