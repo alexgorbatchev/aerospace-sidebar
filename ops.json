@@ -4,8 +4,8 @@
       "name": "Alex Gorbatchev",
       "email": "alex.gorbatchev@gmail.com"
     },
-    "timestamp": 1793143642,
-    "op": "SetStatus",
-    "status": "in-progress"
+    "timestamp": 1793144251,
+    "op": "AddComment",
+    "text": "Cause: titled test windows (Settings, font-chooser fixtures) become key when ordered in and SettingsWindowController.show() calls makeKey(), which moves keyboard focus to swiftpm-testing-helper even under the .prohibited policy; up to 22 opaque test windows (sidebar strips at .statusBar, Settings) covered the screen. Fix (uncommitted): SettingsWindowController gets a panelType seam; tests order in only TestPanel (never key, alpha 0) via SettingsWindowController.forTesting / SidebarPanelController.forTesting. Measured on a full run: before, 3 keyboard-focus thefts and up to 22 visible windows; after, none, and only 2 small non-key windows briefly from the two window-server tests. Rule recorded in AGENTS.md Gotchas."
   }
 ]
