@@ -115,7 +115,7 @@ struct SidebarViewTests {
         #expect(SidebarView.hoveredID(second, card: first, hovering: false) == second)
     }
 
-    @Test func hoverBringsTextForwardWhileBackgroundStaysSolid() throws {
+    @Test func hoverScalesCardWithoutFadingIt() throws {
         func card(hovered: Bool) throws -> InspectableView<ViewType.ClassifiedView> {
             try NotificationCard(
                 notification: SidebarNotification(source: "s", title: "t"),
@@ -125,23 +125,19 @@ struct SidebarViewTests {
                 dismiss: {}
             ).inspect()
         }
-        func contentOpacity(_ card: InspectableView<ViewType.ClassifiedView>) throws -> Double {
-            try card.find(text: "t").find(ViewType.VStack.self, relation: .parent).opacity()
-        }
-        func dismissOpacity(_ card: InspectableView<ViewType.ClassifiedView>) throws -> Double {
-            try card.find(viewWithAccessibilityLabel: "Dismiss").opacity()
+
+        /// No opacity modifier counts as fully opaque.
+        func opacity(_ view: () throws -> InspectableView<some BaseViewType>) -> Double {
+            (try? view().opacity()) ?? 1
         }
 
-        let resting = try card(hovered: false)
-        let hovered = try card(hovered: true)
-
-        #expect(try contentOpacity(resting) < 1)
-        #expect(try dismissOpacity(resting) < 1)
-        #expect(throws: (any Error).self) { try resting.vStack().opacity() }
-        #expect(try resting.vStack().scaleEffect() == CGSize(width: 1, height: 1))
-        #expect(try contentOpacity(hovered) == 1)
-        #expect(try dismissOpacity(hovered) == 1)
-        #expect(try hovered.vStack().scaleEffect().width > 1)
+        for hovered in [false, true] {
+            let sut = try card(hovered: hovered)
+            #expect(opacity { try sut.vStack() } == 1)
+            #expect(opacity { try sut.find(text: "t").find(ViewType.VStack.self, relation: .parent) } == 1)
+            #expect(opacity { try sut.find(viewWithAccessibilityLabel: "Dismiss") } == 1)
+            #expect(try sut.vStack().scaleEffect().width == (hovered ? NotificationCard.hoverScale : 1))
+        }
     }
 
     @Test func laterCardsDrawAboveEarlierOnesSoTheyCoverRemovals() throws {

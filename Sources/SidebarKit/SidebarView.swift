@@ -135,9 +135,7 @@ struct NotificationCard: View {
     static let stackLayerHeight: CGFloat = 5
     static let stackLayerInset: CGFloat = 8
     static let maxStackLayers = 2
-    /// A card's text and dismiss button rest slightly faded and come forward under the pointer; its
-    /// background stays solid.
-    static let restingOpacity = 0.8
+    /// Cards scale up slightly under the pointer.
     static let hoverScale: CGFloat = 1.02
 
     @Environment(\.typography) private var typography
@@ -158,8 +156,6 @@ struct NotificationCard: View {
         .animation(.easeOut(duration: 0.15), value: isHovered)
         .onHover(perform: hover)
     }
-
-    private var contentOpacity: Double { isHovered ? 1 : Self.restingOpacity }
 
     /// Layers drawn under the card for notifications received more than once.
     private var stackLayers: Int { min(notification.occurrences - 1, Self.maxStackLayers) }
@@ -204,7 +200,6 @@ struct NotificationCard: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .opacity(contentOpacity)
                 .padding(10)
                 .padding(.trailing, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -229,7 +224,6 @@ struct NotificationCard: View {
                     .font(typography.font(.caption1))
             }
             .buttonStyle(.borderless)
-            .opacity(contentOpacity)
             .padding(8)
             .accessibilityLabel("Dismiss")
         }
