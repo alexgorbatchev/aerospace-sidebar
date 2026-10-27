@@ -151,15 +151,23 @@ struct SettingsPaneTests {
     let editor: SettingsEditor
     let platform = FakePlatform()
     let loginItems = FakeLoginItems()
+    let performer = RecordingPerformer()
+    let notifications: NotificationDatabaseFixture
     let onboarding: OnboardingModel
     let aeroSpace: AeroSpaceSync
 
     init() throws {
+        notifications = try NotificationDatabaseFixture()
         directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
         self.store = store
         editor = SettingsEditor(store: store)
-        onboarding = OnboardingModel(accessibility: platform, loginItems: loginItems, performer: RecordingPerformer())
+        onboarding = OnboardingModel(
+            accessibility: platform,
+            loginItems: loginItems,
+            performer: performer,
+            notificationDatabase: notifications.database
+        )
         aeroSpace = .fake(store: store, home: directory.url)
     }
 
@@ -177,8 +185,11 @@ struct SettingsPaneTests {
         aeroSpace.refresh()
         let sut = try setup().inspect()
         #expect(throws: Never.self) { try sut.find(text: "AerospaceSidebar does not open at login.") }
-        #expect(try sut.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Not done" }).count == 3)
+        #expect(try sut.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Not done" }).count == 4)
+        #expect(throws: Never.self) { try sut.find(text: "Optional. Add AerospaceSidebar to list notifications that showed no banner: during Focus, in quick bursts, or while the sidebar was not running.") }
 
+        try sut.find(button: "Open Full Disk Access").tap()
+        #expect(performer.actions.contains(.open(OnboardingModel.fullDiskAccessSettingsURL)))
         try sut.find(button: "Open Accessibility").tap()
         try sut.find(button: "Add to Login Items").tap()
         try sut.find(button: "Copy Settings").tap()
@@ -194,15 +205,17 @@ struct SettingsPaneTests {
 
     @Test func finishedStepsShowCheckmarks() throws {
         loginItems.status = .enabled
+        try notifications.create()
         try directory.write("[gaps]\nouter.right = [{ monitor.main = 305 }, 5]\n\n\(AeroSpaceConfigEditor.floatRule)\n", to: ".aerospace.toml")
         onboarding.refresh()
         aeroSpace.refresh()
         let sut = try setup().inspect()
 
-        for done in ["Accessibility granted", "Opens at login", "AeroSpace configured"] {
+        for done in ["Accessibility granted", "Full Disk Access granted", "Opens at login", "AeroSpace configured"] {
             #expect(throws: Never.self) { try sut.find(text: done) }
         }
-        #expect(try sut.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Done" }).count == 3)
+        #expect(throws: Never.self) { try sut.find(text: "Lists notifications that showed no banner: during Focus, in quick bursts, or while the sidebar was not running.") }
+        #expect(try sut.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Done" }).count == 4)
         #expect(throws: (any Error).self) { try sut.find(button: "Open Accessibility") }
         #expect(throws: Never.self) { try sut.find(text: ".aerospace.toml reserves 300 points on the right for the sidebar.") }
         try sut.find(button: "Remove").tap()

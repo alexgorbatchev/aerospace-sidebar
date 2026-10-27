@@ -15,19 +15,32 @@ struct OnboardingModelTests {
         platform.trusted = false
     }
 
-    func model() -> OnboardingModel {
-        OnboardingModel(accessibility: platform, loginItems: loginItems, performer: performer)
+    func model(database: NotificationDatabase = NotificationDatabase(url: URL(fileURLWithPath: "/nonexistent/db"))) -> OnboardingModel {
+        OnboardingModel(accessibility: platform, loginItems: loginItems, performer: performer, notificationDatabase: database)
     }
 
-    @Test func refreshesLiveState() {
-        let sut = model()
+    @Test func refreshesLiveState() throws {
+        let fixture = try NotificationDatabaseFixture()
+        let sut = model(database: fixture.database)
         #expect(!sut.accessibilityGranted && sut.loginItem == .disabled)
+        #expect(!sut.fullDiskAccessGranted)
 
         platform.trusted = true
         loginItems.status = .enabled
+        try fixture.create()
         sut.refresh()
 
         #expect(sut.accessibilityGranted && sut.loginItem == .enabled)
+        #expect(sut.fullDiskAccessGranted)
+    }
+
+    @Test func opensFullDiskAccessSettings() {
+        let sut = model()
+
+        sut.requestFullDiskAccess()
+
+        #expect(performer.actions == [.open(OnboardingModel.fullDiskAccessSettingsURL)])
+        #expect(!sut.fullDiskAccessGranted)
     }
 
     @Test func requestsAccessibilityWithPromptAndOpensSettings() {

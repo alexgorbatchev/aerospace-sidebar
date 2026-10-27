@@ -236,7 +236,12 @@ extension AeroSpaceSetup {
 
 extension OnboardingModel {
     static func fake() -> OnboardingModel {
-        OnboardingModel(accessibility: FakePlatform(), loginItems: FakeLoginItems(), performer: RecordingPerformer())
+        OnboardingModel(
+            accessibility: FakePlatform(),
+            loginItems: FakeLoginItems(),
+            performer: RecordingPerformer(),
+            notificationDatabase: NotificationDatabase(url: URL(fileURLWithPath: "/nonexistent/notifications.db"))
+        )
     }
 }
 

@@ -301,18 +301,19 @@ struct SystemNotificationInterceptorTests {
         #expect(received == 2)
     }
 
-    @Test func forgetsOldestIdentifiersBeyondLimit() {
-        var now = Date(timeIntervalSince1970: 0)
+    /// The database source records the notifications it lists in the same identities, so a banner it
+    /// already listed is closed but not listed again.
+    @Test func skipsNotificationsAlreadyListed() {
         var received = 0
-        let interceptor = SystemNotificationInterceptor(now: { now }) { _ in received += 1 }
-        for index in 0...SystemNotificationInterceptor.maxRememberedBanners {
-            interceptor.process(window: FakeElement.window(FakeElement.banner(id: "id-\(index)", title: "t\(index)")))
-        }
-        now += SystemNotificationInterceptor.duplicateWindow + 1
+        let identities = NotificationIdentities()
+        identities.insert("listed")
+        let interceptor = SystemNotificationInterceptor(identities: identities) { _ in received += 1 }
+        let banner = FakeElement.banner(id: "LISTED")
 
-        interceptor.process(window: FakeElement.window(FakeElement.banner(id: "id-0", title: "t0")))
+        interceptor.process(window: FakeElement.window(banner))
 
-        #expect(received == SystemNotificationInterceptor.maxRememberedBanners + 2)
+        #expect(received == 0)
+        #expect(banner.performed.count == 1)
     }
 
     @Test func skipsEmptyBannersAndWindowsWithoutBanners() {

@@ -25,7 +25,6 @@ import os
 public final class SystemNotificationInterceptor {
     nonisolated static let logger = Logger(subsystem: "com.alexgorbatchev.aerospace-sidebar", category: "interception")
     static let offScreen = CGPoint(x: -5000, y: -5000)
-    static let maxRememberedBanners = 500
     static let duplicateWindow: TimeInterval = 10
     /// How long a stack that was pressed is given to expand before it is pressed again. A second press
     /// while it is still expanding would collapse it.
@@ -44,23 +43,27 @@ public final class SystemNotificationInterceptor {
     private let leavesToMacOS: @MainActor (String) -> Bool
     private let leavesActionableToMacOS: @MainActor () -> Bool
     private let now: () -> Date
-    private var seenIdentifiers: [String] = []
+    private let identities: NotificationIdentities
     private var recentContent: [(content: BannerContent, at: Date)] = []
     private var expandedStacks: [String: Date] = [:]
+    private var isPanelOpen = false
     /// NotificationCenter's words in its current language; set when attaching to it.
     public var labels = NotificationCenterLabels.english
 
     /// - Parameters:
+    ///   - identities: Notifications already listed, shared with `NotificationDatabaseMonitor`.
     ///   - leavesToMacOS: Whether an app's notifications stay native, by app name.
     ///   - leavesActionableToMacOS: Whether notifications that need interaction stay native. Otherwise
     ///     they are hidden and listed like the others, without their buttons.
     public init(
         now: @escaping () -> Date = Date.init,
+        identities: NotificationIdentities = NotificationIdentities(),
         leavesToMacOS: @escaping @MainActor (String) -> Bool = { _ in false },
         leavesActionableToMacOS: @escaping @MainActor () -> Bool = { true },
         onNotification: @escaping @MainActor (SidebarNotification) -> Void
     ) {
         self.now = now
+        self.identities = identities
         self.leavesToMacOS = leavesToMacOS
         self.leavesActionableToMacOS = leavesActionableToMacOS
         self.onNotification = onNotification
@@ -70,8 +73,12 @@ public final class SystemNotificationInterceptor {
     /// hidden windows are moved back, since the panel shares their window.
     @discardableResult
     public func sweep(windows: [any AccessibilityElement], application: (any AccessibilityElement)?) -> Outcome {
-        if NotificationBanners.isPanelOpen(application: application, windows: windows) {
-            Self.logger.debug("Notification Center panel is open; leaving it alone")
+        let panelOpen = NotificationBanners.isPanelOpen(application: application, windows: windows)
+        if panelOpen != isPanelOpen {
+            isPanelOpen = panelOpen
+            Self.logger.info("Notification Center panel \(panelOpen ? "opened; leaving it alone" : "closed", privacy: .public)")
+        }
+        if panelOpen {
             restore(windows)
             return .settled
         }
@@ -89,29 +96,31 @@ public final class SystemNotificationInterceptor {
         var keepsNative = false
         var outcome = Outcome.settled
         for item in items {
+            guard let kind = NotificationBanners.kind(of: item) else { continue }
             let content = NotificationBanners.content(of: item, labels: labels)
             let identifier = item.string(kAXIdentifierAttribute)
             let leftToMacOS = leavesToMacOS(content.appName)
-            if NotificationBanners.kind(of: item) == .stack, !leftToMacOS {
+            if kind == .stack, !leftToMacOS {
                 expand(item, identifier: identifier)
                 outcome = .pending
                 continue
             }
             let shownByMacOS = leftToMacOS || (leavesActionable && NotificationBanners.needsInteraction(item, labels: labels))
-            Self.logger.debug("""
-                \(item.string(kAXSubroleAttribute) ?? "?", privacy: .public) \(identifier ?? "-", privacy: .public) \
-                from \(content.appName, privacy: .private): \(shownByMacOS ? "left to macOS" : "intercepted", privacy: .public), \
-                actions \(item.actionNames.map(NotificationBanners.actionName), privacy: .public)
-                """)
+            var closed = false
             if shownByMacOS {
                 keepsNative = true
             } else {
-                if !NotificationBanners.dismiss(item, labels: labels) {
-                    Self.logger.debug("No close action on \(identifier ?? "-", privacy: .public)")
-                }
+                closed = NotificationBanners.dismiss(item, labels: labels)
                 outcome = .pending
             }
-            report(content, identifier: identifier, shownByMacOS: shownByMacOS)
+            if report(content, identifier: identifier, shownByMacOS: shownByMacOS) {
+                let decision = shownByMacOS ? "left to macOS" : closed ? "intercepted" : "intercepted, but has no close action"
+                let actions = item.actionNames.map(NotificationBanners.actionName)
+                Self.logger.info("""
+                    \(String(describing: kind), privacy: .public) \(identifier ?? "", privacy: .public) \
+                    from \(content.appName, privacy: .private): \(decision, privacy: .public); actions \(actions, privacy: .public)
+                    """)
+            }
         }
         if keepsNative {
             restore([window])
@@ -152,11 +161,12 @@ public final class SystemNotificationInterceptor {
         guard expandedStacks[key] == nil else { return }
         expandedStacks[key] = time
         let pressed = stack.perform(kAXPressAction)
-        Self.logger.debug("Expanding stack \(identifier ?? "-", privacy: .public): \(pressed ? "pressed" : "refused", privacy: .public)")
+        Self.logger.info("Expanding stack \(key, privacy: .private): \(pressed ? "pressed" : "refused", privacy: .public)")
     }
 
-    private func report(_ content: BannerContent, identifier: String?, shownByMacOS: Bool) {
-        guard isNew(identifier: identifier, content: content) else { return }
+    /// Lists the notification unless it was listed before; true when it was new.
+    private func report(_ content: BannerContent, identifier: String?, shownByMacOS: Bool) -> Bool {
+        guard isNew(identifier: identifier, content: content) else { return false }
         onNotification(SidebarNotification(
             source: content.appName.isEmpty ? Self.systemSource : content.appName,
             title: content.title,
@@ -166,6 +176,7 @@ public final class SystemNotificationInterceptor {
             shownByMacOS: shownByMacOS,
             receivedAt: now()
         ))
+        return true
     }
 
     /// NotificationCenter reports the same notification on every pass while it shows. Each one carries a
@@ -176,12 +187,7 @@ public final class SystemNotificationInterceptor {
     private func isNew(identifier: String?, content: BannerContent) -> Bool {
         guard !content.isEmpty else { return false }
         if let identifier, !identifier.isEmpty {
-            if seenIdentifiers.contains(identifier) { return false }
-            seenIdentifiers.append(identifier)
-            if seenIdentifiers.count > Self.maxRememberedBanners {
-                seenIdentifiers.removeFirst()
-            }
-            return true
+            return identities.insert(identifier)
         }
         let time = now()
         recentContent.removeAll { time.timeIntervalSince($0.at) > Self.duplicateWindow }

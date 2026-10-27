@@ -9,11 +9,18 @@ struct SidebarAppDelegateTests {
     let settings: SettingsStore
     let platform = FakePlatform()
     let cli = FakeAeroSpaceCLI()
+    let database: NotificationDatabaseFixture
 
     init() throws {
         _ = NSApplication.shared
         directory = try TemporaryDirectory()
         settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        database = try NotificationDatabaseFixture()
+    }
+
+    /// Reads a database in the test's directory, never the real one.
+    func makeDatabaseMonitor(_ model: SidebarModel, _ identities: NotificationIdentities) -> NotificationDatabaseMonitor {
+        SidebarAppDelegate.makeDatabaseMonitor(model: model, identities: identities, database: database.database, defaults: database.defaults)
     }
 
     /// Edits a config in the test's directory, never the real AeroSpace config.
@@ -35,10 +42,11 @@ struct SidebarAppDelegateTests {
                     openSettings: openSettings
                 )
             },
-            makeMonitor: { [platform] model, settings in
+            makeMonitor: { [platform] model, settings, identities in
                 NotificationCenterMonitor(
                     platform: platform,
                     interceptor: SystemNotificationInterceptor(
+                        identities: identities,
                         leavesToMacOS: { settings.settings.notifications.leavesToMacOS($0) },
                         onNotification: { model.add($0) }
                     ),
@@ -46,6 +54,7 @@ struct SidebarAppDelegateTests {
                     onStatus: { model.interception = $0 }
                 )
             },
+            makeDatabaseMonitor: makeDatabaseMonitor,
             makeServer: { SidebarAppDelegate.makeServer(model: $0, icons: $1, path: socketPath) },
             makeAeroSpaceSync: makeAeroSpaceSync,
             makeSettingsWindow: { SettingsWindowController(store: $0, onboarding: .fake(), aeroSpace: $1, reveal: { _ in }) },
@@ -71,6 +80,19 @@ struct SidebarAppDelegateTests {
         delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
         #expect(!FileManager.default.fileExists(atPath: path))
         #expect(delegate.monitor?.isRunning == false)
+    }
+
+    /// The database source runs while macOS notifications are replaced, and stops with interception.
+    @Test func readsTheNotificationDatabaseWhileReplacingNotifications() throws {
+        try database.create()
+        let delegate = makeDelegate()
+
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        #expect(delegate.databaseMonitor?.isReadable == true)
+
+        settings.update { $0.notifications.replaceSystem = false }
+        #expect(delegate.databaseMonitor?.isReadable == false)
+        delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
     }
 
     @Test func settingsTurnInterceptionOffAndOnAndApplyHistory() throws {
@@ -136,10 +158,11 @@ struct SidebarAppDelegateTests {
             makeController: { model, settings, _ in
                 SidebarPanelController(model: model, settings: settings, targetVisibleFrame: { nil }, notificationCenter: NotificationCenter())
             },
-            makeMonitor: { [platform] model, _ in
+            makeMonitor: { [platform] model, _, _ in
                 NotificationCenterMonitor(platform: platform, interceptor: SystemNotificationInterceptor { model.add($0) },
                                           workspaceCenter: NotificationCenter(), onStatus: { _ in })
             },
+            makeDatabaseMonitor: makeDatabaseMonitor,
             makeServer: { SidebarAppDelegate.makeServer(model: $0, icons: $1, path: ControlServerTests.socketPath()) },
             makeAeroSpaceSync: makeAeroSpaceSync
         )
@@ -196,6 +219,7 @@ struct SidebarAppDelegateTests {
         let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
 
         let monitor = SidebarAppDelegate.makeMonitor(model: model, settings: settings)
+        let databaseMonitor = SidebarAppDelegate.makeDatabaseMonitor(model: model, identities: NotificationIdentities())
         let window = SettingsWindowController(
             store: settings,
             onboarding: SidebarAppDelegate.makeOnboarding(),
@@ -203,6 +227,7 @@ struct SidebarAppDelegateTests {
         )
 
         #expect(!monitor.isRunning)
+        #expect(!databaseMonitor.isReadable)
         #expect(model.interception == .starting)
         #expect(!window.window.isVisible)
     }

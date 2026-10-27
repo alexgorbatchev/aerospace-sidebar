@@ -18,10 +18,14 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     public private(set) var controller: SidebarPanelController?
     public private(set) var settingsWindow: SettingsWindowController?
     public private(set) var monitor: NotificationCenterMonitor?
+    public private(set) var databaseMonitor: NotificationDatabaseMonitor?
+    /// Notifications listed from NotificationCenter or its database, shared so neither lists one twice.
+    private let identities = NotificationIdentities()
     private var server: ControlServer?
     private var pruneTimer: Timer?
     private let makeController: @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor () -> Void) -> SidebarPanelController
-    private let makeMonitor: @MainActor (SidebarModel, SettingsStore) -> NotificationCenterMonitor
+    private let makeMonitor: @MainActor (SidebarModel, SettingsStore, NotificationIdentities) -> NotificationCenterMonitor
+    private let makeDatabaseMonitor: @MainActor (SidebarModel, NotificationIdentities) -> NotificationDatabaseMonitor
     private let makeServer: @MainActor (SidebarModel, AppIconFont) -> ControlServer
     private let makeSettingsWindow: @MainActor (SettingsStore, AeroSpaceSync) -> SettingsWindowController
     private let urlSender: @MainActor () -> String?
@@ -37,7 +41,12 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         makeController: @escaping @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor () -> Void) -> SidebarPanelController = {
             SidebarPanelController(model: $0, settings: $1, openSettings: $2)
         },
-        makeMonitor: @escaping @MainActor (SidebarModel, SettingsStore) -> NotificationCenterMonitor = { SidebarAppDelegate.makeMonitor(model: $0, settings: $1) },
+        makeMonitor: @escaping @MainActor (SidebarModel, SettingsStore, NotificationIdentities) -> NotificationCenterMonitor = {
+            SidebarAppDelegate.makeMonitor(model: $0, settings: $1, identities: $2)
+        },
+        makeDatabaseMonitor: @escaping @MainActor (SidebarModel, NotificationIdentities) -> NotificationDatabaseMonitor = {
+            SidebarAppDelegate.makeDatabaseMonitor(model: $0, identities: $1)
+        },
         makeServer: @escaping @MainActor (SidebarModel, AppIconFont) -> ControlServer = { SidebarAppDelegate.makeServer(model: $0, icons: $1) },
         makeAeroSpaceSync: @MainActor (SettingsStore) -> AeroSpaceSync = SidebarAppDelegate.makeAeroSpaceSync,
         makeSettingsWindow: @escaping @MainActor (SettingsStore, AeroSpaceSync) -> SettingsWindowController = {
@@ -52,6 +61,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         self.syncedSidebar = settings.settings.sidebar
         self.makeController = makeController
         self.makeMonitor = makeMonitor
+        self.makeDatabaseMonitor = makeDatabaseMonitor
         self.makeServer = makeServer
         self.makeSettingsWindow = makeSettingsWindow
         self.urlSender = urlSender
@@ -64,15 +74,19 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
 
         aeroSpace.start()
 
-        let monitor = makeMonitor(model, settings)
+        let monitor = makeMonitor(model, settings, identities)
         self.monitor = monitor
+        let databaseMonitor = makeDatabaseMonitor(model, identities)
+        self.databaseMonitor = databaseMonitor
         settings.observe { [weak self, model] settings in
             self?.syncAeroSpace(for: settings.sidebar)
             model.apply(history: settings.history)
             if settings.notifications.replaceSystem {
                 monitor.start()
+                databaseMonitor.start()
             } else {
                 monitor.stop()
+                databaseMonitor.stop()
                 model.interception = .disabled
             }
         }
@@ -100,6 +114,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         settings.stopWatching()
         aeroSpace.stop()
         monitor?.stop()
+        databaseMonitor?.stop()
         server?.stop()
     }
 
@@ -134,17 +149,28 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     public static func makeMonitor(
         model: SidebarModel,
         settings: SettingsStore,
+        identities: NotificationIdentities = NotificationIdentities(),
         platform: any AccessibilityPlatform = SystemAccessibility()
     ) -> NotificationCenterMonitor {
         NotificationCenterMonitor(
             platform: platform,
             interceptor: SystemNotificationInterceptor(
+                identities: identities,
                 leavesToMacOS: { settings.settings.notifications.leavesToMacOS($0) },
                 leavesActionableToMacOS: { settings.settings.notifications.actionableLeftToMacOS },
                 onNotification: { model.add($0) }
             ),
             onStatus: { model.interception = $0 }
         )
+    }
+
+    public static func makeDatabaseMonitor(
+        model: SidebarModel,
+        identities: NotificationIdentities,
+        database: NotificationDatabase = NotificationDatabase(home: FileManager.default.homeDirectoryForCurrentUser),
+        defaults: UserDefaults = .standard
+    ) -> NotificationDatabaseMonitor {
+        NotificationDatabaseMonitor(database: database, identities: identities, defaults: defaults) { model.add($0) }
     }
 
     public static func makeServer(
@@ -162,7 +188,12 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public static func makeOnboarding() -> OnboardingModel {
-        OnboardingModel(accessibility: SystemAccessibility(), loginItems: MainAppLoginItem(), performer: WorkspaceActionPerformer())
+        OnboardingModel(
+            accessibility: SystemAccessibility(),
+            loginItems: MainAppLoginItem(),
+            performer: WorkspaceActionPerformer(),
+            notificationDatabase: NotificationDatabase(home: FileManager.default.homeDirectoryForCurrentUser)
+        )
     }
 
     public static func makeAeroSpaceSync(settings: SettingsStore) -> AeroSpaceSync {

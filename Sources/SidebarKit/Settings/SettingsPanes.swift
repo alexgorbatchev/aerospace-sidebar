@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Setup: Accessibility, launch at login and the AeroSpace config, each with a one-click action.
+/// Setup: Accessibility, Full Disk Access, launch at login and the AeroSpace config, each with a one-click
+/// action.
 /// Its steps take effect immediately, so it has no Cancel or Save.
 struct SetupPane: View {
     let onboarding: OnboardingModel
@@ -23,6 +24,15 @@ struct SetupPane: View {
                     )
                 }
                 SettingsHint(text: "Lets the sidebar read macOS notifications and hide their banners.")
+                SettingsRow(label: "Full Disk Access") {
+                    SetupStep(
+                        title: "Open Full Disk Access",
+                        doneTitle: "Full Disk Access granted",
+                        isDone: onboarding.fullDiskAccessGranted,
+                        action: onboarding.requestFullDiskAccess
+                    )
+                }
+                SettingsHint(text: fullDiskAccessHint)
                 // Extra buttons sit next to their step: in an accessory column, long hints spanning both
                 // columns would widen the step column and push them away from it.
                 SettingsRow(label: "Open at login") {
@@ -84,6 +94,12 @@ struct SetupPane: View {
                 try? await Task.sleep(for: .seconds(1))
             }
         }
+    }
+
+    private var fullDiskAccessHint: String {
+        onboarding.fullDiskAccessGranted
+            ? "Lists notifications that showed no banner: during Focus, in quick bursts, or while the sidebar was not running."
+            : "Optional. Add AerospaceSidebar to list notifications that showed no banner: during Focus, in quick bursts, or while the sidebar was not running."
     }
 
     private var loginHint: String {
