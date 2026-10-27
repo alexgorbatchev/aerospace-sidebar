@@ -358,6 +358,8 @@ struct SettingsWindowControllerTests {
         #expect(controller.window.styleMask.contains(.nonactivatingPanel))
         #expect(!controller.window.styleMask.contains(.resizable))
         #expect(!controller.window.hidesOnDeactivate)
+        #expect(controller.window.isFloatingPanel)
+        #expect(controller.window.level == .floating)
         #expect(controller.window.contentRect(forFrameRect: controller.window.frame).width == SettingsMetrics.paneWidth)
         #expect(controller.editor.draft == store.settings)
 

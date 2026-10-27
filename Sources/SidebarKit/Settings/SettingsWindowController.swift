@@ -62,6 +62,9 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         // Panels hide when their app deactivates by default; this app is never active.
         window.hidesOnDeactivate = false
+        // Settings stays above other apps' windows until it is closed, for example while the user
+        // grants Accessibility in System Settings.
+        window.isFloatingPanel = true
         window.delegate = self
         sizeToLargestPane()
         window.center()
