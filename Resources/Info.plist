@@ -35,5 +35,19 @@
 	<string>15.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>OSLogPreferences</key>
+	<dict>
+		<key>com.alexgorbatchev.aerospace-sidebar</key>
+		<dict>
+			<key>DEFAULT-OPTIONS</key>
+			<dict>
+				<key>Level</key>
+				<dict>
+					<key>Persist</key>
+					<string>Info</string>
+				</dict>
+			</dict>
+		</dict>
+	</dict>
 </dict>
 </plist>

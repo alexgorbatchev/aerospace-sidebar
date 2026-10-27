@@ -25,6 +25,13 @@ import os
 /// `restore(_:)`.
 @MainActor
 public final class SystemNotificationInterceptor {
+    /// What the sidebar did to an alert it keeps hidden.
+    private enum AlertStep: Equatable {
+        /// An action performed from the card: a choice, or `AXPress` for a click.
+        case performed(String)
+        /// Its card is gone, so the sidebar presses Close until it leaves.
+        case closing
+    }
 
     nonisolated static let logger = Logger(category: "interception")
     static let offScreen = CGPoint(x: -5000, y: -5000)
@@ -57,8 +64,8 @@ public final class SystemNotificationInterceptor {
     private var isPanelOpen = false
     /// Alerts kept hidden for a card that offers their choices; once their card is gone, they are closed.
     private var handedOverAlerts: Set<String> = []
-    /// When a choice was last performed on an alert, by identifier.
-    private var chosenAlerts: [String: Date] = [:]
+    /// What the sidebar last did to a handed-over alert, and when, by identifier.
+    private var alertSteps: [String: (step: AlertStep, at: Date)] = [:]
     /// Listed alerts found by the current sweep, unlisted ones it is closing, and the listed ones the last
     /// complete sweep reported.
     private var sweptAlerts: Set<String> = []
@@ -112,7 +119,11 @@ public final class SystemNotificationInterceptor {
         let outcome: Outcome = windows.map(process(window:)).contains(.pending) ? .pending : .settled
         // An alert missing from a sweep is gone. Should a sweep miss one that is still there, it is left to
         // macOS like any other interactive notification the sidebar did not list with its choices.
-        handedOverAlerts.formIntersection(sweptAlerts.union(closingAlerts))
+        let remaining = handedOverAlerts.intersection(sweptAlerts.union(closingAlerts))
+        for identifier in handedOverAlerts.subtracting(remaining) {
+            logDeparture(of: identifier)
+        }
+        handedOverAlerts = remaining
         publishPresentAlerts(sweptAlerts)
         return outcome
     }
@@ -133,7 +144,7 @@ public final class SystemNotificationInterceptor {
         case .choice(let name): alert.actionNames.first { NotificationBanners.actionName($0) == name }
         }
         guard let rawAction else { return false }
-        chosenAlerts[identifier] = now()
+        alertSteps[identifier] = (.performed(NotificationBanners.actionName(rawAction)), now())
         let performed = alert.perform(rawAction)
         Self.logger.info("""
             Performing \(NotificationBanners.actionName(rawAction), privacy: .public) on alert \(identifier, privacy: .public): \
@@ -218,10 +229,16 @@ public final class SystemNotificationInterceptor {
         if handedOverAlerts.contains(identifier) {
             closingAlerts.insert(identifier)
             let time = now()
-            chosenAlerts = chosenAlerts.filter { time.timeIntervalSince($0.value) < Self.choiceGrace }
-            guard chosenAlerts[identifier] == nil else { return .pending }
+            let last = alertSteps[identifier]
+            if case .performed = last?.step, let at = last?.at, time.timeIntervalSince(at) < Self.choiceGrace {
+                return .pending
+            }
             let closed = NotificationBanners.dismiss(alert, labels: labels)
-            Self.logger.info("Closing alert \(identifier, privacy: .public), whose card is gone: \(closed ? "closed" : "refused", privacy: .public)")
+            // Close is pressed on every sweep until the alert goes, but logged once.
+            if last?.step != .closing {
+                alertSteps[identifier] = (.closing, time)
+                Self.logger.info("Closing alert \(identifier, privacy: .public), whose card is gone: \(closed ? "closed" : "refused", privacy: .public)")
+            }
             return .pending
         }
         let nativeAlert = SidebarNotification.NativeAlert(identifier: identifier, choices: choices)
@@ -235,6 +252,19 @@ public final class SystemNotificationInterceptor {
             \(choices, privacy: .public)
             """)
         return .settled
+    }
+
+    /// Records how a handed-over alert left NotificationCenter: after a choice performed from its card, after
+    /// the sidebar closed it, or with no help from the sidebar (another device, the history panel).
+    private func logDeparture(of identifier: String) {
+        let last = alertSteps.removeValue(forKey: identifier)
+        let elapsed = last.map { String(format: "%.1f s", now().timeIntervalSince($0.at)) } ?? ""
+        let reason = switch last?.step {
+        case .performed(let action)?: "\(elapsed) after the sidebar performed \(action)"
+        case .closing?: "\(elapsed) after the sidebar closed it"
+        case nil: "without an action from the sidebar"
+        }
+        Self.logger.info("Alert \(identifier, privacy: .public) left NotificationCenter \(reason, privacy: .public)")
     }
 
     /// Moves NotificationCenter windows that an earlier hide left off-screen back to the origin.

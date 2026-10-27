@@ -672,6 +672,27 @@ struct SystemNotificationInterceptorTests {
         #expect(list.notifications.map(\.nativeAlert) == [nil])
     }
 
+    /// An alert that leaves on its own, after a choice or without one, is forgotten: should its identifier
+    /// show up again, the sidebar no longer treats it as one it hid, so it is neither hidden nor closed.
+    @Test func forgetsAlertsThatLeaveOnTheirOwn() {
+        let list = AlertList()
+        let interceptor = interceptor(for: list)
+        let chosen = FakeElement.alert(id: "chosen")
+        let ignored = FakeElement.alert(id: "ignored")
+        let window = FakeElement.window(chosen, ignored)
+        interceptor.sweep(windows: [window], application: nil)
+        interceptor.perform(.choice("Allow…"), onAlert: "chosen", in: [window])
+        list.notifications = []
+
+        interceptor.sweep(windows: [FakeElement.window()], application: nil)
+        let returning = FakeElement.window(chosen, ignored, position: SystemNotificationInterceptor.offScreen)
+        interceptor.sweep(windows: [returning], application: nil)
+
+        #expect(chosen.performed == ["Name:Allow…\nTarget:0x0\nSelector:(null)"])
+        #expect(ignored.performed.isEmpty)
+        #expect(returning.position == .zero)
+    }
+
     @Test func performsChoicesAndOpensAlertsByIdentifier() {
         let interceptor = SystemNotificationInterceptor { _ in }
         let other = FakeElement.alert(id: "other")
