@@ -1,6 +1,7 @@
 import ApplicationServices
 import CoreGraphics
 import Foundation
+import os
 
 /// Hides native notification banners and reports each one's content once.
 ///
@@ -14,6 +15,7 @@ import Foundation
 /// is closed. Windows left off-screen are moved back by `restore(_:)`.
 @MainActor
 public final class SystemNotificationInterceptor {
+    nonisolated static let logger = Logger(subsystem: "com.alexgorbatchev.aerospace-sidebar", category: "interception")
     static let offScreen = CGPoint(x: -5000, y: -5000)
     static let maxRememberedBanners = 500
     static let duplicateWindow: TimeInterval = 10
@@ -57,12 +59,18 @@ public final class SystemNotificationInterceptor {
         if banners.contains(where: \.2) {
             restore([window])
         } else {
-            window.setPosition(Self.offScreen)
+            let moved = window.setPosition(Self.offScreen)
+            Self.logger.debug("Hiding window: \(moved ? "moved" : "refused", privacy: .public)")
         }
         for (banner, content, shownByMacOS) in banners {
             let identifier = banner.string(kAXIdentifierAttribute)
-            if !shownByMacOS {
-                NotificationBanners.dismiss(banner)
+            Self.logger.debug("""
+                \(banner.string(kAXSubroleAttribute) ?? "?", privacy: .public) \(identifier ?? "-", privacy: .public) \
+                from \(content.appName, privacy: .private): \(shownByMacOS ? "left to macOS" : "intercepted", privacy: .public), \
+                actions \(banner.actionNames.map(NotificationBanners.actionName), privacy: .public)
+                """)
+            if !shownByMacOS, !NotificationBanners.dismiss(banner) {
+                Self.logger.debug("No close action on \(identifier ?? "-", privacy: .public)")
             }
             guard isNew(identifier: identifier, content: content) else { continue }
             onNotification(SidebarNotification(
@@ -81,7 +89,8 @@ public final class SystemNotificationInterceptor {
     public func restore(_ windows: [any AccessibilityElement]) {
         for window in windows {
             if let position = window.position, position.x <= -1000 || position.y <= -1000 {
-                window.setPosition(.zero)
+                let moved = window.setPosition(.zero)
+                Self.logger.info("Restoring hidden window: \(moved ? "moved" : "refused", privacy: .public)")
             }
         }
     }

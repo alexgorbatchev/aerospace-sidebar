@@ -93,6 +93,7 @@ public final class NotificationCenterMonitor {
 
     private func attach() {
         guard platform.isTrusted(prompt: false), let pid = platform.notificationCenterPID() else {
+            SystemNotificationInterceptor.logger.error("NotificationCenter is not running or not accessible")
             onStatus(.notificationCenterUnavailable)
             return
         }
@@ -100,9 +101,11 @@ public final class NotificationCenterMonitor {
             self?.interceptor.process(window: element)
         }
         guard observation != nil else {
+            SystemNotificationInterceptor.logger.error("Cannot observe NotificationCenter (pid \(pid, privacy: .public))")
             onStatus(.notificationCenterUnavailable)
             return
         }
+        SystemNotificationInterceptor.logger.info("Attached to NotificationCenter (pid \(pid, privacy: .public))")
         attachedPID = pid
         let windows = platform.windows(ofProcess: pid)
         interceptor.restore(windows)
