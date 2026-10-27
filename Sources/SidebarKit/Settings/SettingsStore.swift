@@ -10,7 +10,7 @@ import os
 @MainActor
 @Observable
 public final class SettingsStore {
-    private static let logger = Logger(subsystem: "com.alexgorbatchev.aerospace-sidebar", category: "settings")
+    private static let logger = Logger(category: "settings")
 
     public private(set) var settings: SidebarSettings
     public private(set) var loadError: String?

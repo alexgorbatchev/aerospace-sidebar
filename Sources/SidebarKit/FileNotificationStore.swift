@@ -4,7 +4,7 @@ import os
 /// Stores notifications as JSON in Application Support.
 @MainActor
 public struct FileNotificationStore: NotificationStore {
-    private static let logger = Logger(subsystem: "com.alexgorbatchev.aerospace-sidebar", category: "store")
+    private static let logger = Logger(category: "store")
 
     public let url: URL
 

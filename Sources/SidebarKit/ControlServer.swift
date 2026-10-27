@@ -12,7 +12,7 @@ public final class ControlServer: Sendable {
         case alreadyRunning(path: String)
     }
 
-    private static let logger = Logger(subsystem: "com.alexgorbatchev.aerospace-sidebar", category: "control")
+    private static let logger = Logger(category: "control")
     private static let receiveTimeout = timeval(tv_sec: 2, tv_usec: 0)
 
     public let path: String

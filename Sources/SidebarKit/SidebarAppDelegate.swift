@@ -5,7 +5,7 @@ import SidebarProtocol
 /// Wires the sidebar panel, settings, notification interception, the URL scheme and the control socket.
 @MainActor
 public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
-    private static let logger = Logger(subsystem: "com.alexgorbatchev.aerospace-sidebar", category: "app")
+    private static let logger = Logger(category: "app")
 
     public let settings: SettingsStore
     public let model: SidebarModel

@@ -10,7 +10,7 @@ import os
 /// read, and the monitor tries again every `accessRetryInterval` seconds.
 @MainActor
 public final class NotificationDatabaseMonitor {
-    nonisolated static let logger = Logger(subsystem: "com.alexgorbatchev.aerospace-sidebar", category: "database")
+    nonisolated static let logger = Logger(category: "database")
     static let recordIDKey = "notificationDatabaseRecordID"
     static let accessRetryInterval: TimeInterval = 5
 

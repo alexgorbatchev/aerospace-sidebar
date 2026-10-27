@@ -4,7 +4,7 @@ import os
 /// Performs click actions with LaunchServices and the user's login shell.
 @MainActor
 public struct WorkspaceActionPerformer: NotificationActionPerforming {
-    nonisolated private static let logger = Logger(subsystem: "com.alexgorbatchev.aerospace-sidebar", category: "actions")
+    nonisolated private static let logger = Logger(category: "actions")
 
     public init() {}
 

@@ -26,7 +26,7 @@ import os
 @MainActor
 public final class SystemNotificationInterceptor {
 
-    nonisolated static let logger = Logger(subsystem: "com.alexgorbatchev.aerospace-sidebar", category: "interception")
+    nonisolated static let logger = Logger(category: "interception")
     static let offScreen = CGPoint(x: -5000, y: -5000)
     static let duplicateWindow: TimeInterval = 10
     /// How long a stack that was pressed is given to expand before it is pressed again. A second press

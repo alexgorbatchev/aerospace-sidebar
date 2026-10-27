@@ -8,7 +8,7 @@ import os
 public struct AppIconFont: Sendable {
     public static let family = "sketchybar-app-font"
     static let directoryName = "sketchybar-app-font"
-    private static let logger = Logger(subsystem: "com.alexgorbatchev.aerospace-sidebar", category: "icons")
+    private static let logger = Logger(category: "icons")
 
     /// The font's icon ids, without their surrounding colons.
     let ids: Set<String>
