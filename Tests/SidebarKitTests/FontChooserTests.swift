@@ -113,6 +113,12 @@ struct FontChooserTests {
     @Test(.enabled(if: !NSScreen.screens.isEmpty, "requires a display"))
     func realFontPanelReachesTheScreenWhileTheAppIsInactive() async throws {
         let screen = try #require(NSScreen.screens.first)
+        // Other tests' windows can activate the test process; the app this guards never is.
+        NSApp.deactivate()
+        for _ in 0..<100 where NSApp.isActive {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(!NSApp.isActive)
         window.setFrame(NSRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.midY, width: 300, height: 200), display: false)
         window.orderFrontRegardless()
         let sut = FontChooser()
@@ -124,7 +130,6 @@ struct FontChooserTests {
             try await Task.sleep(for: .milliseconds(10))
         }
 
-        #expect(!NSApp.isActive)
         #expect(Self.isOnScreen(panel))
         sut.close()
         window.orderOut(nil)
