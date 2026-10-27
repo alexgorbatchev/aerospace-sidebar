@@ -187,7 +187,7 @@ struct GeneralPane: View {
                     Toggle("Leave notifications with buttons to macOS", isOn: $editor.draft.notifications.actionableLeftToMacOS)
                         .toggleStyle(.checkbox)
                 }
-                SettingsHint(text: "Buttons such as Reply or Snooze only work on macOS's own banner. Otherwise these notifications are listed without them; clicking one opens its app.")
+                SettingsHint(text: "Alerts whose buttons are plain choices, such as Allow…, are listed with those buttons either way. Other buttons, such as a reply field, an Options menu or a banner's buttons, only work on macOS's own notification; otherwise these notifications are listed without them, and clicking one opens its app.")
                 SettingsRow(label: "Apps left to macOS") {
                     TextField("Apps left to macOS", text: $editor.appsLeftToMacOSText, prompt: Text("zoom.us, Calendar"))
                         .labelsHidden()

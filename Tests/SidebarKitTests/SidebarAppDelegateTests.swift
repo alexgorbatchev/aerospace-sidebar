@@ -76,6 +76,7 @@ struct SidebarAppDelegateTests {
         #expect(response == ControlResponse(error: nil))
         #expect(delegate.model.notifications.map(\.source) == ["aerospace-sidebar", "Mail"])
         #expect(delegate.model.notifications.map(\.icon?.id) == ["ghostty", nil])
+        #expect(delegate.model.alerts === delegate.monitor)
 
         delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
         #expect(!FileManager.default.fileExists(atPath: path))

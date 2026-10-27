@@ -133,6 +133,7 @@ public final class NotificationCenterMonitor {
             interceptor.restore(platform.windows(ofProcess: attachedPID))
         }
         attachedPID = nil
+        interceptor.detach()
     }
 
     /// Sweeps now and keeps sweeping until NotificationCenter settles.
@@ -183,6 +184,7 @@ public final class NotificationCenterMonitor {
         exitWatch = nil
         attachedPID = nil
         stopSweeping()
+        interceptor.detach()
         onStatus(.notificationCenterUnavailable)
         scheduleReattach()
     }
@@ -238,6 +240,20 @@ public final class NotificationCenterMonitor {
         interceptor.restore(platform.windows(ofProcess: pid))
         notificationCenterChanged()
         onStatus(.active)
+    }
+}
+
+extension NotificationCenterMonitor: NativeAlertControlling {
+    @discardableResult
+    public func perform(_ action: AlertAction, onAlert identifier: String) -> Bool {
+        guard let attachedPID else { return false }
+        return interceptor.perform(action, onAlert: identifier, in: platform.windows(ofProcess: attachedPID))
+    }
+
+    /// Sweeps, which closes the hidden alerts that no card stands for any more.
+    public func alertsReleased() {
+        guard attachedPID != nil else { return }
+        notificationCenterChanged()
     }
 }
 

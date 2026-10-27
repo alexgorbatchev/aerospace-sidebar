@@ -46,9 +46,11 @@ struct SidebarView: View {
                     ForEach(model.notifications, id: \.viewIdentity) { notification in
                         NotificationCard(
                             notification: notification,
+                            presentAlert: model.presentAlert(of: notification),
                             isHovered: hoveredID == notification.id,
                             hover: { hoveredID = Self.hoveredID(hoveredID, card: notification.id, hovering: $0) },
                             activate: { model.activate(notification.id) },
+                            choose: { model.choose($0, for: notification.id) },
                             dismiss: { model.dismiss(notification.id) }
                         )
                         .transition(cardTransition)
@@ -89,6 +91,7 @@ struct SidebarView: View {
         // Changes arrive from the model, outside any view action, so the view animates them itself.
         .animation(Self.motion, value: model.notifications)
         .animation(Self.motion, value: model.interception)
+        .animation(Self.motion, value: model.presentAlerts)
     }
 
     /// The sidebar's screen edge, where the top buttons and the scroll indicator sit.
@@ -172,9 +175,12 @@ struct EdgeFadeMask: View {
 
 struct NotificationCard: View {
     let notification: SidebarNotification
+    /// The hidden macOS alert the card stands for, while it exists; the card offers its choices.
+    let presentAlert: SidebarNotification.NativeAlert?
     let isHovered: Bool
     let hover: (Bool) -> Void
     let activate: () -> Void
+    let choose: (String) -> Void
     let dismiss: () -> Void
 
     static let cornerRadius: CGFloat = 10
@@ -273,6 +279,15 @@ struct NotificationCard: View {
                         .font(typography.font(.caption2))
                         .foregroundStyle(.secondary)
                 }
+                if let presentAlert {
+                    // Buttons inside the card's button take their own clicks.
+                    HStack(spacing: 6) {
+                        ForEach(presentAlert.choices, id: \.self) { choice in
+                            Button(choice, font: typography.font(.callout)) { choose(choice) }
+                        }
+                    }
+                    .padding(.top, 2)
+                }
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -290,7 +305,7 @@ struct NotificationCard: View {
             .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
         }
         .buttonStyle(PressableButtonStyle())
-        .help(notification.clickDescription)
+        .help(presentAlert == nil ? notification.clickDescription : "Click to open, as clicking the macOS alert would")
     }
 
     private var accent: Color? {

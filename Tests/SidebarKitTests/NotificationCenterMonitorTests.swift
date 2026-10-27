@@ -160,6 +160,62 @@ struct NotificationCenterMonitorTests {
         #expect(mail.performed.count == 1)
     }
 
+    /// Wired up as the app does it, an alert with choices gets a card that offers them; performing one
+    /// acts on the alert, and dismissing the card closes the alert. Without NotificationCenter, nothing can.
+    @Test func cardsActOnTheAlertsTheyStandFor() throws {
+        let directory = try TemporaryDirectory()
+        let settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        let platform = FakePlatform()
+        let first = FakeElement.alert(id: "first", title: "Standup")
+        let second = FakeElement.alert(id: "second", title: "Review")
+        let window = FakeElement.window(first, second)
+        platform.windowsByPID[42] = [window]
+        let monitor = SidebarAppDelegate.makeMonitor(model: model, settings: settings, platform: platform)
+        model.alerts = monitor
+
+        #expect(!monitor.perform(.open, onAlert: "first"))
+        monitor.alertsReleased()
+        monitor.start()
+        defer { monitor.stop() }
+
+        #expect(window.position == SystemNotificationInterceptor.offScreen)
+        #expect(model.presentAlerts == ["first", "second"])
+        let standup = try #require(model.notifications.first { $0.title == "Standup" })
+        #expect(model.presentAlert(of: standup)?.choices == ["Allow…"])
+
+        model.choose("Allow…", for: standup.id)
+        #expect(first.performed == ["Name:Allow…\nTarget:0x0\nSelector:(null)"])
+        #expect(model.notifications.map(\.title) == ["Review"])
+
+        model.dismiss(model.notifications[0].id)
+        #expect(second.performed == ["Name:Close\nTarget:0x0\nSelector:(null)"])
+        #expect(monitor.isSweeping)
+
+        monitor.stop()
+        #expect(model.presentAlerts.isEmpty)
+        #expect(window.position == .zero)
+    }
+
+    @Test func noAlertCanBeActedOnOnceNotificationCenterExits() {
+        var present: [Set<String>] = []
+        let platform = FakePlatform()
+        platform.windowsByPID[42] = [FakeElement.window(FakeElement.alert(id: "a"))]
+        let monitor = NotificationCenterMonitor(
+            platform: platform,
+            interceptor: SystemNotificationInterceptor(listsAlert: { _ in true }, onPresentAlerts: { present.append($0) }) { _ in },
+            workspaceCenter: NotificationCenter(),
+            onStatus: { _ in }
+        )
+        monitor.start()
+        defer { monitor.stop() }
+
+        monitor.notificationCenterExited(pid: 42)
+
+        #expect(present == [["a"], []])
+        #expect(!monitor.perform(.choice("Allow…"), onAlert: "a"))
+    }
+
     @Test func reportsMissingNotificationCenterAndRetries() {
         let harness = Harness()
         harness.platform.pid = nil

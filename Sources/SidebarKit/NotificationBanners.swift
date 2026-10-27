@@ -47,7 +47,9 @@ public struct BannerContent: Equatable, Sendable {
 ///   controls inside the banner. Action buttons carry the identifier `action_button` (agent-desktop), and
 ///   hovering an alert adds Close and Show buttons to it (SignalLadder).
 /// - Alert-style notifications (`AXNotificationCenterAlert`) stay on screen until dismissed, like the
-///   sidebar's own cards. They are judged by their actions and controls like any banner.
+///   sidebar's own cards. They are judged by their actions and controls like any banner. Their choices,
+///   such as "Allow…" on macOS's "Privacy & Security" alert, are named actions with no button until the
+///   alert is hovered.
 @MainActor
 public enum NotificationBanners {
     /// Accessibility actions every element may offer; the localized ones come from `NotificationCenterLabels`.
@@ -157,9 +159,29 @@ public enum NotificationBanners {
     /// Whether the notification offers a choice that only macOS can present: an action other than
     /// opening or closing it, a reply field, or a control other than a close, Show or Show Details button.
     public static func needsInteraction(_ banner: any AccessibilityElement, labels: NotificationCenterLabels = .english) -> Bool {
-        let plainActions = standardActions.union([labels.close, labels.show, labels.showDetails])
+        let plainActions = plainActions(labels)
         if banner.actionNames.map(actionName).contains(where: { !plainActions.contains($0) }) { return true }
-        return containsControl(banner, plainActions: plainActions, labels: labels)
+        return containsControl(banner, plainActions: plainActions, actionButtons: [])
+    }
+
+    /// The choices an alert offers as named actions, such as "Allow…", in NotificationCenter's order. A
+    /// named action works wherever the alert's window is, so the sidebar can offer it while the alert is
+    /// hidden. Nil for banners, which leave on their own, for alerts without choices, and for alerts that
+    /// also hold a control other than a button for one of those choices or a plain action, such as a reply
+    /// field or an Options menu, which only works on screen.
+    public static func choices(of alert: any AccessibilityElement, labels: NotificationCenterLabels = .english) -> [String]? {
+        guard kind(of: alert) == .alert else { return nil }
+        let plainActions = plainActions(labels)
+        let choices = alert.actionNames.map(actionName).filter { !plainActions.contains($0) }
+        guard !choices.isEmpty else { return nil }
+        // Hovering an alert shows its choices as buttons too; those duplicate the named actions.
+        let named = Set(choices)
+        guard !containsControl(alert, plainActions: plainActions.union(named), actionButtons: named) else { return nil }
+        return choices
+    }
+
+    private static func plainActions(_ labels: NotificationCenterLabels) -> Set<String> {
+        standardActions.union([labels.close, labels.show, labels.showDetails])
     }
 
     /// `AXUIElementCopyActionNames` reports custom actions as "Name:<title>\nTarget:…\nSelector:…".
@@ -168,18 +190,23 @@ public enum NotificationBanners {
         return firstLine.hasPrefix("Name:") ? String(firstLine.dropFirst(5)) : firstLine
     }
 
+    /// Whether `element` holds a control other than a button named in `plainActions`; action buttons
+    /// count unless named in `actionButtons`.
     private static func containsControl(
         _ element: any AccessibilityElement,
         plainActions: Set<String>,
-        labels: NotificationCenterLabels
+        actionButtons: Set<String>
     ) -> Bool {
         element.children.contains { child in
-            if child.string(kAXIdentifierAttribute) == actionButtonIdentifier { return true }
+            if child.string(kAXIdentifierAttribute) == actionButtonIdentifier {
+                guard let name = name(of: child), actionButtons.contains(name) else { return true }
+                return false
+            }
             if let role = child.string(kAXRoleAttribute), interactiveRoles.contains(role),
                !isPlainButton(child, plainActions: plainActions) {
                 return true
             }
-            return containsControl(child, plainActions: plainActions, labels: labels)
+            return containsControl(child, plainActions: plainActions, actionButtons: actionButtons)
         }
     }
 
@@ -187,8 +214,11 @@ public enum NotificationBanners {
     private static func isPlainButton(_ element: any AccessibilityElement, plainActions: Set<String>) -> Bool {
         guard element.string(kAXRoleAttribute) == kAXButtonRole else { return false }
         if element.string(kAXSubroleAttribute) == kAXCloseButtonSubrole { return true }
-        let name = element.string(kAXTitleAttribute) ?? element.string(kAXDescriptionAttribute)
-        return name.map(plainActions.contains) ?? false
+        return name(of: element).map(plainActions.contains) ?? false
+    }
+
+    private static func name(of element: any AccessibilityElement) -> String? {
+        element.string(kAXTitleAttribute) ?? element.string(kAXDescriptionAttribute)
     }
 
     /// Closes the notification with its localized Close action, or by pressing its close button. An
@@ -202,8 +232,7 @@ public enum NotificationBanners {
         }
         let closeButtons = banner.children.filter {
             $0.string(kAXRoleAttribute) == kAXButtonRole
-                && ($0.string(kAXSubroleAttribute) == kAXCloseButtonSubrole
-                    || ($0.string(kAXTitleAttribute) ?? $0.string(kAXDescriptionAttribute)) == labels.close)
+                && ($0.string(kAXSubroleAttribute) == kAXCloseButtonSubrole || name(of: $0) == labels.close)
         }
         guard closeButtons.count == 1 else { return false }
         return closeButtons[0].perform(kAXPressAction)

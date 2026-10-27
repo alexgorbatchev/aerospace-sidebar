@@ -67,6 +67,15 @@ final class FakeElement: AccessibilityElement {
         return stack
     }
 
+    /// An alert whose choices are named actions, like macOS's "Privacy & Security" alert with Allow….
+    static func alert(id: String = "alert-1", app: String = "Calendar", title: String = "Standup", choices: [String] = ["Allow…"]) -> FakeElement {
+        let alert = banner(id: id, app: app, title: title)
+        alert.attributes[kAXSubroleAttribute] = "AXNotificationCenterAlert"
+        alert.actions = ["AXPress", "Show Details"] + choices + ["Close"]
+        alert.actions = alert.actions.map { $0 == "AXPress" ? $0 : "Name:\($0)\nTarget:0x0\nSelector:(null)" }
+        return alert
+    }
+
     /// NotificationCenter's "Notification Center" window as macOS 26 lays it out.
     static func window(_ banners: FakeElement..., position: CGPoint = .zero) -> FakeElement {
         FakeElement(
@@ -83,6 +92,25 @@ final class RecordingPerformer: NotificationActionPerforming {
 
     func perform(_ action: SidebarNotification.ClickAction) {
         actions.append(action)
+    }
+}
+
+@MainActor
+final class RecordingAlerts: NativeAlertControlling {
+    var performed: [String] = []
+    var succeeds = true
+    var releases = 0
+
+    func perform(_ action: AlertAction, onAlert identifier: String) -> Bool {
+        switch action {
+        case .open: performed.append("open \(identifier)")
+        case .choice(let name): performed.append("\(name) \(identifier)")
+        }
+        return succeeds
+    }
+
+    func alertsReleased() {
+        releases += 1
     }
 }
 

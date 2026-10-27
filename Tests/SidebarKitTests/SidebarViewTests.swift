@@ -41,9 +41,11 @@ struct SidebarViewTests {
     func card(_ notification: SidebarNotification, hovered: Bool) -> NotificationCard {
         NotificationCard(
             notification: notification,
+            presentAlert: model.presentAlert(of: notification),
             isHovered: hovered,
             hover: { _ in },
             activate: { model.activate(notification.id) },
+            choose: { model.choose($0, for: notification.id) },
             dismiss: { model.dismiss(notification.id) }
         )
     }
@@ -128,6 +130,24 @@ struct SidebarViewTests {
         #expect(throws: Never.self) { try view().inspect().find(text: "Shown by macOS for its buttons") }
     }
 
+    /// A card offers its alert's choices only while the alert exists.
+    @Test func offersTheChoicesOfAPresentAlert() throws {
+        let alerts = RecordingAlerts()
+        model.alerts = alerts
+        model.add(SidebarNotification(source: "macOS", title: "Privacy & Security", nativeAlert: .init(identifier: "a", choices: ["Allow…", "Later"])))
+
+        #expect(throws: (any Error).self) { try view().inspect().find(button: "Allow…") }
+
+        model.presentAlerts = ["a"]
+        let sut = try view().inspect()
+        #expect(try sut.find(button: "Later").labelView().text().attributes().font() == Typography(SidebarSettings.Font()).font(.callout))
+        try sut.find(button: "Allow…").tap()
+
+        #expect(alerts.performed == ["Allow… a"])
+        #expect(performer.actions.isEmpty)
+        #expect(model.notifications.isEmpty)
+    }
+
     @Test func showsCountAndLayersForStackedNotifications() throws {
         model.add(SidebarNotification(source: "ci", title: "single"))
         for _ in 0..<2 {
@@ -162,9 +182,11 @@ struct SidebarViewTests {
         func card(hovered: Bool) throws -> InspectableView<ViewType.ClassifiedView> {
             try NotificationCard(
                 notification: SidebarNotification(source: "s", title: "t"),
+                presentAlert: nil,
                 isHovered: hovered,
                 hover: { _ in },
                 activate: {},
+                choose: { _ in },
                 dismiss: {}
             ).inspect()
         }

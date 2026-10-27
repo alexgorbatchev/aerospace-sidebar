@@ -4,7 +4,8 @@
 
 - **Reserved screen strip**: a panel on the right or left edge of the main display that tiled windows never cover, on every Space and over full-screen apps.
 - **macOS notifications, kept**: native banners are hidden and listed in the sidebar instead, so nothing disappears after five seconds.
-- **Interactive notifications left alone**: notifications with buttons or reply fields stay on screen as macOS shows them, and are also listed. Turn this off in Settings to list them without their buttons instead. Alerts without buttons are listed like any other notification.
+- **Alert buttons in the sidebar**: a persistent alert whose buttons are plain choices, such as macOS's "Privacy & Security" alert with Allow…, is hidden and listed with those buttons on its card. Pressing one acts on the alert; clicking the card does what clicking the alert does, and dismissing the card closes the alert.
+- **Other interactive notifications left alone**: banners with buttons, and notifications with reply fields or option menus, stay on screen as macOS shows them, and are also listed. Turn this off in Settings to list them without their buttons instead. Alerts without buttons are listed like any other notification.
 - **Push from anywhere**: the `aerospace-sidebar` command and `aerospace-sidebar://` links add notifications.
 - **Click actions**: a notification can run a shell command or open a link when clicked.
 - **Severity**: `low`, `normal`, `high` and `critical` notifications sort and look different, with critical ones always on top.
@@ -28,6 +29,7 @@
 - The sidebar's side and width come from its own settings (`[sidebar]` in `config.toml`). AeroSpace has to leave the same strip free: the `monitor.main` entry of `gaps.outer.<side>` minus that side's fallback value is the reserved width. With `outer.right = [{ monitor.main = 305 }, 5]`, a 300-point sidebar on the right keeps AeroSpace's 5-point gap to your windows. The sidebar keeps AeroSpace's config in step: at launch, whenever the AeroSpace config file changes, and whenever you change the side or width (in Settings or in `config.toml`), it rewrites its block in that file when the strip is missing or wrong, then reloads AeroSpace. The block sits in the `[gaps]` table between `# >>> aerospace-sidebar` and `# <<< aerospace-sidebar <<<` and owns `outer.left` and `outer.right`; the sidebar keeps the other monitors' entries and fallback values in it. A config written by a generator is repaired after each regeneration; to avoid the round trip, keep the block in the generator's source and carry it over from the previous output.
 - Notifications are read through the macOS Accessibility API from the Notification Center process, which is why the app needs the Accessibility permission. Several alerts from one app that macOS collapses into a stack are expanded and listed one by one. While Notification Center's own panel is open, the sidebar leaves it alone.
 - Banners are hidden by moving Notification Center's banner window off-screen and closing the banner. When that window also holds a notification left to macOS, it stays on screen, so a banner arriving meanwhile shows for about a second until it closes. Quitting the sidebar moves the window back.
+- An alert listed with its buttons stays open off-screen until you act on its card, so its buttons still work later. Quitting the sidebar brings it back on screen, and the card restored at the next launch takes it over again.
 - Focus and Do Not Disturb suppress banners entirely. With Full Disk Access, the sidebar also reads the database in which macOS records every delivered notification (`~/Library/Group Containers/group.com.apple.usernoted/db2/db`, read-only) and lists the ones no banner showed. That database is private to macOS and may change with a macOS update; the sidebar then logs the error and keeps intercepting banners.
 - `aerospace-sidebar notification push` talks to the app over a socket in your private temporary directory (`$(getconf DARWIN_USER_TEMP_DIR)com.alexgorbatchev.aerospace-sidebar.sock`) that only your user account can open. This is the only way to attach a `--run` command.
 - `aerospace-sidebar://` links can be opened by any app, and by web pages after your browser asks for permission. They therefore never carry commands, and their `open` links must be `http` or `https`. A notification from a link is labeled with the app that opened it when macOS reports one, otherwise `URL`.
@@ -143,7 +145,7 @@ width = 300                              # 150 to 1000 points; changing side or 
 
 [notifications]
 replace_system = true                    # hide macOS banners and list them in the sidebar
-actionable_left_to_macos = true          # leave notifications with buttons (Reply, Snooze) to macOS
+actionable_left_to_macos = true          # leave notifications with buttons the sidebar cannot offer (Reply, Options menus, banners) to macOS
 apps_left_to_macos = ["zoom.us"]         # app names whose notifications stay on screen
 
 [history]

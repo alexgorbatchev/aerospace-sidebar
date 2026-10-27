@@ -76,6 +76,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
 
         let monitor = makeMonitor(model, settings, identities)
         self.monitor = monitor
+        model.alerts = monitor
         let databaseMonitor = makeDatabaseMonitor(model, identities)
         self.databaseMonitor = databaseMonitor
         settings.observe { [weak self, model] settings in
@@ -158,6 +159,8 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
                 identities: identities,
                 leavesToMacOS: { settings.settings.notifications.leavesToMacOS($0) },
                 leavesActionableToMacOS: { settings.settings.notifications.actionableLeftToMacOS },
+                listsAlert: { model.lists(alert: $0) },
+                onPresentAlerts: { model.presentAlerts = $0 },
                 onNotification: { model.add($0) }
             ),
             onStatus: { model.interception = $0 }

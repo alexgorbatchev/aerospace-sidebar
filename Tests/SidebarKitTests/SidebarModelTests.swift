@@ -57,6 +57,7 @@ struct SidebarModelTests {
         SidebarNotification(source: "s", title: "t", body: "b", invalidIcon: "nope"),
         SidebarNotification(source: "s", title: "t", body: "b", action: .activateApp(name: "s")),
         SidebarNotification(source: "s", title: "t", body: "b", shownByMacOS: true),
+        SidebarNotification(source: "s", title: "t", body: "b", nativeAlert: .init(identifier: "a", choices: ["Allow…"])),
     ])
     func keepsNotificationsThatDifferApart(other: SidebarNotification) {
         let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
@@ -105,6 +106,122 @@ struct SidebarModelTests {
 
         #expect(performer.actions == [.run(command: "make", workingDirectory: "/tmp")])
         #expect(model.notifications.isEmpty)
+    }
+
+    /// Two alerts with the same text still need their own cards, since each answers its own alert.
+    @Test func neverStacksDifferentAlerts() {
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+
+        model.add(SidebarNotification(source: "s", title: "t", nativeAlert: .init(identifier: "a", choices: ["Allow…"])))
+        model.add(SidebarNotification(source: "s", title: "t", nativeAlert: .init(identifier: "b", choices: ["Allow…"])))
+
+        #expect(model.notifications.map(\.nativeAlert?.identifier) == ["b", "a"])
+    }
+
+    func alertModel(present: Set<String> = ["a"]) -> (SidebarModel, RecordingPerformer, RecordingAlerts, SidebarNotification) {
+        let performer = RecordingPerformer()
+        let alerts = RecordingAlerts()
+        let model = SidebarModel(performer: performer, store: InMemoryStore())
+        model.alerts = alerts
+        model.presentAlerts = present
+        let notification = SidebarNotification(
+            source: "Calendar", title: "Standup", action: .activateApp(name: "Calendar"),
+            nativeAlert: .init(identifier: "a", choices: ["Snooze", "Join"])
+        )
+        model.add(notification)
+        return (model, performer, alerts, notification)
+    }
+
+    @Test func choosingPerformsTheChoiceOnTheAlertAndDismissesItsCard() {
+        let (model, _, alerts, notification) = alertModel()
+
+        #expect(model.presentAlert(of: notification) == notification.nativeAlert)
+        model.choose("Join", for: notification.id)
+
+        #expect(alerts.performed == ["Join a"])
+        #expect(model.notifications.isEmpty)
+        #expect(alerts.releases == 1)
+    }
+
+    /// Choices exist only while the alert does, and a refused choice keeps the card.
+    @Test func keepsTheCardWhenAChoiceCannotBePerformed() {
+        let (model, _, alerts, notification) = alertModel()
+
+        model.choose("Delete", for: notification.id)
+        alerts.succeeds = false
+        model.choose("Join", for: notification.id)
+        model.presentAlerts = []
+        alerts.succeeds = true
+        model.choose("Join", for: notification.id)
+
+        #expect(model.presentAlert(of: notification) == nil)
+        #expect(alerts.performed == ["Join a"])
+        #expect(model.notifications.count == 1)
+    }
+
+    /// Clicking the card of a present alert clicks the alert; otherwise the card's own action runs.
+    @Test func activatingOpensThePresentAlertInsteadOfTheCardsAction() {
+        let (model, performer, alerts, notification) = alertModel()
+        model.activate(notification.id)
+        #expect(alerts.performed == ["open a"])
+        #expect(performer.actions.isEmpty)
+        #expect(model.notifications.isEmpty)
+
+        let (refusing, refusingPerformer, refusingAlerts, refused) = alertModel()
+        refusingAlerts.succeeds = false
+        refusing.activate(refused.id)
+        #expect(refusingPerformer.actions == [.activateApp(name: "Calendar")])
+
+        let (gone, gonePerformer, goneAlerts, absent) = alertModel(present: [])
+        gone.activate(absent.id)
+        #expect(goneAlerts.performed.isEmpty)
+        #expect(gonePerformer.actions == [.activateApp(name: "Calendar")])
+    }
+
+    /// Every way a card for an alert leaves the list lets its alert close; other changes do not.
+    @Test func releasesAlertsWhenTheirCardsLeaveTheList() {
+        var now = Date(timeIntervalSince1970: 1_000_000)
+        let alerts = RecordingAlerts()
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), now: { now })
+        model.alerts = alerts
+        func addAlert(_ identifier: String, title: String = "t") {
+            model.add(SidebarNotification(source: "s", title: title, nativeAlert: .init(identifier: identifier, choices: ["Allow…"]), receivedAt: now))
+        }
+
+        addAlert("a")
+        model.add(SidebarNotification(source: "s", title: "plain", receivedAt: now))
+        model.dismiss(model.notifications.first { $0.title == "plain" }!.id)
+        #expect(alerts.releases == 0)
+        #expect(model.lists(alert: "a"))
+
+        model.dismiss(model.notifications[0].id)
+        #expect(alerts.releases == 1)
+        #expect(!model.lists(alert: "a"))
+
+        addAlert("b")
+        model.clear()
+        #expect(alerts.releases == 2)
+
+        addAlert("c")
+        now += SidebarSettings.History().retention + 1
+        model.pruneExpired()
+        #expect(alerts.releases == 3)
+
+        addAlert("d")
+        for index in 1...10 {
+            model.add(SidebarNotification(source: "s", title: "n\(index)", receivedAt: now.addingTimeInterval(TimeInterval(index))))
+        }
+        #expect(alerts.releases == 3)
+        model.apply(history: SidebarSettings.History(maxCount: 10))
+        #expect(alerts.releases == 4)
+    }
+
+    @Test func listsAlertsRestoredFromTheSavedList() {
+        let saved = SidebarNotification(source: "s", title: "t", nativeAlert: .init(identifier: "a", choices: ["Allow…"]))
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore([saved]))
+
+        #expect(model.lists(alert: "a"))
+        #expect(model.presentAlert(of: saved) == nil)
     }
 
     @Test func applyingHistoryLimitsDropsWhatTheyNoLongerAllow() {
