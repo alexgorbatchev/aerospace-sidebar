@@ -38,6 +38,18 @@ struct ScrollMetricsTests {
         #expect(ScrollMetrics(contentHeight: 100_000, visibleHeight: 400).knob(trackLength: 400, minLength: 24).length == 24)
     }
 
+    @Test func reportsContentHiddenAboveAndBelow() {
+        var metrics = ScrollMetrics(contentHeight: 1000, visibleHeight: 400, offset: 0)
+
+        #expect(!metrics.hasContentAbove && metrics.hasContentBelow)
+        metrics.offset = 300
+        #expect(metrics.hasContentAbove && metrics.hasContentBelow)
+        metrics.offset = 599.5
+        #expect(metrics.hasContentAbove && !metrics.hasContentBelow)
+        let fits = ScrollMetrics(contentHeight: 300, visibleHeight: 400)
+        #expect(!fits.hasContentAbove && !fits.hasContentBelow)
+    }
+
     @Test func draggingTheKnobMapsTrackDistanceToContentAndClamps() {
         let metrics = ScrollMetrics(contentHeight: 1000, visibleHeight: 400, offset: 0)
 

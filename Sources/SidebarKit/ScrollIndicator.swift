@@ -23,6 +23,10 @@ struct ScrollMetrics: Equatable {
 
     var maxOffset: CGFloat { max(0, contentHeight - visibleHeight) }
     var isScrollable: Bool { maxOffset >= 1 }
+    /// Whether content is hidden above the visible area.
+    var hasContentAbove: Bool { offset >= 1 }
+    /// Whether content is hidden below the visible area.
+    var hasContentBelow: Bool { maxOffset - offset >= 1 }
 
     /// The knob's distance from the top of a track `trackLength` long, and its length.
     func knob(trackLength: CGFloat, minLength: CGFloat) -> (y: CGFloat, length: CGFloat) {

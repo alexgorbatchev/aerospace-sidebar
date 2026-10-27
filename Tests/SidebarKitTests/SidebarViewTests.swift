@@ -268,4 +268,16 @@ struct SidebarViewTests {
         #expect(throws: (any Error).self) { try trailing.styleConfigurationTitle(0) }
         #expect(throws: Never.self) { try trailing.styleConfigurationTitle(2) }
     }
+
+    @Test func edgesFadeOnlyWhileCardsAreHiddenPastThem() throws {
+        for (top, bottom) in [(false, false), (true, false), (false, true), (true, true)] {
+            let gradients = try EdgeFadeMask(fadesTop: top, fadesBottom: bottom).inspect().findAll(ViewType.LinearGradient.self)
+
+            #expect(try gradients.map { try $0.gradient().stops.map(\.color) } == [
+                [.black, .black.opacity(top ? 0 : 1)],
+                [.black, .black.opacity(bottom ? 0 : 1)],
+            ])
+            #expect(try gradients.map { try $0.endPoint() } == [.top, .bottom])
+        }
+    }
 }

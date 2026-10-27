@@ -59,10 +59,13 @@ struct SidebarView: View {
                 .padding(.top, NotificationCard.dismissOverhang)
                 .padding(.horizontal, Self.margin)
             }
+            // The list runs to the screen edge; scrolled to the end, the last card keeps a margin under it.
+            .contentMargins(.bottom, Self.margin, for: .scrollContent)
             .scrollIndicators(.never)
             .scrollPosition($scrollPosition)
             .onScrollGeometryChange(for: ScrollMetrics.self, of: ScrollMetrics.init) { scrollMetrics = $1 }
             .onScrollPhaseChange { isScrolling = $1.isScrolling }
+            .mask { EdgeFadeMask(fadesTop: scrollMetrics.hasContentAbove, fadesBottom: scrollMetrics.hasContentBelow) }
             .overlay(alignment: .trailing) {
                 if scrollMetrics.isScrollable {
                     ScrollIndicator(metrics: scrollMetrics, isScrolling: isScrolling) { scrollPosition.scrollTo(y: $0) }
@@ -80,7 +83,6 @@ struct SidebarView: View {
             }
         }
         .padding(.top, Self.topMargin)
-        .padding(.bottom, Self.margin)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         // Changes arrive from the model, outside any view action, so the view animates them itself.
         .animation(Self.motion, value: model.notifications)
@@ -127,6 +129,31 @@ struct SidebarView: View {
         case .needsAccessibility: "Grant Accessibility access to show macOS notifications here."
         case .notificationCenterUnavailable: "macOS notifications cannot be read right now."
         }
+    }
+}
+
+/// Opaque except for its top and bottom `height` points, which fade out while cards are hidden past that
+/// edge, so cards cut off by the edge fade instead of ending abruptly.
+struct EdgeFadeMask: View {
+    let fadesTop: Bool
+    let fadesBottom: Bool
+
+    static let height: CGFloat = 48
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Self.edge(fading: fadesTop, toward: .top)
+            Color.black
+            Self.edge(fading: fadesBottom, toward: .bottom)
+        }
+        .animation(.easeOut(duration: 0.2), value: fadesTop)
+        .animation(.easeOut(duration: 0.2), value: fadesBottom)
+    }
+
+    /// Opaque on the inner side, transparent at `edge` while `fading`.
+    private static func edge(fading: Bool, toward edge: UnitPoint) -> some View {
+        LinearGradient(colors: [.black, .black.opacity(fading ? 0 : 1)], startPoint: edge == .top ? .bottom : .top, endPoint: edge)
+            .frame(height: height)
     }
 }
 
