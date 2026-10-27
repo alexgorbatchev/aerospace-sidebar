@@ -112,8 +112,37 @@ struct SidebarPanelControllerTests {
 
         contentView.layoutSubtreeIfNeeded()
 
-        // The SwiftUI content fills the panel directly; there is no window background behind it.
+        // The SwiftUI content fills the panel directly.
         #expect(contentView is NSHostingView<ModifiedContent<SidebarView, TypographyModifier>>)
         #expect(contentView.frame.size == controller.panel.frame.size)
+    }
+
+    @Test(.enabled(if: !NSScreen.screens.isEmpty, "requires a display"))
+    func transparentListAreaRetainsMouseEvents() async throws {
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        model.add(SidebarNotification(source: "test", title: "One card"))
+        let controller = SidebarPanelController(model: model, settings: settings, notificationCenter: NotificationCenter())
+        let panel = controller.panel
+        let screen = try #require(NSScreen.screens.first)
+        panel.setFrame(CGRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.minY, width: 300, height: 600), display: true)
+        panel.level = .popUpMenu
+        panel.orderFrontRegardless()
+        defer { panel.close() }
+        let content = try #require(panel.contentView)
+        content.layoutSubtreeIfNeeded()
+        panel.displayIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+
+        // Sample the entire lower list, including both gutters and empty space below the card.
+        // These must stay interactive even where there are no cards.
+        for x in [CGFloat(2), 150, 298] {
+            for y in stride(from: CGFloat(200), through: 500, by: 50) {
+                let point = CGPoint(x: x, y: content.isFlipped ? y : 600 - y)
+                #expect(content.hitTest(point) != nil, "List lost mouse events at \(point)")
+                let screenPoint = panel.convertPoint(toScreen: content.convert(point, to: nil))
+                #expect(NSWindow.windowNumber(at: screenPoint, belowWindowWithWindowNumber: 0) == panel.windowNumber,
+                        "Window server passed through the list at \(point)")
+            }
+        }
     }
 }

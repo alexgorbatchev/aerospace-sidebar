@@ -70,10 +70,10 @@ public final class SidebarPanelController: NSObject {
         panel.hidesOnDeactivate = false
         panel.isMovable = false
         panel.isReleasedWhenClosed = false
-        // The panel itself is invisible: only the cards and buttons inside it draw. A shadow would
-        // outline each of them.
+        // WindowServer passes mouse events through fully transparent pixels before view hit testing.
+        // Keep a nearly invisible backing across the strip so scrolling survives gaps between cards.
         panel.isOpaque = false
-        panel.backgroundColor = .clear
+        panel.backgroundColor = NSColor.black.withAlphaComponent(0.01)
         panel.hasShadow = false
 
         let content = NSHostingView(rootView: SidebarView(model: model, openSettings: openSettings).typography(settings))

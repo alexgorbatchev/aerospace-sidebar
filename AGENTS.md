@@ -83,7 +83,7 @@ macOS has no public API for reserving screen space (no AppBar or strut equivalen
    - Quit Sidebar lives in Settings › General (⌘Q while Settings is key) and calls `NSApplication.terminate`; `LSUIElement` apps have no menu bar, so this is the only in-app quit.
    - `collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]`
    - `hidesOnDeactivate = false`
-   - The panel is invisible (`isOpaque = false`, clear background, `hasShadow = false`): only cards and buttons draw, each on `.regularMaterial` with `floatingShadow()` to separate it from what is behind. The hosting view is the content view directly.
+   - The panel is nearly invisible (`isOpaque = false`, 1% black background, `hasShadow = false`): WindowServer passes mouse events through fully transparent pixels before view hit testing, so the backing keeps scrolling continuous across card gaps and margins. Cards and buttons draw on `.regularMaterial` with `floatingShadow()` to separate them from what is behind. The hosting view is the content view directly.
    - Re-pin the frame on screen-configuration changes (`NSApplication.didChangeScreenParametersNotification`); hide the panel when no screen exists.
 3. **Keep AeroSpace from managing the sidebar.** AeroSpace 0.21 (`isWindowHeuristic` in `AxUiElementWindowType.swift`) classifies a window of an `.accessory` app with no close button as a popup. Popups are never tiled, never assigned to a workspace, never hidden on workspace switches, and never trigger `on-window-detected`. Keep the panel borderless and `LSUIElement = true`. A floated window would belong to one workspace and be moved offscreen when that workspace is hidden. `base.toml` still floats the bundle id as a fallback:
    ```toml
