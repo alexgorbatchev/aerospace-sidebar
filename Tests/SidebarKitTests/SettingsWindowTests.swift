@@ -69,6 +69,56 @@ struct SettingsEditorTests {
         #expect(store.settings.history == SidebarSettings.History())
     }
 
+    @Test(arguments: [
+        (SidebarSettings.Font(size: 40), "Size must be between 8 and 32 points."),
+        (SidebarSettings.Font(name: "No Such Font Family"), "No installed font family is named “No Such Font Family”."),
+    ])
+    func rejectsInvalidFont(font: SidebarSettings.Font, status: String) {
+        let editor = SettingsEditor(store: store)
+        editor.draft.font = font
+
+        #expect(!editor.save())
+        #expect(editor.status == status)
+        #expect(store.settings.font == SidebarSettings.Font())
+    }
+
+    @Test(arguments: [(" menlo ", "Menlo"), ("  ", "")])
+    func savesFontFamilyAsInstalled(typed: String, saved: String) {
+        let editor = SettingsEditor(store: store)
+        editor.draft.font = SidebarSettings.Font(name: typed, size: 15)
+
+        #expect(editor.save())
+        #expect(store.settings.font == SidebarSettings.Font(name: saved, size: 15))
+    }
+
+    @Test func reportsMissingFontFromFile() throws {
+        try directory.write("[font]\nname = \"No Such Font Family\"\n", to: "config.toml")
+        store.reload()
+
+        #expect(SettingsEditor(store: store).status == "Font “No Such Font Family” is not installed, so the system font is used.")
+    }
+
+    @Test func draftFontPreviewsUntilSavedOrReverted() throws {
+        let editor = SettingsEditor(store: store)
+
+        editor.draft.history.maxCount = 300
+        #expect(store.fontPreview == nil)
+
+        editor.draft.font.size = 18
+        #expect(store.font == SidebarSettings.Font(size: 18))
+        #expect(store.settings.font == SidebarSettings.Font())
+
+        editor.revert()
+        #expect(store.fontPreview == nil)
+        #expect(store.font == SidebarSettings.Font())
+
+        editor.draft.font = SidebarSettings.Font(name: "Menlo", size: 16)
+        #expect(editor.save())
+        #expect(store.fontPreview == nil)
+        #expect(store.font == SidebarSettings.Font(name: "Menlo", size: 16))
+        #expect(try store.file.load().font == SidebarSettings.Font(name: "Menlo", size: 16))
+    }
+
     @Test func reportsSaveFailure() {
         let unwritable = SettingsStore(file: SettingsFile(url: URL(fileURLWithPath: "/nonexistent-root/config.toml")))
         let editor = SettingsEditor(store: unwritable)
@@ -179,26 +229,51 @@ struct SettingsPaneTests {
     @Test func generalPaneEditsDraftAndSaves() throws {
         var closed = 0
         var revealed: [URL] = []
-        let sut = try GeneralPane(editor: editor, configURL: store.file.url, reveal: { revealed.append($0) }, close: { closed += 1 }).inspect()
+        var chooses = 0
+        let sut = try GeneralPane(editor: editor, configURL: store.file.url, reveal: { revealed.append($0) }, chooseFont: { chooses += 1 }, close: { closed += 1 }).inspect()
 
         try sut.find(ViewType.Toggle.self).tap()
         try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Apps left to macOS" }).setInput("zoom.us, Calendar")
+        try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Font" }).setInput("Menlo")
+        try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Size" }).setInput("15")
         try sut.find(button: "Show in Finder").tap()
+        try sut.find(button: "Choose…").tap()
+        #expect(chooses == 1)
         #expect(store.settings == SidebarSettings())
 
         try sut.find(button: "Save").tap()
 
         #expect(store.settings.notifications == .init(replaceSystem: false, appsLeftToMacOS: ["zoom.us", "Calendar"]))
+        #expect(store.settings.font == SidebarSettings.Font(name: "Menlo", size: 15))
         #expect(revealed == [store.file.url])
         #expect(closed == 1)
         #expect(throws: Never.self) { try sut.find(text: store.file.url.path) }
+    }
+
+    @Test func panesUseFontSettings() throws {
+        platform.trusted = false
+        loginItems.status = .enabled
+        onboarding.refresh()
+        let typography = Typography(SidebarSettings.Font(name: "Menlo", size: 18))
+        let general = try GeneralPane(editor: editor, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, close: {})
+            .environment(\.typography, typography).inspect()
+        let setupPane = try setup().environment(\.typography, typography).inspect()
+
+        #expect(try general.find(text: "Font").attributes().font() == typography.font(.headline))
+        #expect(try general.find(text: store.file.url.path).attributes().font() == typography.font(.subheadline))
+        for title in ["Save", "Cancel", "Show in Finder", "Choose…"] {
+            #expect(try general.find(button: title).labelView().text().attributes().font() == typography.font(.body))
+        }
+        for title in ["Open Accessibility", "Remove", "Copy Settings"] {
+            #expect(try setupPane.find(button: title).labelView().text().attributes().font() == typography.font(.body))
+        }
     }
 
     @Test func cancelRevertsAndCloses() throws {
         var closed = 0
         editor.draft.history.maxCount = 900
 
-        try GeneralPane(editor: editor, configURL: store.file.url, reveal: { _ in }, close: { closed += 1 }).inspect()
+        try GeneralPane(editor: editor, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, close: { closed += 1 }).inspect()
             .find(button: "Cancel").tap()
 
         #expect(editor.draft == store.settings)
@@ -220,11 +295,44 @@ struct SettingsPaneTests {
         let sut = try NumberField(title: "Keep for", value: .constant(24), unit: "hours").inspect()
 
         #expect(throws: Never.self) { try sut.find(text: "hours") }
+        #expect(throws: (any Error).self) { try sut.find(ViewType.Stepper.self) }
     }
-}
 
-@MainActor
-struct SettingsWindowControllerTests {
+    @Test func fontSizeArrowsStepWithinRange() throws {
+        _ = NSApplication.shared
+        let host = NSHostingView(rootView: GeneralPane(editor: editor, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, close: {}))
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: host.fittingSize), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        let stepper = try #require(Self.subviews(of: host).compactMap { $0 as? NSStepper }.first)
+
+        Self.click(stepper, up: true)
+        #expect(editor.draft.font.size == 14)
+        #expect(store.font.size == 14)
+        Self.click(stepper, up: false)
+        Self.click(stepper, up: false)
+        #expect(editor.draft.font.size == 12)
+
+        editor.draft.font.size = SidebarSettings.Font.sizeRange.upperBound
+        host.layoutSubtreeIfNeeded()
+        Self.click(stepper, up: true)
+        #expect(editor.draft.font.size == SidebarSettings.Font.sizeRange.upperBound)
+        editor.draft.font.size = SidebarSettings.Font.sizeRange.lowerBound
+        host.layoutSubtreeIfNeeded()
+        Self.click(stepper, up: false)
+        #expect(editor.draft.font.size == SidebarSettings.Font.sizeRange.lowerBound)
+    }
+
+    /// What a click on an arrow does: SwiftUI's stepper reads the direction of the change.
+    private static func click(_ stepper: NSStepper, up: Bool) {
+        stepper.doubleValue += up ? stepper.increment : -stepper.increment
+        stepper.sendAction(stepper.action, to: stepper.target)
+    }
+
+    private static func subviews(of view: NSView) -> [NSView] {
+        view.subviews + view.subviews.flatMap(subviews(of:))
+    }
+
     @Test func opensOnSetupTabInFrontWithoutActivatingTheApp() throws {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
@@ -253,5 +361,73 @@ struct SettingsWindowControllerTests {
         controller.editor.draft.history.maxCount = 999
         controller.window.close()
         #expect(controller.editor.draft == store.settings)
+    }
+
+    @Test func fontPanelPicksGoIntoTheDraftUntilTheWindowCloses() throws {
+        _ = NSApplication.shared
+        let directory = try TemporaryDirectory()
+        let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
+        let picked = try #require(NSFont(name: "Menlo-Regular", size: 16))
+        let controller = SettingsWindowController(store: store, onboarding: OnboardingModel(
+            accessibility: FakePlatform(),
+            loginItems: FakeLoginItems(),
+            setup: AeroSpaceSetup(home: directory.url, environment: [:], cli: FakeAeroSpaceCLI()),
+            performer: RecordingPerformer(),
+            copy: { _ in }
+        ), fontChooser: FontChooser(panel: { panel }, convert: { _ in picked }), reveal: { _ in })
+        controller.show()
+
+        controller.chooseFont()
+        try #require(NSFontManager.shared.target as? FontChooser).changeFont(NSFontManager.shared)
+
+        #expect(controller.editor.draft.font == SidebarSettings.Font(name: "Menlo", size: 16))
+        #expect(store.settings.font == SidebarSettings.Font())
+        controller.window.close()
+        #expect(!panel.isVisible)
+        #expect(NSFontManager.shared.target == nil)
+    }
+
+    @Test func previewResizesWindowAndCancelRestoresIt() throws {
+        _ = NSApplication.shared
+        let directory = try TemporaryDirectory()
+        let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        let controller = SettingsWindowController(store: store, onboarding: OnboardingModel(
+            accessibility: FakePlatform(),
+            loginItems: FakeLoginItems(),
+            setup: AeroSpaceSetup(home: directory.url, environment: [:], cli: FakeAeroSpaceCLI()),
+            performer: RecordingPerformer(),
+            copy: { _ in }
+        ), reveal: { _ in })
+        controller.show()
+        let before = controller.window.frame
+
+        controller.editor.draft.font.size = 26
+        #expect(controller.window.frame.height > before.height)
+
+        controller.editor.revert()
+        #expect(controller.window.frame == before)
+        controller.window.close()
+    }
+
+    @Test func resizesWithFontSizeKeepingTopEdge() throws {
+        _ = NSApplication.shared
+        let directory = try TemporaryDirectory()
+        let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        let controller = SettingsWindowController(store: store, onboarding: OnboardingModel(
+            accessibility: FakePlatform(),
+            loginItems: FakeLoginItems(),
+            setup: AeroSpaceSetup(home: directory.url, environment: [:], cli: FakeAeroSpaceCLI()),
+            performer: RecordingPerformer(),
+            copy: { _ in }
+        ), reveal: { _ in })
+        let before = controller.window.frame
+
+        store.update { $0.font.size = 26 }
+
+        #expect(controller.window.frame.height > before.height)
+        #expect(controller.window.contentRect(forFrameRect: controller.window.frame).width == SettingsMetrics.paneWidth * 2)
+        #expect(controller.window.frame.maxY == before.maxY)
+        #expect(controller.window.frame.minX == before.minX)
     }
 }

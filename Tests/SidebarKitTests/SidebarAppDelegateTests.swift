@@ -19,9 +19,10 @@ struct SidebarAppDelegateTests {
         SidebarAppDelegate(
             settings: settings,
             makeModel: { SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), history: $0.history) },
-            makeController: { model, openSettings in
+            makeController: { model, settings, openSettings in
                 SidebarPanelController(
                     model: model,
+                    settings: settings,
                     targetVisibleFrame: { CGRect(x: 0, y: 0, width: 1440, height: 900) },
                     notificationCenter: NotificationCenter(),
                     openSettings: openSettings
@@ -132,8 +133,8 @@ struct SidebarAppDelegateTests {
         let delegate = SidebarAppDelegate(
             settings: unwatchable,
             makeModel: { SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), history: $0.history) },
-            makeController: { model, _ in
-                SidebarPanelController(model: model, targetVisibleFrame: { nil }, notificationCenter: NotificationCenter())
+            makeController: { model, settings, _ in
+                SidebarPanelController(model: model, settings: settings, targetVisibleFrame: { nil }, notificationCenter: NotificationCenter())
             },
             makeMonitor: { [platform] model, _ in
                 NotificationCenterMonitor(platform: platform, interceptor: SystemNotificationInterceptor { model.add($0) },

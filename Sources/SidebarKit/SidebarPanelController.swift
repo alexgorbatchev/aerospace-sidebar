@@ -15,11 +15,13 @@ public final class SidebarPanelController: NSObject {
 
     /// - Parameters:
     ///   - model: State the sidebar renders.
+    ///   - settings: Supplies the font settings.
     ///   - layout: Resolved on every pin, so screen changes also pick up a changed AeroSpace gap.
     ///   - openSettings: Shows the Settings window.
     ///   - terminate: Called with `nil` when the user quits from the sidebar.
     public init(
         model: SidebarModel,
+        settings: SettingsStore,
         layout: @escaping @MainActor () -> SidebarLayout = { SidebarLayout.fromAeroSpaceConfig() },
         targetVisibleFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenVisibleFrame,
         notificationCenter: NotificationCenter = .default,
@@ -28,7 +30,7 @@ public final class SidebarPanelController: NSObject {
     ) {
         self.layout = layout
         self.targetVisibleFrame = targetVisibleFrame
-        self.panel = Self.makePanel(model: model, openSettings: openSettings, quit: { terminate(nil) })
+        self.panel = Self.makePanel(model: model, settings: settings, openSettings: openSettings, quit: { terminate(nil) })
         super.init()
         notificationCenter.addObserver(
             self,
@@ -54,6 +56,7 @@ public final class SidebarPanelController: NSObject {
 
     private static func makePanel(
         model: SidebarModel,
+        settings: SettingsStore,
         openSettings: @escaping @MainActor () -> Void,
         quit: @escaping @MainActor () -> Void
     ) -> NSPanel {
@@ -79,7 +82,7 @@ public final class SidebarPanelController: NSObject {
         // The app never becomes active, so follow-window-state would render it permanently inactive.
         background.state = .active
 
-        let content = NSHostingView(rootView: SidebarView(model: model, openSettings: openSettings, quit: quit))
+        let content = NSHostingView(rootView: SidebarView(model: model, openSettings: openSettings, quit: quit).typography(settings))
         content.translatesAutoresizingMaskIntoConstraints = false
         background.addSubview(content)
         NSLayoutConstraint.activate([

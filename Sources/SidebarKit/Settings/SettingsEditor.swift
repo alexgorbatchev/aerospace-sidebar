@@ -3,10 +3,13 @@ import Observation
 
 /// The Settings window's working copy. Edits stay in `draft` until `save()` writes `config.toml`;
 /// `revert()` discards them. While nothing is edited, external changes to the file replace the draft.
+/// The draft font is previewed right away, so font edits show before they are saved.
 @MainActor
 @Observable
 public final class SettingsEditor {
-    public var draft: SidebarSettings
+    public var draft: SidebarSettings {
+        didSet { store.preview(font: draft.font == store.settings.font ? nil : draft.font) }
+    }
     /// Problems to show in the window's status line: invalid values, save or load failures.
     public private(set) var status: String?
 
@@ -59,17 +62,39 @@ public final class SettingsEditor {
             status = "Keep at most must be between \(SidebarSettings.History.maxCountRange.lowerBound) and \(SidebarSettings.History.maxCountRange.upperBound) notifications."
             return false
         }
+        let font = draft.font
+        if !SidebarSettings.Font.sizeRange.contains(font.size) {
+            status = "Size must be between \(SidebarSettings.Font.sizeRange.lowerBound.formatted()) and \(SidebarSettings.Font.sizeRange.upperBound.formatted()) points."
+            return false
+        }
+        let fontName = font.name.trimmingCharacters(in: .whitespaces)
+        if !fontName.isEmpty {
+            guard let family = Typography.installedFamily(named: fontName) else {
+                status = "No installed font family is named “\(fontName)”."
+                return false
+            }
+            draft.font.name = family
+        } else {
+            draft.font.name = ""
+        }
         let draft = draft
         store.update { $0 = draft }
         if let error = store.saveError {
             status = "Couldn't save settings: \(error)"
             return false
         }
+        store.preview(font: nil)
         status = nil
         return true
     }
 
     private static func loadStatus(_ store: SettingsStore) -> String? {
-        store.loadError.map { "config.toml is invalid, so the previous settings stay in effect: \($0)" }
+        let fontName = store.settings.font.name
+        let problems = [
+            store.loadError.map { "config.toml is invalid, so the previous settings stay in effect: \($0)" },
+            !fontName.isEmpty && Typography.installedFamily(named: fontName) == nil
+                ? "Font “\(fontName)” is not installed, so the system font is used." : nil,
+        ].compactMap { $0 }
+        return problems.isEmpty ? nil : problems.joined(separator: " ")
     }
 }

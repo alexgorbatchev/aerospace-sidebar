@@ -14,7 +14,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     public private(set) var monitor: NotificationCenterMonitor?
     private var server: ControlServer?
     private var pruneTimer: Timer?
-    private let makeController: @MainActor (SidebarModel, _ openSettings: @escaping @MainActor () -> Void) -> SidebarPanelController
+    private let makeController: @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor () -> Void) -> SidebarPanelController
     private let makeMonitor: @MainActor (SidebarModel, SettingsStore) -> NotificationCenterMonitor
     private let makeServer: @MainActor (SidebarModel) -> ControlServer
     private let makeSettingsWindow: @MainActor (SettingsStore, _ onAeroSpaceUpdated: @escaping @MainActor () -> Void) -> SettingsWindowController
@@ -27,8 +27,8 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
             environment: ProcessInfo.processInfo.environment
         )),
         makeModel: @MainActor (SidebarSettings) -> SidebarModel = { SidebarModel(store: FileNotificationStore(), history: $0.history) },
-        makeController: @escaping @MainActor (SidebarModel, _ openSettings: @escaping @MainActor () -> Void) -> SidebarPanelController = {
-            SidebarPanelController(model: $0, openSettings: $1)
+        makeController: @escaping @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor () -> Void) -> SidebarPanelController = {
+            SidebarPanelController(model: $0, settings: $1, openSettings: $2)
         },
         makeMonitor: @escaping @MainActor (SidebarModel, SettingsStore) -> NotificationCenterMonitor = { SidebarAppDelegate.makeMonitor(model: $0, settings: $1) },
         makeServer: @escaping @MainActor (SidebarModel) -> ControlServer = { SidebarAppDelegate.makeServer(model: $0) },
@@ -45,7 +45,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
-        let controller = makeController(model) { [weak self] in self?.showSettings() }
+        let controller = makeController(model, settings) { [weak self] in self?.showSettings() }
         controller.pin()
         self.controller = controller
 

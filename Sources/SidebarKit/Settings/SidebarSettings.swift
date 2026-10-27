@@ -10,6 +10,10 @@ import Foundation
 /// [history]
 /// retention_hours = 24
 /// max_count = 200
+///
+/// [font]
+/// name = "Menlo"
+/// size = 13
 /// ```
 public struct SidebarSettings: Codable, Equatable, Sendable {
     public struct Notifications: Codable, Equatable, Sendable {
@@ -78,17 +82,49 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
         public var retention: TimeInterval { TimeInterval(retentionHours) * 3600 }
     }
 
+    /// The font of every text in the sidebar and Settings.
+    public struct Font: Codable, Equatable, Sendable {
+        public static let sizeRange: ClosedRange<Double> = 8...32
+        /// macOS's body text size.
+        public static let defaultSize: Double = 13
+
+        /// Font family as Font Book lists it; empty means the system font.
+        public var name = ""
+        /// Body text size in points; every other text size scales with it.
+        public var size = defaultSize
+
+        public init(name: String = "", size: Double = defaultSize) {
+            self.name = name
+            self.size = size
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+            size = try container.decodeIfPresent(Double.self, forKey: .size) ?? Self.defaultSize
+            guard Self.sizeRange.contains(size) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .size, in: container,
+                    debugDescription: "size must be between \(Self.sizeRange.lowerBound.formatted()) and \(Self.sizeRange.upperBound.formatted())"
+                )
+            }
+        }
+    }
+
     public var notifications = Notifications()
     public var history = History()
+    public var font = Font()
 
-    public init(notifications: Notifications = Notifications(), history: History = History()) {
+    public init(notifications: Notifications = Notifications(), history: History = History(), font: Font = Font()) {
         self.notifications = notifications
         self.history = history
+        self.font = font
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         notifications = try container.decodeIfPresent(Notifications.self, forKey: .notifications) ?? Notifications()
         history = try container.decodeIfPresent(History.self, forKey: .history) ?? History()
+        font = try container.decodeIfPresent(Font.self, forKey: .font) ?? Font()
     }
 }

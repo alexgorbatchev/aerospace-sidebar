@@ -11,6 +11,7 @@ struct SidebarView: View {
     static let motion: Animation = .snappy
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.typography) private var typography
     @State private var scrollPosition = ScrollPosition(edge: .top)
     @State private var scrollMetrics = ScrollMetrics()
     @State private var isScrolling = false
@@ -20,11 +21,11 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Notifications")
-                    .font(.headline)
+                    .font(typography.font(.headline))
                     .lineLimit(1)
                 Spacer()
                 if !model.notifications.isEmpty {
-                    Button("Clear All", action: model.clear)
+                    Button("Clear All", font: typography.font(.body), action: model.clear)
                         .buttonStyle(.link)
                 }
             }
@@ -32,10 +33,10 @@ struct SidebarView: View {
             if let message = statusMessage {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(message)
-                        .font(.callout)
+                        .font(typography.font(.callout))
                         .foregroundStyle(.secondary)
                     if model.interception == .needsAccessibility {
-                        Button("Set Up…", action: openSettings)
+                        Button("Set Up…", font: typography.font(.body), action: openSettings)
                     }
                 }
                 .padding(.horizontal, Self.margin)
@@ -76,10 +77,10 @@ struct SidebarView: View {
                 }
             }
             HStack {
-                Button("Settings…", action: openSettings)
+                Button("Settings…", font: typography.font(.body), action: openSettings)
                     .keyboardShortcut(",", modifiers: .command)
                 Spacer()
-                Button("Quit Sidebar", action: quit)
+                Button("Quit Sidebar", font: typography.font(.body), action: quit)
                     .keyboardShortcut("q", modifiers: .command)
             }
             .padding(.horizontal, Self.margin)
@@ -139,6 +140,7 @@ struct NotificationCard: View {
     static let restingOpacity = 0.8
     static let hoverScale: CGFloat = 1.02
 
+    @Environment(\.typography) private var typography
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -185,20 +187,20 @@ struct NotificationCard: View {
                                 .accessibilityLabel("Received \(notification.occurrences) times")
                         }
                     }
-                    .font(.caption)
+                    .font(typography.font(.caption1))
                     .foregroundStyle(.secondary)
                     if !notification.title.isEmpty {
-                        Text(notification.title).font(.body.bold())
+                        Text(notification.title).font(typography.font(.body).bold())
                     }
                     if !notification.subtitle.isEmpty {
-                        Text(notification.subtitle).font(.callout)
+                        Text(notification.subtitle).font(typography.font(.callout))
                     }
                     if !notification.body.isEmpty {
-                        Text(notification.body).font(.callout).lineLimit(8)
+                        Text(notification.body).font(typography.font(.callout)).lineLimit(8)
                     }
                     if notification.shownByMacOS {
                         Text("Shown by macOS for its buttons")
-                            .font(.caption2)
+                            .font(typography.font(.caption2))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -224,7 +226,7 @@ struct NotificationCard: View {
 
             Button(action: dismiss) {
                 Image(systemName: "xmark")
-                    .font(.caption)
+                    .font(typography.font(.caption1))
             }
             .buttonStyle(.borderless)
             .opacity(contentOpacity)

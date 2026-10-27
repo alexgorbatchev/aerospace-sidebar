@@ -14,14 +14,20 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     public let tabs: NSTabViewController
     let editor: SettingsEditor
     private let onboarding: OnboardingModel
+    private let fontChooser: FontChooser
 
     /// - Parameter reveal: Shows a file in Finder.
-    public init(
+    public convenience init(
         store: SettingsStore,
         onboarding: OnboardingModel,
         reveal: @escaping (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
     ) {
+        self.init(store: store, onboarding: onboarding, fontChooser: FontChooser(), reveal: reveal)
+    }
+
+    init(store: SettingsStore, onboarding: OnboardingModel, fontChooser: FontChooser, reveal: @escaping (URL) -> Void) {
         self.onboarding = onboarding
+        self.fontChooser = fontChooser
         editor = SettingsEditor(store: store)
         tabs = NSTabViewController()
         window = NSPanel(
@@ -32,16 +38,22 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         )
         super.init()
 
-        let close: () -> Void = { [weak self] in self?.window.orderOut(nil) }
+        let close: () -> Void = { [weak self] in
+            self?.window.orderOut(nil)
+            self?.fontChooser.close()
+        }
         tabs.tabStyle = .toolbar
         tabs.transitionOptions = []
         tabs.addTabViewItem(Self.item(
             "Setup", symbol: "checklist",
-            SetupPane(onboarding: onboarding, editor: editor, close: close)
+            SetupPane(onboarding: onboarding, editor: editor, close: close).typography(store)
         ))
         tabs.addTabViewItem(Self.item(
             "General", symbol: "gearshape",
-            GeneralPane(editor: editor, configURL: store.file.url, reveal: reveal, close: close)
+            GeneralPane(
+                editor: editor, configURL: store.file.url, reveal: reveal,
+                chooseFont: { [weak self] in self?.chooseFont() }, close: close
+            ).typography(store)
         ))
 
         window.title = "Settings"
@@ -52,6 +64,9 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.hidesOnDeactivate = false
         window.delegate = self
         sizeToLargestPane()
+        window.center()
+        // Text sizes follow the font, previewed or saved, so the panes grow and shrink with it.
+        store.observeFont { [weak self] _ in self?.sizeToLargestPane() }
     }
 
     /// Opens on the Setup tab with a fresh draft and status.
@@ -66,18 +81,30 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// Closing the window discards unsaved edits, like Cancel.
     public func windowWillClose(_ notification: Notification) {
         editor.revert()
+        fontChooser.close()
     }
 
-    /// Every pane gets the size of the largest one, so switching tabs never resizes the window.
+    /// Fonts picked in the font panel go into the draft, like any other edit.
+    func chooseFont() {
+        fontChooser.choose(editor.draft.font, beside: window) { [editor] in editor.draft.font = $0 }
+    }
+
+    /// Every pane gets the size of the largest one, so switching tabs never resizes the window. The
+    /// window keeps its top edge in place.
     private func sizeToLargestPane() {
-        let sizes = tabs.tabViewItems.compactMap { $0.viewController?.view.fittingSize }
+        let sizes = tabs.tabViewItems.compactMap(\.viewController?.view).map { view in
+            // A layout pass applies pending SwiftUI updates, such as a font change, before measuring.
+            view.layoutSubtreeIfNeeded()
+            return view.intrinsicContentSize
+        }
         let size = NSSize(width: sizes.map(\.width).max() ?? 0, height: sizes.map(\.height).max() ?? 0)
         for item in tabs.tabViewItems {
             item.viewController?.preferredContentSize = size
         }
+        let top = window.frame.maxY
         window.setContentSize(size)
+        window.setFrameTopLeftPoint(NSPoint(x: window.frame.minX, y: top))
         window.contentMinSize = size
-        window.center()
     }
 
     private static func item(_ label: String, symbol: String, _ view: some View) -> NSTabViewItem {

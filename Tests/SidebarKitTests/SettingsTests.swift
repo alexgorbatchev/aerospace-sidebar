@@ -22,7 +22,8 @@ struct SettingsFileTests {
         let file = SettingsFile(url: directory.url.appendingPathComponent("nested/config.toml"))
         let settings = SidebarSettings(
             notifications: .init(replaceSystem: false, appsLeftToMacOS: ["zoom.us", "Calendar"]),
-            history: .init(retentionHours: 48, maxCount: 500)
+            history: .init(retentionHours: 48, maxCount: 500),
+            font: .init(name: "Menlo", size: 14.5)
         )
 
         try file.save(settings)
@@ -31,6 +32,7 @@ struct SettingsFileTests {
         #expect(text.hasPrefix(SettingsFile.header))
         #expect(text.contains("[history]"))
         #expect(text.contains("retention_hours = 48"))
+        #expect(text.contains("[font]") && text.contains("name = \"Menlo\""))
         #expect(text.contains("apps_left_to_macos = [") && text.contains("\"zoom.us\""))
         #expect(try file.load() == settings)
     }
@@ -45,9 +47,19 @@ struct SettingsFileTests {
         #expect(settings.notifications.replaceSystem)
     }
 
+    @Test func fontSizeAcceptsIntegers() throws {
+        let directory = try TemporaryDirectory()
+        try directory.write("[font]\nsize = 16\n", to: "config.toml")
+
+        let settings = try SettingsFile(url: directory.url.appendingPathComponent("config.toml")).load()
+
+        #expect(settings.font == SidebarSettings.Font(name: "", size: 16))
+    }
+
     @Test(arguments: [
         ("[history]\nretention_hours = 0\n", "retention_hours must be between 1 and 720"),
         ("[history]\nmax_count = 5\n", "max_count must be between 10 and 2000"),
+        ("[font]\nsize = 4\n", "font.size: size must be between 8 and 32"),
         ("[notifications]\nreplace_system = \"yes\"\n", "notifications.replace_system"),
     ])
     func rejectsInvalidValues(toml: String, fragment: String) throws {
@@ -77,6 +89,36 @@ struct SettingsStoreTests {
     init() throws {
         directory = try TemporaryDirectory()
         file = SettingsFile(url: directory.url.appendingPathComponent("config.toml"))
+    }
+
+    @Test func fontPreviewShowsUntilClearedWithoutWritingTheFile() throws {
+        let store = SettingsStore(file: file)
+        var fonts: [SidebarSettings.Font] = []
+        store.observeFont { fonts.append($0) }
+        let menlo = SidebarSettings.Font(name: "Menlo", size: 16)
+
+        store.preview(font: menlo)
+        store.preview(font: menlo)
+        store.update { $0.history.maxCount = 300 }
+
+        #expect(store.font == menlo)
+        #expect(store.settings.font == SidebarSettings.Font())
+        #expect(!(try String(contentsOf: file.url, encoding: .utf8)).contains("Menlo"))
+
+        store.preview(font: nil)
+
+        #expect(store.font == SidebarSettings.Font())
+        #expect(fonts == [menlo, SidebarSettings.Font()])
+    }
+
+    @Test func savedFontChangesNotifyFontObservers() {
+        let store = SettingsStore(file: file)
+        var fonts: [SidebarSettings.Font] = []
+        store.observeFont { fonts.append($0) }
+
+        store.update { $0.font.size = 15 }
+
+        #expect(fonts == [SidebarSettings.Font(size: 15)])
     }
 
     @Test func updateSavesAndNotifiesObservers() throws {

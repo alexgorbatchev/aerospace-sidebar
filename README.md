@@ -134,9 +134,13 @@ apps_left_to_macos = ["zoom.us"]         # app names whose notifications stay on
 [history]
 retention_hours = 24                     # 1 to 720
 max_count = 200                          # 10 to 2000
+
+[font]
+name = ""                                # font family (Settings › General › Choose… picks one); empty uses the system font
+size = 13                                # 8 to 32; every text size in the sidebar and Settings scales with it
 ```
 
-A missing file or key uses the defaults shown. An invalid file keeps the previous settings, and Settings shows the error.
+A missing file or key uses the defaults shown. An invalid file keeps the previous settings, and Settings shows the error. A font that is not installed falls back to the system font.
 
 # URL Scheme
 

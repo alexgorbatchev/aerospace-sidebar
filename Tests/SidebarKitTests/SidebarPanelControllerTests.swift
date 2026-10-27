@@ -6,13 +6,19 @@ import ViewInspector
 
 @MainActor
 struct SidebarPanelControllerTests {
-    init() {
+    let directory: TemporaryDirectory
+    let settings: SettingsStore
+
+    init() throws {
         _ = NSApplication.shared
+        directory = try TemporaryDirectory()
+        settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
     }
 
     @Test func pinShowsPanelOnReservedStrip() {
         let controller = SidebarPanelController(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
+            settings: settings,
             layout: { SidebarLayout(width: 240) },
             targetVisibleFrame: { CGRect(x: 0, y: 40, width: 1440, height: 860) },
             notificationCenter: NotificationCenter()
@@ -28,6 +34,7 @@ struct SidebarPanelControllerTests {
         var visibleFrame: CGRect? = CGRect(x: 0, y: 0, width: 1440, height: 900)
         let controller = SidebarPanelController(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
+            settings: settings,
             targetVisibleFrame: { visibleFrame },
             notificationCenter: NotificationCenter()
         )
@@ -44,6 +51,7 @@ struct SidebarPanelControllerTests {
         var visibleFrame = CGRect(x: 0, y: 0, width: 1440, height: 900)
         let controller = SidebarPanelController(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
+            settings: settings,
             layout: { SidebarLayout(width: 300) },
             targetVisibleFrame: { visibleFrame },
             notificationCenter: notificationCenter
@@ -59,7 +67,7 @@ struct SidebarPanelControllerTests {
     @Test(.enabled(if: !NSScreen.screens.isEmpty, "requires a display"))
     func defaultControllerPinsToPrimaryScreen() throws {
         let primary = try #require(NSScreen.screens.first)
-        let controller = SidebarPanelController(model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()), notificationCenter: NotificationCenter())
+        let controller = SidebarPanelController(model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()), settings: settings, notificationCenter: NotificationCenter())
 
         controller.pin()
 
@@ -70,7 +78,7 @@ struct SidebarPanelControllerTests {
     /// AeroSpace treats windows of accessory apps without a close button as popups,
     /// which keeps the sidebar out of tiling and workspace hiding.
     @Test func panelStaysOutOfAeroSpaceManagement() {
-        let panel = SidebarPanelController(model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()), notificationCenter: NotificationCenter()).panel
+        let panel = SidebarPanelController(model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()), settings: settings, notificationCenter: NotificationCenter()).panel
 
         #expect(panel.standardWindowButton(.closeButton) == nil)
         #expect(panel.collectionBehavior.contains(.canJoinAllSpaces))
@@ -80,6 +88,7 @@ struct SidebarPanelControllerTests {
     @Test func panelAcceptsKeyboardFocus() {
         let controller = SidebarPanelController(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
+            settings: settings,
             targetVisibleFrame: { CGRect(x: 0, y: 0, width: 1440, height: 900) },
             notificationCenter: NotificationCenter()
         )
@@ -95,14 +104,17 @@ struct SidebarPanelControllerTests {
         var terminateCalls = 0
         let controller = SidebarPanelController(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
+            settings: settings,
             targetVisibleFrame: { CGRect(x: 0, y: 0, width: 1440, height: 900) },
             notificationCenter: NotificationCenter(),
             terminate: { _ in terminateCalls += 1 }
         )
         controller.pin()
-        let hostingView = try #require(controller.panel.contentView?.subviews.first as? NSHostingView<SidebarView>)
+        let hostingView = try #require(
+            controller.panel.contentView?.subviews.first as? NSHostingView<ModifiedContent<SidebarView, TypographyModifier>>
+        )
 
-        try hostingView.rootView.inspect().find(button: "Quit Sidebar").tap()
+        try hostingView.rootView.content.inspect().find(button: "Quit Sidebar").tap()
 
         #expect(terminateCalls == 1)
     }
@@ -110,6 +122,7 @@ struct SidebarPanelControllerTests {
     @Test func rendersContentInsidePanel() throws {
         let controller = SidebarPanelController(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
+            settings: settings,
             targetVisibleFrame: { CGRect(x: 0, y: 0, width: 1440, height: 900) },
             notificationCenter: NotificationCenter()
         )

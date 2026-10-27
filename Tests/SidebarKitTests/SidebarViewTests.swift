@@ -209,6 +209,22 @@ struct SidebarViewTests {
         #expect(throws: (any Error).self) { try view().inspect().find(text: "macOS notifications cannot be read right now.") }
     }
 
+    @Test func textUsesFontSettings() throws {
+        let typography = Typography(SidebarSettings.Font(name: "Menlo", size: 20))
+        model.add(SidebarNotification(source: "ci", title: "Build done", subtitle: "main", body: "All green", shownByMacOS: true))
+
+        let sut = try view().environment(\.typography, typography).inspect()
+
+        #expect(try sut.find(text: "Notifications").attributes().font() == typography.font(.headline))
+        #expect(try sut.find(text: "Build done").attributes().font() == typography.font(.body).bold())
+        #expect(try sut.find(text: "main").attributes().font() == typography.font(.callout))
+        #expect(try sut.find(text: "All green").attributes().font() == typography.font(.callout))
+        #expect(try sut.find(text: "Shown by macOS for its buttons").attributes().font() == typography.font(.caption2))
+        for title in ["Clear All", "Settings…", "Quit Sidebar"] {
+            #expect(try sut.find(button: title).labelView().text().attributes().font() == typography.font(.body))
+        }
+    }
+
     @Test func quitButtonQuits() throws {
         var quits = 0
 

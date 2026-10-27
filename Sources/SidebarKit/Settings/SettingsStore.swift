@@ -15,9 +15,12 @@ public final class SettingsStore {
     public private(set) var settings: SidebarSettings
     public private(set) var loadError: String?
     public private(set) var saveError: String?
+    /// A font shown in place of the saved one while Settings edits it; never written to `config.toml`.
+    public private(set) var fontPreview: SidebarSettings.Font?
     public let file: SettingsFile
 
     @ObservationIgnored private var onChange: [@MainActor (SidebarSettings) -> Void] = []
+    @ObservationIgnored private var onFontChange: [@MainActor (SidebarSettings.Font) -> Void] = []
     @ObservationIgnored private var watcher: (any DispatchSourceFileSystemObject)?
 
     public init(file: SettingsFile) {
@@ -34,6 +37,21 @@ public final class SettingsStore {
     public func observe(_ observer: @escaping @MainActor (SidebarSettings) -> Void) {
         onChange.append(observer)
         observer(settings)
+    }
+
+    /// The font to render: the preview while there is one, otherwise the saved font.
+    public var font: SidebarSettings.Font { fontPreview ?? settings.font }
+
+    /// Calls `observer` whenever `font` changes, by a preview or by the settings.
+    public func observeFont(_ observer: @escaping @MainActor (SidebarSettings.Font) -> Void) {
+        onFontChange.append(observer)
+    }
+
+    /// Shows `font` instead of the saved font until `nil` ends the preview.
+    public func preview(font: SidebarSettings.Font?) {
+        let before = self.font
+        fontPreview = font
+        notifyIfFontChanged(from: before)
     }
 
     /// Changes settings and writes `config.toml`.
@@ -85,8 +103,16 @@ public final class SettingsStore {
 
     private func apply(_ updated: SidebarSettings) {
         guard updated != settings else { return }
+        let font = self.font
         settings = updated
         onChange.forEach { $0(updated) }
+        notifyIfFontChanged(from: font)
+    }
+
+    private func notifyIfFontChanged(from before: SidebarSettings.Font) {
+        let font = self.font
+        guard font != before else { return }
+        onFontChange.forEach { $0(font) }
     }
 
     static func describe(_ error: Error) -> String {
