@@ -1,0 +1,13 @@
+[
+  {
+    "author": {
+      "name": "Alex Gorbatchev",
+      "email": "alex.gorbatchev@gmail.com"
+    },
+    "timestamp": 1793135567,
+    "op": "CreateTask",
+    "title": "tests are disrupting macos desktop",
+    "kind": "task",
+    "description": "currently impossible to use my laptop while agents are working in the repo"
+  }
+]
