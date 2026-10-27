@@ -59,8 +59,10 @@ final class FontChooser: NSObject, NSFontChanging {
         return NSRect(origin: NSPoint(x: x, y: y), size: size)
     }
 
-    /// Hides the panel and stops reporting picks.
+    /// Hides the panel and stops reporting picks. The panel is shared by the whole app, so a chooser that is not
+    /// showing it leaves it alone.
     func close() {
+        guard onChoose != nil else { return }
         if manager.target === self {
             manager.target = nil
         }

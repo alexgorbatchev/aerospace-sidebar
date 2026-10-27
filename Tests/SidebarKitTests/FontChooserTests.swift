@@ -136,6 +136,24 @@ struct FontChooserTests {
         #expect(!panel.isVisible)
     }
 
+    /// The font panel is shared by the whole app, so a chooser that never showed it, such as one in a Settings window
+    /// closing without its font picked, leaves it alone.
+    @Test func closingLeavesThePanelOfAnotherChooserShowing() {
+        let showing = chooser(picking: .systemFont(ofSize: 14))
+        let idle = chooser(picking: .systemFont(ofSize: 14))
+        var picks = 0
+        showing.choose(SidebarSettings.Font(), beside: window) { _ in picks += 1 }
+
+        idle.close()
+        showing.changeFont(NSFontManager.shared)
+
+        #expect(panel.isVisible)
+        #expect(NSFontManager.shared.target === showing)
+        #expect(picks == 1)
+        showing.close()
+        #expect(!panel.isVisible)
+    }
+
     @Test func offersOnlyModesThatMapToSettings() {
         #expect(chooser(picking: .systemFont(ofSize: 13)).validModesForFontPanel(NSFontPanel.shared) == [.collection, .face, .size])
     }
