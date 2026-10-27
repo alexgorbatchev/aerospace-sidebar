@@ -61,8 +61,9 @@ struct PressSequenceTests {
 
 /// Clicks a hosted button with real mouse events, so its gesture, state and animation completions run.
 @MainActor
+@Suite(.leavesDesktopAlone)
 struct PressableButtonTests {
-    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.borderless], backing: .buffered, defer: false)
+    let window = TestPanel(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.borderless], backing: .buffered, defer: false)
 
     func host(action: @escaping () -> Void) {
         let button = Button(action: action) { Color.gray.frame(width: 200, height: 100) }

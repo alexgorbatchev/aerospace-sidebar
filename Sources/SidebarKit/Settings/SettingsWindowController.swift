@@ -37,12 +37,15 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         )
     }
 
+    /// - Parameter panelType: The window's class. Tests pass one that never takes keyboard focus: a titled
+    ///   panel becomes key when it is ordered in, which moves the user's keyboard focus to the test process.
     init(
         store: SettingsStore,
         onboarding: OnboardingModel,
         aeroSpace: AeroSpaceSync,
         fontChooser: FontChooser,
         workspaceCenter: NotificationCenter,
+        panelType: NSPanel.Type = NSPanel.self,
         reveal: @escaping (URL) -> Void,
         terminate: @escaping @MainActor (Any?) -> Void = NSApplication.shared.terminate
     ) {
@@ -53,7 +56,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         self.workspaceCenter = workspaceCenter
         editor = SettingsEditor(store: store)
         tabs = SettingsTabsController()
-        window = NSPanel(
+        window = panelType.init(
             contentRect: .zero,
             styleMask: [.titled, .closable, .miniaturizable, .nonactivatingPanel],
             backing: .buffered,

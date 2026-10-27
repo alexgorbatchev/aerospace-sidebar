@@ -5,6 +5,7 @@ import Testing
 import ViewInspector
 
 @MainActor
+@Suite(.leavesDesktopAlone)
 struct SidebarPanelControllerTests {
     let directory: TemporaryDirectory
     let settings: SettingsStore
@@ -17,7 +18,7 @@ struct SidebarPanelControllerTests {
 
     @Test func pinShowsPanelOnConfiguredStrip() {
         settings.update { $0.sidebar.width = 240 }
-        let controller = SidebarPanelController(
+        let controller = SidebarPanelController.forTesting(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
             settings: settings,
             targetVisibleFrame: { CGRect(x: 0, y: 40, width: 1440, height: 860) },
@@ -31,7 +32,7 @@ struct SidebarPanelControllerTests {
     }
 
     @Test func repinsWhenSideOrWidthChanges() {
-        let controller = SidebarPanelController(
+        let controller = SidebarPanelController.forTesting(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
             settings: settings,
             targetVisibleFrame: { CGRect(x: 0, y: 40, width: 1440, height: 860) },
@@ -46,7 +47,7 @@ struct SidebarPanelControllerTests {
     }
 
     @Test func otherSettingsLeaveTheHiddenPanelAlone() {
-        let controller = SidebarPanelController(
+        let controller = SidebarPanelController.forTesting(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
             settings: settings,
             targetVisibleFrame: { CGRect(x: 0, y: 40, width: 1440, height: 860) },
@@ -60,7 +61,7 @@ struct SidebarPanelControllerTests {
 
     @Test func pinHidesPanelWhenTargetScreenIsGone() {
         var visibleFrame: CGRect? = CGRect(x: 0, y: 0, width: 1440, height: 900)
-        let controller = SidebarPanelController(
+        let controller = SidebarPanelController.forTesting(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
             settings: settings,
             targetVisibleFrame: { visibleFrame },
@@ -77,7 +78,7 @@ struct SidebarPanelControllerTests {
     @Test func repinsWhenScreenParametersChange() {
         let notificationCenter = NotificationCenter()
         var visibleFrame = CGRect(x: 0, y: 0, width: 1440, height: 900)
-        let controller = SidebarPanelController(
+        let controller = SidebarPanelController.forTesting(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
             settings: settings,
             targetVisibleFrame: { visibleFrame },
@@ -94,7 +95,7 @@ struct SidebarPanelControllerTests {
     @Test(.enabled(if: !NSScreen.screens.isEmpty, "requires a display"))
     func defaultControllerPinsToPrimaryScreen() throws {
         let primary = try #require(NSScreen.screens.first)
-        let controller = SidebarPanelController(model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()), settings: settings, notificationCenter: NotificationCenter())
+        let controller = SidebarPanelController.forTesting(model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()), settings: settings, notificationCenter: NotificationCenter())
 
         controller.pin()
 
@@ -105,7 +106,7 @@ struct SidebarPanelControllerTests {
     /// AeroSpace treats windows of accessory apps without a close button as popups,
     /// which keeps the sidebar out of tiling and workspace hiding.
     @Test func panelStaysOutOfAeroSpaceManagement() {
-        let panel = SidebarPanelController(model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()), settings: settings, notificationCenter: NotificationCenter()).panel
+        let panel = SidebarPanelController.forTesting(model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()), settings: settings, notificationCenter: NotificationCenter()).panel
 
         #expect(panel.standardWindowButton(.closeButton) == nil)
         #expect(panel.collectionBehavior.contains(.canJoinAllSpaces))
@@ -113,7 +114,7 @@ struct SidebarPanelControllerTests {
     }
 
     @Test func panelAcceptsKeyboardFocus() {
-        let controller = SidebarPanelController(
+        let controller = SidebarPanelController.forTesting(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
             settings: settings,
             targetVisibleFrame: { CGRect(x: 0, y: 0, width: 1440, height: 900) },
@@ -121,14 +122,14 @@ struct SidebarPanelControllerTests {
         )
         controller.pin()
 
-        // Borderless windows refuse key status unless the panel overrides it. Asserting
-        // `isKeyWindow` races with other tests that make their own windows key.
+        // Borderless windows refuse key status unless the panel overrides it. Making the panel key
+        // to assert `isKeyWindow` would take the user's keyboard focus from the frontmost app.
         #expect(controller.panel.canBecomeKey)
         #expect(controller.panel.styleMask.contains(.nonactivatingPanel))
     }
 
     @Test func rendersContentInsidePanel() throws {
-        let controller = SidebarPanelController(
+        let controller = SidebarPanelController.forTesting(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
             settings: settings,
             targetVisibleFrame: { CGRect(x: 0, y: 0, width: 1440, height: 900) },
@@ -148,8 +149,11 @@ struct SidebarPanelControllerTests {
     func transparentListAreaRetainsMouseEvents() async throws {
         let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
         model.add(SidebarNotification(source: "test", title: "One card"))
+        // Not `forTesting`: the window server skips transparent windows, so this panel shows on screen
+        // briefly. Borderless and never made key, it leaves the user's keyboard focus alone.
         let controller = SidebarPanelController(model: model, settings: settings, notificationCenter: NotificationCenter())
         let panel = controller.panel
+        panel.identifier = .windowServerProbe
         let screen = try #require(NSScreen.screens.first)
         panel.setFrame(CGRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.minY, width: 300, height: 600), display: true)
         panel.level = .popUpMenu

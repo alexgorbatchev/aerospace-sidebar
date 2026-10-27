@@ -146,6 +146,7 @@ struct SettingsEditorTests {
 }
 
 @MainActor
+@Suite(.leavesDesktopAlone)
 struct SettingsPaneTests {
     let directory: TemporaryDirectory
     let store: SettingsStore
@@ -425,12 +426,13 @@ struct SettingsPaneTests {
 }
 
 @MainActor
+@Suite(.leavesDesktopAlone)
 struct SettingsWindowControllerTests {
     @Test func opensOnSetupTabInFrontWithoutActivatingTheApp() throws {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
-        let controller = SettingsWindowController(store: store, onboarding: .fake(), aeroSpace: .fake(store: store, home: directory.url), reveal: { _ in })
+        let controller = SettingsWindowController.forTesting(store: store, aeroSpace: .fake(store: store, home: directory.url))
         controller.tabs.selectedTabViewItemIndex = 1
         controller.editor.draft.history.maxCount = 999
 
@@ -457,7 +459,7 @@ struct SettingsWindowControllerTests {
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
         var terminateCalls = 0
-        let controller = SettingsWindowController(store: store, onboarding: .fake(), aeroSpace: .fake(store: store, home: directory.url), reveal: { _ in }, terminate: { _ in terminateCalls += 1 })
+        let controller = SettingsWindowController.forTesting(store: store, aeroSpace: .fake(store: store, home: directory.url), terminate: { _ in terminateCalls += 1 })
         let general = try #require(
             controller.tabs.tabViewItems[1].viewController as? NSHostingController<ModifiedContent<GeneralPane, TypographyModifier>>
         )
@@ -474,10 +476,7 @@ struct SettingsWindowControllerTests {
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
         let workspaceCenter = NotificationCenter()
-        let controller = SettingsWindowController(
-            store: store, onboarding: .fake(), aeroSpace: .fake(store: store, home: directory.url),
-            fontChooser: FontChooser(), workspaceCenter: workspaceCenter, reveal: { _ in }
-        )
+        let controller = SettingsWindowController.forTesting(store: store, aeroSpace: .fake(store: store, home: directory.url), workspaceCenter: workspaceCenter)
         controller.follow(frontmostApp: SettingsWindowController.systemSettingsBundleID)
         #expect(!controller.window.isFloatingPanel)
         controller.show()
@@ -497,9 +496,9 @@ struct SettingsWindowControllerTests {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
+        let panel = TestPanel(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
         let picked = try #require(NSFont(name: "Menlo-Regular", size: 16))
-        let controller = SettingsWindowController(store: store, onboarding: .fake(), aeroSpace: .fake(store: store, home: directory.url), fontChooser: FontChooser(panel: { panel }, convert: { _ in picked }), workspaceCenter: NotificationCenter(), reveal: { _ in })
+        let controller = SettingsWindowController.forTesting(store: store, aeroSpace: .fake(store: store, home: directory.url), fontChooser: FontChooser(panel: { panel }, convert: { _ in picked }))
         controller.show()
 
         controller.chooseFont()
@@ -516,7 +515,7 @@ struct SettingsWindowControllerTests {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
-        let controller = SettingsWindowController(store: store, onboarding: .fake(), aeroSpace: .fake(store: store, home: directory.url), reveal: { _ in })
+        let controller = SettingsWindowController.forTesting(store: store, aeroSpace: .fake(store: store, home: directory.url))
         controller.show()
         let setup = controller.window.frame
 
@@ -535,7 +534,7 @@ struct SettingsWindowControllerTests {
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
         let aeroSpace = AeroSpaceSync.fake(store: store, home: directory.url)
-        let controller = SettingsWindowController(store: store, onboarding: .fake(), aeroSpace: aeroSpace, reveal: { _ in })
+        let controller = SettingsWindowController.forTesting(store: store, aeroSpace: aeroSpace)
         controller.show()
         let before = controller.window.frame
 
@@ -555,7 +554,7 @@ struct SettingsWindowControllerTests {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
-        let controller = SettingsWindowController(store: store, onboarding: .fake(), aeroSpace: .fake(store: store, home: directory.url), reveal: { _ in })
+        let controller = SettingsWindowController.forTesting(store: store, aeroSpace: .fake(store: store, home: directory.url))
         controller.show()
         let before = controller.window.frame
 
@@ -571,7 +570,7 @@ struct SettingsWindowControllerTests {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
-        let controller = SettingsWindowController(store: store, onboarding: .fake(), aeroSpace: .fake(store: store, home: directory.url), reveal: { _ in })
+        let controller = SettingsWindowController.forTesting(store: store, aeroSpace: .fake(store: store, home: directory.url))
         let before = controller.window.frame
 
         store.update { $0.font.size = 26 }

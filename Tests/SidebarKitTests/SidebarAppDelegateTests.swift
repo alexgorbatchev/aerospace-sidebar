@@ -4,6 +4,7 @@ import SidebarProtocol
 import Testing
 
 @MainActor
+@Suite(.leavesDesktopAlone)
 struct SidebarAppDelegateTests {
     let directory: TemporaryDirectory
     let settings: SettingsStore
@@ -38,7 +39,7 @@ struct SidebarAppDelegateTests {
             icons: .vendored,
             identities: identities,
             makeController: { model, settings, openSettings in
-                SidebarPanelController(
+                SidebarPanelController.forTesting(
                     model: model,
                     settings: settings,
                     targetVisibleFrame: { CGRect(x: 0, y: 0, width: 1440, height: 900) },
@@ -61,7 +62,7 @@ struct SidebarAppDelegateTests {
             makeDatabaseMonitor: makeDatabaseMonitor,
             makeServer: { SidebarAppDelegate.makeServer(model: $0, icons: $1, path: socketPath) },
             makeAeroSpaceSync: makeAeroSpaceSync,
-            makeSettingsWindow: { SettingsWindowController(store: $0, onboarding: .fake(), aeroSpace: $1, reveal: { _ in }) },
+            makeSettingsWindow: { SettingsWindowController.forTesting(store: $0, aeroSpace: $1) },
             urlSender: { sender }
         )
     }
