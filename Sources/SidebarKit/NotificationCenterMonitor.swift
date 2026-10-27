@@ -165,6 +165,8 @@ public final class NotificationCenterMonitor {
         }
         SystemNotificationInterceptor.logger.info("Attached to NotificationCenter (pid \(pid, privacy: .public))")
         attachedPID = pid
+        let language = platform.application(ofProcess: pid)?.string("AXPreferredLanguage")
+        interceptor.labels = NotificationCenterLabels.load(language: language)
         interceptor.restore(platform.windows(ofProcess: pid))
         notificationCenterChanged()
         onStatus(.active)

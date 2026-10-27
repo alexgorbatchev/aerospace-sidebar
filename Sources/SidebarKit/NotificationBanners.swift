@@ -36,16 +36,25 @@ public struct BannerContent: Equatable, Sendable {
 ///   `AXNotificationCenterAlert` per notification, next to a heading and "Show Less" and "Clear" buttons.
 ///   `AXNotificationCenterBannerStack` groups entries in the history panel (macos-notification-cli,
 ///   AriSweedler/dotfiles notif-center, SignalLadder, OmniWM).
-/// - The banner's `AXDescription` starts with the posting app's name, followed by ", ". macOS's own
-///   notifications, such as Disk Not Ejected Properly, have no app: their description starts with the title.
-/// - Text elements carry an `AXIdentifier` of `title`, `subtitle` or `body`.
-/// - A plain banner exposes exactly the actions in `plainBannerActions`; notification actions such as
-///   Snooze, Join or Reply appear as additional named actions or as controls inside the banner.
+/// - The `AXDescription` joins the posting app's name, title, subtitle and body with
+///   `NotificationCenterLabels.separator` (vorssaint-utils, SignalLadder). macOS's own notifications, such
+///   as Disk Not Ejected Properly, have no app: their description starts with the title. A description may
+///   lag behind its texts, such as a countdown in the body, so it is not always an exact match.
+/// - Text elements carry an `AXIdentifier` of `title`, `subtitle` or `body`, plus `header` and `date`
+///   for texts that are not part of the content (roycetech/applescript-core, talon-axkit).
+/// - A plain banner exposes only `AXPress` and the localized Show Details, Show and Close actions;
+///   notification actions such as Snooze, Join or Reply appear as additional named actions or as
+///   controls inside the banner. Action buttons carry the identifier `action_button` (agent-desktop), and
+///   hovering an alert adds Close and Show buttons to it (SignalLadder).
 /// - Alert-style notifications (`AXNotificationCenterAlert`) stay on screen until dismissed, like the
 ///   sidebar's own cards. They are judged by their actions and controls like any banner.
 @MainActor
 public enum NotificationBanners {
-    public static let plainBannerActions: Set<String> = ["AXPress", "AXShowMenu", "AXScrollToVisible", "Show Details", "Show", "Close"]
+    /// Accessibility actions every element may offer; the localized ones come from `NotificationCenterLabels`.
+    static let standardActions: Set<String> = ["AXPress", "AXShowMenu", "AXScrollToVisible"]
+    static let actionButtonIdentifier = "action_button"
+    /// Texts that are not part of the content.
+    static let ignoredTextIdentifiers: Set<String> = ["header", "date"]
     static let interactiveRoles: Set<String> = [
         kAXTextFieldRole, kAXTextAreaRole, kAXButtonRole, kAXPopUpButtonRole, kAXMenuButtonRole, kAXCheckBoxRole,
     ]
@@ -98,18 +107,15 @@ public enum NotificationBanners {
         return element.children.contains { contains(identifier: identifier, in: $0, maxDepth: maxDepth - 1) }
     }
 
-    public static func content(of banner: any AccessibilityElement) -> BannerContent {
+    public static func content(of banner: any AccessibilityElement, labels: NotificationCenterLabels = .english) -> BannerContent {
         var content = BannerContent()
-        if let description = banner.string(kAXDescriptionAttribute),
-           let appName = description.components(separatedBy: ", ").first {
-            content.appName = appName
-        }
         var unlabeled: [String] = []
         collectTexts(in: banner) { identifier, value in
             switch identifier {
             case "title": content.title = value
             case "subtitle": content.subtitle = value
             case "body": content.body = value
+            case let identifier? where ignoredTextIdentifiers.contains(identifier): break
             default: unlabeled.append(value)
             }
         }
@@ -123,17 +129,37 @@ public enum NotificationBanners {
                 content.body = value
             }
         }
-        if content.appName == content.title {
-            content.appName = ""
+        if let description = banner.string(kAXDescriptionAttribute) {
+            content.appName = appName(in: description, content: content, labels: labels)
         }
         return content
     }
 
+    /// The app name that starts `description`: whatever precedes the exact title, subtitle and body
+    /// (vorssaint-utils), or else the first part, unless that is the title. Empty for macOS's own
+    /// notifications.
+    static func appName(in description: String, content: BannerContent, labels: NotificationCenterLabels) -> String {
+        var description = description
+        if description.hasSuffix(labels.stackedSuffix) {
+            description.removeLast(labels.stackedSuffix.count)
+        }
+        let texts = [content.title, content.subtitle, content.body].filter { !$0.isEmpty }.joined(separator: labels.separator)
+        if !texts.isEmpty {
+            if description == texts { return "" }
+            if description.hasSuffix(labels.separator + texts) {
+                return String(description.dropLast(labels.separator.count + texts.count))
+            }
+        }
+        let first = description.components(separatedBy: labels.separator).first ?? ""
+        return first == content.title ? "" : first
+    }
+
     /// Whether the notification offers a choice that only macOS can present: an action other than
     /// opening or closing it, a reply field, or a control other than a close, Show or Show Details button.
-    public static func needsInteraction(_ banner: any AccessibilityElement) -> Bool {
-        if banner.actionNames.map(actionName).contains(where: { !plainBannerActions.contains($0) }) { return true }
-        return containsControl(banner)
+    public static func needsInteraction(_ banner: any AccessibilityElement, labels: NotificationCenterLabels = .english) -> Bool {
+        let plainActions = standardActions.union([labels.close, labels.show, labels.showDetails])
+        if banner.actionNames.map(actionName).contains(where: { !plainActions.contains($0) }) { return true }
+        return containsControl(banner, plainActions: plainActions, labels: labels)
     }
 
     /// `AXUIElementCopyActionNames` reports custom actions as "Name:<title>\nTarget:…\nSelector:…".
@@ -142,35 +168,45 @@ public enum NotificationBanners {
         return firstLine.hasPrefix("Name:") ? String(firstLine.dropFirst(5)) : firstLine
     }
 
-    private static func containsControl(_ element: any AccessibilityElement) -> Bool {
+    private static func containsControl(
+        _ element: any AccessibilityElement,
+        plainActions: Set<String>,
+        labels: NotificationCenterLabels
+    ) -> Bool {
         element.children.contains { child in
-            if let role = child.string(kAXRoleAttribute), interactiveRoles.contains(role), !isPlainButton(child) {
+            if child.string(kAXIdentifierAttribute) == actionButtonIdentifier { return true }
+            if let role = child.string(kAXRoleAttribute), interactiveRoles.contains(role),
+               !isPlainButton(child, plainActions: plainActions) {
                 return true
             }
-            return containsControl(child)
+            return containsControl(child, plainActions: plainActions, labels: labels)
         }
     }
 
-    /// A close button, or a button that does what one of `plainBannerActions` does, such as Close or Show.
-    private static func isPlainButton(_ element: any AccessibilityElement) -> Bool {
+    /// A close button, or a button that does what one of the plain actions does, such as Close or Show.
+    private static func isPlainButton(_ element: any AccessibilityElement, plainActions: Set<String>) -> Bool {
         guard element.string(kAXRoleAttribute) == kAXButtonRole else { return false }
         if element.string(kAXSubroleAttribute) == kAXCloseButtonSubrole { return true }
         let name = element.string(kAXTitleAttribute) ?? element.string(kAXDescriptionAttribute)
-        return name.map(plainBannerActions.contains) ?? false
+        return name.map(plainActions.contains) ?? false
     }
 
-    /// Closes the banner with its close action, or by pressing its close button.
+    /// Closes the notification with its localized Close action, or by pressing its close button. An
+    /// action matches by its exact name, not by containing "Close", which an app's own action such as
+    /// "Close Ticket" would; and when two actions or buttons match, nothing is pressed (AnyDoor, MeetingMute).
     @discardableResult
-    public static func dismiss(_ banner: any AccessibilityElement) -> Bool {
-        if let close = banner.actionNames.first(where: { $0.contains("Close") || $0 == "AXCancel" }),
-           banner.perform(close) {
+    public static func dismiss(_ banner: any AccessibilityElement, labels: NotificationCenterLabels = .english) -> Bool {
+        let closeActions = banner.actionNames.filter { actionName($0) == labels.close || $0 == kAXCancelAction }
+        if closeActions.count == 1, banner.perform(closeActions[0]) {
             return true
         }
-        let closeButton = banner.children.first {
+        let closeButtons = banner.children.filter {
             $0.string(kAXRoleAttribute) == kAXButtonRole
-                && ($0.string(kAXSubroleAttribute) == kAXCloseButtonSubrole || $0.string(kAXTitleAttribute) == "Close")
+                && ($0.string(kAXSubroleAttribute) == kAXCloseButtonSubrole
+                    || ($0.string(kAXTitleAttribute) ?? $0.string(kAXDescriptionAttribute)) == labels.close)
         }
-        return closeButton?.perform(kAXPressAction) ?? false
+        guard closeButtons.count == 1 else { return false }
+        return closeButtons[0].perform(kAXPressAction)
     }
 
     private static func collectTexts(in element: any AccessibilityElement, _ visit: (String?, String) -> Void) {

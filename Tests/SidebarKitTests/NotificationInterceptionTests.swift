@@ -85,6 +85,43 @@ struct NotificationBannersTests {
             == BannerContent(appName: "", title: "Disk Not Ejected Properly", body: "Eject “4TB” before disconnecting"))
     }
 
+    @Test func skipsHeaderAndDateTexts() {
+        let banner = FakeElement([kAXDescriptionAttribute: "Mail, Hi, Lunch?"], children: [
+            FakeElement([kAXValueAttribute: "Mail", kAXIdentifierAttribute: "header"]),
+            FakeElement([kAXValueAttribute: "now", kAXIdentifierAttribute: "date"]),
+            FakeElement([kAXValueAttribute: "Hi", kAXIdentifierAttribute: "title"]),
+            FakeElement([kAXValueAttribute: "Lunch?", kAXIdentifierAttribute: "body"]),
+        ])
+
+        #expect(NotificationBanners.content(of: banner) == BannerContent(appName: "Mail", title: "Hi", body: "Lunch?"))
+    }
+
+    @Test(arguments: [
+        // The app name is whatever precedes the exact texts, commas included.
+        ("Acme, Inc., Build, Passed", "Acme, Inc."),
+        // A collapsed stack ends its description with ", stacked".
+        ("Self Service, Build, Passed, stacked", "Self Service"),
+        // macOS's own notifications start with the title.
+        ("Build, Passed", ""),
+        // A description that lags behind the texts falls back to its first part.
+        ("Slack, Build, Pass", "Slack"),
+        ("Build, Pass", ""),
+    ])
+    func readsAppNameFromDescription(description: String, appName: String) {
+        let content = BannerContent(title: "Build", body: "Passed")
+
+        #expect(NotificationBanners.appName(in: description, content: content, labels: .english) == appName)
+    }
+
+    @Test func readsAppNameWithLocalizedSeparator() {
+        var labels = NotificationCenterLabels.english
+        labels.separator = "、"
+        labels.stackedSuffix = "、スタック"
+        let content = BannerContent(title: "Build", body: "Passed")
+
+        #expect(NotificationBanners.appName(in: "Xcode、Build、Passed、スタック", content: content, labels: labels) == "Xcode")
+    }
+
     @Test func unlabeledTextCanFillBody() {
         let banner = FakeElement(children: ["A", "B", "C"].map { FakeElement([kAXValueAttribute: $0]) })
 
@@ -131,6 +168,47 @@ struct NotificationBannersTests {
         banner.childElements.append(FakeElement(children: [FakeElement([kAXRoleAttribute: role])]))
 
         #expect(NotificationBanners.needsInteraction(banner))
+    }
+
+    @Test func judgesActionsInNotificationCentersLanguage() {
+        let labels = NotificationCenterLabels(
+            close: "Schließen", show: "Anzeigen", showDetails: "Details einblenden", separator: ", ", stackedSuffix: ", gestapelt"
+        )
+        let banner = FakeElement.banner()
+        banner.actions = ["AXPress", "Name:Details einblenden\nTarget:0x0\nSelector:(null)", "Name:Schließen\nTarget:0x0\nSelector:(null)"]
+        banner.childElements.append(FakeElement([kAXRoleAttribute: kAXButtonRole, kAXDescriptionAttribute: "Anzeigen"]))
+
+        #expect(!NotificationBanners.needsInteraction(banner, labels: labels))
+        #expect(NotificationBanners.needsInteraction(banner, labels: .english))
+        #expect(NotificationBanners.dismiss(banner, labels: labels))
+        #expect(banner.performed == ["Name:Schließen\nTarget:0x0\nSelector:(null)"])
+    }
+
+    @Test func actionButtonsNeedInteraction() {
+        let banner = FakeElement.banner()
+        banner.childElements.append(FakeElement([kAXIdentifierAttribute: "action_button"]))
+
+        #expect(NotificationBanners.needsInteraction(banner))
+    }
+
+    /// An app's own action that merely contains "Close" is not NotificationCenter's Close, and two actions
+    /// that both look like Close leave the notification alone.
+    @Test func dismissesOnlyWithAnUnambiguousCloseAction() {
+        let ticket = FakeElement(actions: ["Name:Close Ticket\nTarget:0x0\nSelector:(null)"])
+        #expect(!NotificationBanners.dismiss(ticket))
+        #expect(ticket.performed.isEmpty)
+
+        let twice = FakeElement(actions: ["Name:Close\nTarget:0x1\nSelector:(null)", "Name:Close\nTarget:0x2\nSelector:(null)"])
+        #expect(!NotificationBanners.dismiss(twice))
+        #expect(twice.performed.isEmpty)
+
+        let buttons = (0..<2).map { _ in FakeElement([kAXRoleAttribute: kAXButtonRole, kAXDescriptionAttribute: "Close"]) }
+        #expect(!NotificationBanners.dismiss(FakeElement(children: buttons)))
+        #expect(buttons.allSatisfy { $0.performed.isEmpty })
+
+        let described = FakeElement([kAXRoleAttribute: kAXButtonRole, kAXDescriptionAttribute: "Close"])
+        #expect(NotificationBanners.dismiss(FakeElement(children: [described])))
+        #expect(described.performed == [kAXPressAction])
     }
 
     @Test(arguments: [
@@ -208,6 +286,17 @@ struct SystemNotificationInterceptorTests {
         interceptor.process(window: FakeElement.window(FakeElement.banner(id: "")))
         now += SystemNotificationInterceptor.duplicateWindow + 1
         interceptor.process(window: FakeElement.window(FakeElement.banner(id: nil)))
+
+        #expect(received == 2)
+    }
+
+    /// Notifications with different identifiers are different notifications, however alike.
+    @Test func reportsRepeatsThatCarryNewIdentifiers() {
+        var received = 0
+        let interceptor = SystemNotificationInterceptor { _ in received += 1 }
+
+        interceptor.process(window: FakeElement.window(FakeElement.banner(id: "first")))
+        interceptor.process(window: FakeElement.window(FakeElement.banner(id: "second")))
 
         #expect(received == 2)
     }

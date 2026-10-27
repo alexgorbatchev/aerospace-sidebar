@@ -47,6 +47,8 @@ public final class SystemNotificationInterceptor {
     private var seenIdentifiers: [String] = []
     private var recentContent: [(content: BannerContent, at: Date)] = []
     private var expandedStacks: [String: Date] = [:]
+    /// NotificationCenter's words in its current language; set when attaching to it.
+    public var labels = NotificationCenterLabels.english
 
     /// - Parameters:
     ///   - leavesToMacOS: Whether an app's notifications stay native, by app name.
@@ -87,7 +89,7 @@ public final class SystemNotificationInterceptor {
         var keepsNative = false
         var outcome = Outcome.settled
         for item in items {
-            let content = NotificationBanners.content(of: item)
+            let content = NotificationBanners.content(of: item, labels: labels)
             let identifier = item.string(kAXIdentifierAttribute)
             let leftToMacOS = leavesToMacOS(content.appName)
             if NotificationBanners.kind(of: item) == .stack, !leftToMacOS {
@@ -95,7 +97,7 @@ public final class SystemNotificationInterceptor {
                 outcome = .pending
                 continue
             }
-            let shownByMacOS = leftToMacOS || (leavesActionable && NotificationBanners.needsInteraction(item))
+            let shownByMacOS = leftToMacOS || (leavesActionable && NotificationBanners.needsInteraction(item, labels: labels))
             Self.logger.debug("""
                 \(item.string(kAXSubroleAttribute) ?? "?", privacy: .public) \(identifier ?? "-", privacy: .public) \
                 from \(content.appName, privacy: .private): \(shownByMacOS ? "left to macOS" : "intercepted", privacy: .public), \
@@ -104,7 +106,7 @@ public final class SystemNotificationInterceptor {
             if shownByMacOS {
                 keepsNative = true
             } else {
-                if !NotificationBanners.dismiss(item) {
+                if !NotificationBanners.dismiss(item, labels: labels) {
                     Self.logger.debug("No close action on \(identifier ?? "-", privacy: .public)")
                 }
                 outcome = .pending
@@ -166,8 +168,11 @@ public final class SystemNotificationInterceptor {
         ))
     }
 
-    /// NotificationCenter reports the same banner several times while it animates. Banners are
-    /// remembered by `AXIdentifier`, and identical content is ignored for `duplicateWindow` seconds.
+    /// NotificationCenter reports the same notification on every pass while it shows. Each one carries a
+    /// UUID as its `AXIdentifier`, which survives stack expansion and NotificationCenter restarts
+    /// (SignalLadder, Tactile), so notifications are remembered by it. Only a notification without one is
+    /// compared by content, which is ignored when identical within `duplicateWindow` seconds; comparing
+    /// identified ones by content would drop genuine repeats, which `SidebarModel` stacks instead.
     private func isNew(identifier: String?, content: BannerContent) -> Bool {
         guard !content.isEmpty else { return false }
         if let identifier, !identifier.isEmpty {
@@ -176,6 +181,7 @@ public final class SystemNotificationInterceptor {
             if seenIdentifiers.count > Self.maxRememberedBanners {
                 seenIdentifiers.removeFirst()
             }
+            return true
         }
         let time = now()
         recentContent.removeAll { time.timeIntervalSince($0.at) > Self.duplicateWindow }
