@@ -116,6 +116,8 @@ struct GeneralPane: View {
     let reveal: (URL) -> Void
     /// Opens the font panel on the draft font.
     let chooseFont: () -> Void
+    /// Quits the app, which hands notifications back to macOS.
+    let quit: () -> Void
     let close: () -> Void
 
     @Environment(\.typography) private var typography
@@ -174,6 +176,13 @@ struct GeneralPane: View {
                 } accessory: {
                     Button("Show in Finder", font: typography.font(.body)) { reveal(configURL) }
                 }
+
+                SettingsSectionHeader(title: "App")
+                SettingsRow(label: "Sidebar") {
+                    Button("Quit Sidebar", font: typography.font(.body), action: quit)
+                        .keyboardShortcut("q", modifiers: .command)
+                }
+                SettingsHint(text: "Quitting hands notifications back to macOS until the sidebar starts again.")
             }
             SettingsButtonBar(editor: editor, close: close)
         }

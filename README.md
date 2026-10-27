@@ -47,7 +47,7 @@ curl -sSL https://github.com/alexgorbatchev/aerospace-sidebar/releases/latest/do
 
 # Setup
 
-Open `~/Applications/AerospaceSidebar.app`, click **Settings…** at the bottom of the sidebar, and use the **Setup** tab. Each step can also be done by hand:
+Open `~/Applications/AerospaceSidebar.app`, click the gear button at the top of the sidebar, and use the **Setup** tab. Each step can also be done by hand:
 
 - [AeroSpace](https://nikitabobko.github.io/AeroSpace/guide) - Reserves the strip. **Update AeroSpace Config** adds the gap and a floating rule; by hand, add them to `~/.config/aerospace/aerospace.toml` and run `aerospace reload-config`:
   ```toml

@@ -100,25 +100,6 @@ struct SidebarPanelControllerTests {
         #expect(controller.panel.styleMask.contains(.nonactivatingPanel))
     }
 
-    @Test func quitButtonTerminatesApp() throws {
-        var terminateCalls = 0
-        let controller = SidebarPanelController(
-            model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
-            settings: settings,
-            targetVisibleFrame: { CGRect(x: 0, y: 0, width: 1440, height: 900) },
-            notificationCenter: NotificationCenter(),
-            terminate: { _ in terminateCalls += 1 }
-        )
-        controller.pin()
-        let hostingView = try #require(
-            controller.panel.contentView?.subviews.first as? NSHostingView<ModifiedContent<SidebarView, TypographyModifier>>
-        )
-
-        try hostingView.rootView.content.inspect().find(button: "Quit Sidebar").tap()
-
-        #expect(terminateCalls == 1)
-    }
-
     @Test func rendersContentInsidePanel() throws {
         let controller = SidebarPanelController(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
@@ -131,7 +112,8 @@ struct SidebarPanelControllerTests {
 
         contentView.layoutSubtreeIfNeeded()
 
-        #expect(contentView.subviews.count == 1)
-        #expect(contentView.subviews[0].frame == contentView.bounds)
+        // The SwiftUI content fills the panel directly; there is no window background behind it.
+        #expect(contentView is NSHostingView<ModifiedContent<SidebarView, TypographyModifier>>)
+        #expect(contentView.frame.size == controller.panel.frame.size)
     }
 }

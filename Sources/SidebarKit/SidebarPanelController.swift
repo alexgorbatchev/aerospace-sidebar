@@ -18,19 +18,17 @@ public final class SidebarPanelController: NSObject {
     ///   - settings: Supplies the font settings.
     ///   - layout: Resolved on every pin, so screen changes also pick up a changed AeroSpace gap.
     ///   - openSettings: Shows the Settings window.
-    ///   - terminate: Called with `nil` when the user quits from the sidebar.
     public init(
         model: SidebarModel,
         settings: SettingsStore,
         layout: @escaping @MainActor () -> SidebarLayout = { SidebarLayout.fromAeroSpaceConfig() },
         targetVisibleFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenVisibleFrame,
         notificationCenter: NotificationCenter = .default,
-        openSettings: @escaping @MainActor () -> Void = {},
-        terminate: @escaping @MainActor (Any?) -> Void = NSApplication.shared.terminate
+        openSettings: @escaping @MainActor () -> Void = {}
     ) {
         self.layout = layout
         self.targetVisibleFrame = targetVisibleFrame
-        self.panel = Self.makePanel(model: model, settings: settings, openSettings: openSettings, quit: { terminate(nil) })
+        self.panel = Self.makePanel(model: model, settings: settings, openSettings: openSettings)
         super.init()
         notificationCenter.addObserver(
             self,
@@ -57,8 +55,7 @@ public final class SidebarPanelController: NSObject {
     private static func makePanel(
         model: SidebarModel,
         settings: SettingsStore,
-        openSettings: @escaping @MainActor () -> Void,
-        quit: @escaping @MainActor () -> Void
+        openSettings: @escaping @MainActor () -> Void
     ) -> NSPanel {
         // Borderless with no close button: combined with LSUIElement, AeroSpace classifies
         // the window as a popup and neither tiles it nor hides it on workspace switches.
@@ -73,25 +70,14 @@ public final class SidebarPanelController: NSObject {
         panel.hidesOnDeactivate = false
         panel.isMovable = false
         panel.isReleasedWhenClosed = false
+        // The panel itself is invisible: only the cards and buttons inside it draw. A shadow would
+        // outline each of them.
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        panel.hasShadow = false
 
-        let background = NSVisualEffectView()
-        background.material = .sidebar
-        background.blendingMode = .behindWindow
-        // The app never becomes active, so follow-window-state would render it permanently inactive.
-        background.state = .active
-
-        let content = NSHostingView(rootView: SidebarView(model: model, openSettings: openSettings, quit: quit).typography(settings))
-        content.translatesAutoresizingMaskIntoConstraints = false
-        background.addSubview(content)
-        NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: background.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: background.trailingAnchor),
-            content.topAnchor.constraint(equalTo: background.topAnchor),
-            content.bottomAnchor.constraint(equalTo: background.bottomAnchor),
-        ])
-        panel.contentView = background
+        let content = NSHostingView(rootView: SidebarView(model: model, openSettings: openSettings).typography(settings))
+        panel.contentView = content
         return panel
     }
 }

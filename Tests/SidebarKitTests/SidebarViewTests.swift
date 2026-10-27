@@ -14,15 +14,19 @@ struct SidebarViewTests {
         model = SidebarModel(performer: performer, store: InMemoryStore())
     }
 
-    func view(openSettings: @escaping () -> Void = {}, quit: @escaping () -> Void = {}) -> SidebarView {
-        SidebarView(model: model, openSettings: openSettings, quit: quit)
+    func view(openSettings: @escaping () -> Void = {}) -> SidebarView {
+        SidebarView(model: model, openSettings: openSettings)
     }
 
-    @Test func showsEmptyStateWithoutClearAll() throws {
+    func button(_ title: String, in sut: InspectableView<ViewType.ClassifiedView>) throws -> InspectableView<ViewType.Button> {
+        try sut.find(viewWithAccessibilityLabel: title).button()
+    }
+
+    @Test func showsEmptyStateWithClearAllDisabled() throws {
         let sut = try view().inspect()
 
         #expect(throws: Never.self) { try sut.find(text: "No notifications") }
-        #expect(throws: (any Error).self) { try sut.find(button: "Clear All") }
+        #expect(try button("Clear All", in: sut).isDisabled())
     }
 
     @Test func clickingCardRunsActionAndDismisses() throws {
@@ -34,20 +38,42 @@ struct SidebarViewTests {
         #expect(model.notifications.isEmpty)
     }
 
+    func card(_ notification: SidebarNotification, hovered: Bool) -> NotificationCard {
+        NotificationCard(
+            notification: notification,
+            isHovered: hovered,
+            hover: { _ in },
+            activate: { model.activate(notification.id) },
+            dismiss: { model.dismiss(notification.id) }
+        )
+    }
+
     @Test func dismissButtonRemovesWithoutAction() throws {
         model.add(SidebarNotification(source: "cli", title: "Keep quiet", action: .open(URL(string: "https://a.example")!)))
 
-        try view().inspect().find(viewWithAccessibilityLabel: "Dismiss").button().tap()
+        try card(model.notifications[0], hovered: true).inspect().find(viewWithAccessibilityLabel: "Dismiss").button().tap()
 
         #expect(performer.actions.isEmpty)
         #expect(model.notifications.isEmpty)
+    }
+
+    @Test func dismissButtonShowsOnlyWhileTheCardIsHovered() throws {
+        model.add(SidebarNotification(source: "cli", title: "Keep quiet"))
+
+        let sut = try card(model.notifications[0], hovered: false).inspect()
+
+        #expect(try sut.find(ExpandingIconButton.self).opacity() == 0)
+        #expect(throws: (any Error).self) { try sut.find(viewWithAccessibilityLabel: "Dismiss").button().tap() }
+        #expect(model.notifications.count == 1)
     }
 
     @Test func clearAllRemovesEverything() throws {
         model.add(SidebarNotification(source: "a", title: "one"))
         model.add(SidebarNotification(source: "b", title: "two"))
 
-        try view().inspect().find(button: "Clear All").tap()
+        let sut = try view().inspect()
+        #expect(try !button("Clear All", in: sut).isDisabled())
+        try button("Clear All", in: sut).tap()
 
         #expect(model.notifications.isEmpty)
     }
@@ -135,7 +161,7 @@ struct SidebarViewTests {
             let sut = try card(hovered: hovered)
             #expect(opacity { try sut.vStack() } == 1)
             #expect(opacity { try sut.find(text: "t").find(ViewType.VStack.self, relation: .parent) } == 1)
-            #expect(opacity { try sut.find(viewWithAccessibilityLabel: "Dismiss") } == 1)
+            #expect(opacity { try sut.find(ExpandingIconButton.self) } == (hovered ? 1 : 0))
             #expect(try sut.vStack().scaleEffect().width == (hovered ? NotificationCard.hoverScale : 1))
         }
     }
@@ -179,7 +205,7 @@ struct SidebarViewTests {
     @Test func settingsButtonOpensSettings() throws {
         var opened = 0
 
-        try view(openSettings: { opened += 1 }).inspect().find(button: "Settings…").tap()
+        try button("Settings", in: view(openSettings: { opened += 1 }).inspect()).tap()
 
         #expect(opened == 1)
     }
@@ -211,21 +237,35 @@ struct SidebarViewTests {
 
         let sut = try view().environment(\.typography, typography).inspect()
 
-        #expect(try sut.find(text: "Notifications").attributes().font() == typography.font(.headline))
         #expect(try sut.find(text: "Build done").attributes().font() == typography.font(.body).bold())
         #expect(try sut.find(text: "main").attributes().font() == typography.font(.callout))
         #expect(try sut.find(text: "All green").attributes().font() == typography.font(.callout))
         #expect(try sut.find(text: "Shown by macOS for its buttons").attributes().font() == typography.font(.caption2))
-        for title in ["Clear All", "Settings…", "Quit Sidebar"] {
-            #expect(try sut.find(button: title).labelView().text().attributes().font() == typography.font(.body))
+    }
+
+    @Test func iconButtonsTurnWhiteWhilePressed() throws {
+        let style = ExpandingIconButtonStyle(expandsToward: .leading)
+
+        for pressed in [false, true] {
+            let labels = try style.inspect(isPressed: pressed).findAll(ViewType.StyleConfiguration.Label.self)
+            let white = try #require(labels.first { (try? $0.foregroundStyleShapeStyle(Color.self)) == .white })
+            #expect(try white.opacity() == (pressed ? 1 : 0))
         }
     }
 
-    @Test func quitButtonQuits() throws {
-        var quits = 0
+    @Test func iconButtonLabelShowsTitleOnlyWhenExpandedOnTheChosenSide() throws {
+        func label(expanded: Bool, edge: HorizontalEdge) throws -> InspectableView<ViewType.HStack> {
+            try ExpandingLabelStyle(isExpanded: expanded, titleEdge: edge, diameter: 18).inspect().hStack()
+        }
 
-        try view(quit: { quits += 1 }).inspect().find(button: "Quit Sidebar").tap()
-
-        #expect(quits == 1)
+        #expect(throws: (any Error).self) { try label(expanded: false, edge: .leading).find(ViewType.StyleConfiguration.Title.self) }
+        // The stack holds an optional leading title, the icon, then an optional trailing title.
+        let leading = try label(expanded: true, edge: .leading)
+        #expect(throws: Never.self) { try leading.styleConfigurationTitle(0) }
+        #expect(try leading.styleConfigurationIcon(1).fixedFrame().width == 18)
+        #expect(throws: (any Error).self) { try leading.styleConfigurationTitle(2) }
+        let trailing = try label(expanded: true, edge: .trailing)
+        #expect(throws: (any Error).self) { try trailing.styleConfigurationTitle(0) }
+        #expect(throws: Never.self) { try trailing.styleConfigurationTitle(2) }
     }
 }

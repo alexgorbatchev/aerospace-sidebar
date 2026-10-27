@@ -16,16 +16,25 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let onboarding: OnboardingModel
     private let fontChooser: FontChooser
 
-    /// - Parameter reveal: Shows a file in Finder.
+    /// - Parameters:
+    ///   - reveal: Shows a file in Finder.
+    ///   - terminate: Called with `nil` when the user quits from Settings.
     public convenience init(
         store: SettingsStore,
         onboarding: OnboardingModel,
-        reveal: @escaping (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
+        reveal: @escaping (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
+        terminate: @escaping @MainActor (Any?) -> Void = NSApplication.shared.terminate
     ) {
-        self.init(store: store, onboarding: onboarding, fontChooser: FontChooser(), reveal: reveal)
+        self.init(store: store, onboarding: onboarding, fontChooser: FontChooser(), reveal: reveal, terminate: terminate)
     }
 
-    init(store: SettingsStore, onboarding: OnboardingModel, fontChooser: FontChooser, reveal: @escaping (URL) -> Void) {
+    init(
+        store: SettingsStore,
+        onboarding: OnboardingModel,
+        fontChooser: FontChooser,
+        reveal: @escaping (URL) -> Void,
+        terminate: @escaping @MainActor (Any?) -> Void = NSApplication.shared.terminate
+    ) {
         self.onboarding = onboarding
         self.fontChooser = fontChooser
         editor = SettingsEditor(store: store)
@@ -53,7 +62,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
             "General", symbol: "gearshape",
             GeneralPane(
                 editor: editor, configURL: store.file.url, reveal: reveal,
-                chooseFont: { [weak self] in self?.chooseFont() }, close: close
+                chooseFont: { [weak self] in self?.chooseFont() }, quit: { terminate(nil) }, close: close
             ).typography(store)
         ))
 

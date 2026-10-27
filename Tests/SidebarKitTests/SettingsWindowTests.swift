@@ -163,7 +163,7 @@ struct SettingsPaneTests {
     }
 
     func general(configURL: URL? = nil, close: @escaping () -> Void = {}) -> GeneralPane {
-        GeneralPane(editor: editor, configURL: configURL ?? store.file.url, reveal: { _ in }, chooseFont: {}, close: close)
+        GeneralPane(editor: editor, configURL: configURL ?? store.file.url, reveal: { _ in }, chooseFont: {}, quit: {}, close: close)
     }
 
     @Test func setupOffersActionsForMissingSteps() throws {
@@ -237,7 +237,7 @@ struct SettingsPaneTests {
         var closed = 0
         var revealed: [URL] = []
         var chooses = 0
-        let sut = try GeneralPane(editor: editor, configURL: store.file.url, reveal: { revealed.append($0) }, chooseFont: { chooses += 1 }, close: { closed += 1 }).inspect()
+        let sut = try GeneralPane(editor: editor, configURL: store.file.url, reveal: { revealed.append($0) }, chooseFont: { chooses += 1 }, quit: {}, close: { closed += 1 }).inspect()
 
         try sut.find(ViewType.Toggle.self).tap()
         try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Apps left to macOS" }).setInput("zoom.us, Calendar")
@@ -262,14 +262,14 @@ struct SettingsPaneTests {
         loginItems.status = .enabled
         onboarding.refresh()
         let typography = Typography(SidebarSettings.Font(name: "Menlo", size: 18))
-        let general = try GeneralPane(editor: editor, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, close: {})
+        let general = try GeneralPane(editor: editor, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, quit: {}, close: {})
             .environment(\.typography, typography).inspect()
         let setupPane = try setup().environment(\.typography, typography).inspect()
         #expect(throws: Never.self) { try general.find(text: "Family:") }
 
         #expect(try general.find(text: "Font").attributes().font() == typography.font(.headline))
         #expect(try general.find(text: store.file.url.path).attributes().font() == typography.font(.subheadline))
-        for title in ["Save", "Cancel", "Show in Finder", "Choose…"] {
+        for title in ["Save", "Cancel", "Show in Finder", "Choose…", "Quit Sidebar"] {
             #expect(try general.find(button: title).labelView().text().attributes().font() == typography.font(.body))
         }
         for title in ["Open Accessibility", "Remove", "Copy Settings"] {
@@ -277,11 +277,20 @@ struct SettingsPaneTests {
         }
     }
 
+    @Test func quitButtonQuits() throws {
+        var quits = 0
+
+        try GeneralPane(editor: editor, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, quit: { quits += 1 }, close: {}).inspect()
+            .find(button: "Quit Sidebar").tap()
+
+        #expect(quits == 1)
+    }
+
     @Test func cancelRevertsAndCloses() throws {
         var closed = 0
         editor.draft.history.maxCount = 900
 
-        try GeneralPane(editor: editor, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, close: { closed += 1 }).inspect()
+        try GeneralPane(editor: editor, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, quit: {}, close: { closed += 1 }).inspect()
             .find(button: "Cancel").tap()
 
         #expect(editor.draft == store.settings)
@@ -318,7 +327,7 @@ struct SettingsPaneTests {
 
     @Test func fontSizeArrowsStepWithinRange() throws {
         _ = NSApplication.shared
-        let host = NSHostingView(rootView: GeneralPane(editor: editor, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, close: {}))
+        let host = NSHostingView(rootView: GeneralPane(editor: editor, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, quit: {}, close: {}))
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: host.fittingSize), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
         host.layoutSubtreeIfNeeded()
@@ -387,6 +396,27 @@ struct SettingsWindowControllerTests {
         controller.editor.draft.history.maxCount = 999
         controller.window.close()
         #expect(controller.editor.draft == store.settings)
+    }
+
+    @Test func quitButtonTerminatesApp() throws {
+        _ = NSApplication.shared
+        let directory = try TemporaryDirectory()
+        let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        var terminateCalls = 0
+        let controller = SettingsWindowController(store: store, onboarding: OnboardingModel(
+            accessibility: FakePlatform(),
+            loginItems: FakeLoginItems(),
+            setup: AeroSpaceSetup(home: directory.url, environment: [:], cli: FakeAeroSpaceCLI()),
+            performer: RecordingPerformer(),
+            copy: { _ in }
+        ), reveal: { _ in }, terminate: { _ in terminateCalls += 1 })
+        let general = try #require(
+            controller.tabs.tabViewItems[1].viewController as? NSHostingController<ModifiedContent<GeneralPane, TypographyModifier>>
+        )
+
+        try general.rootView.content.inspect().find(button: "Quit Sidebar").tap()
+
+        #expect(terminateCalls == 1)
     }
 
     @Test func fontPanelPicksGoIntoTheDraftUntilTheWindowCloses() throws {

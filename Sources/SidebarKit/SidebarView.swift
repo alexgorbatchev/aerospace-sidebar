@@ -5,9 +5,10 @@ import SwiftUI
 struct SidebarView: View {
     let model: SidebarModel
     let openSettings: () -> Void
-    let quit: () -> Void
 
     static let margin: CGFloat = 16
+    /// The panel starts right under the menu bar, which already leaves room above the buttons.
+    static let topMargin: CGFloat = 2
     static let motion: Animation = .snappy
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -18,18 +19,8 @@ struct SidebarView: View {
     @State private var hoveredID: SidebarNotification.ID?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Notifications")
-                    .font(typography.font(.headline))
-                    .lineLimit(1)
-                Spacer()
-                if !model.notifications.isEmpty {
-                    Button("Clear All", font: typography.font(.body), action: model.clear)
-                        .buttonStyle(.link)
-                }
-            }
-            .padding(.horizontal, Self.margin)
+        VStack(alignment: .trailing, spacing: 6) {
+            controls
             if let message = statusMessage {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(message)
@@ -39,6 +30,11 @@ struct SidebarView: View {
                         Button("Set Up…", font: typography.font(.body), action: openSettings)
                     }
                 }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // The panel is transparent, so text outside cards gets the cards' material.
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: NotificationCard.cornerRadius))
+                .floatingShadow()
                 .padding(.horizontal, Self.margin)
                 .transition(.opacity)
             }
@@ -59,6 +55,8 @@ struct SidebarView: View {
                         .zIndex(notification.drawingOrder)
                     }
                 }
+                // Room for the first card's dismiss button, which overhangs its top edge.
+                .padding(.top, NotificationCard.dismissOverhang)
                 .padding(.horizontal, Self.margin)
             }
             .scrollIndicators(.never)
@@ -74,22 +72,31 @@ struct SidebarView: View {
                 if model.notifications.isEmpty {
                     Text("No notifications")
                         .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(.regularMaterial, in: Capsule())
+                        .floatingShadow()
                 }
             }
-            HStack {
-                Button("Settings…", font: typography.font(.body), action: openSettings)
-                    .keyboardShortcut(",", modifiers: .command)
-                Spacer()
-                Button("Quit Sidebar", font: typography.font(.body), action: quit)
-                    .keyboardShortcut("q", modifiers: .command)
-            }
-            .padding(.horizontal, Self.margin)
         }
-        .padding(.vertical, Self.margin)
+        .padding(.top, Self.topMargin)
+        .padding(.bottom, Self.margin)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         // Changes arrive from the model, outside any view action, so the view animates them itself.
         .animation(Self.motion, value: model.notifications)
         .animation(Self.motion, value: model.interception)
+    }
+
+    /// Clear All and Settings as small round icon buttons in the top trailing corner. Their labels open
+    /// toward the leading edge, so the icon under the pointer stays put.
+    private var controls: some View {
+        HStack(spacing: 4) {
+            ExpandingIconButton("Clear All", systemImage: "xmark", expandsToward: .leading, action: model.clear)
+                .disabled(model.notifications.isEmpty)
+            ExpandingIconButton("Settings", systemImage: "gearshape", expandsToward: .leading, action: openSettings)
+                .keyboardShortcut(",", modifiers: .command)
+        }
+        .padding(.horizontal, Self.margin)
     }
 
     /// The card under the pointer after `card` reports entering or leaving. Entering the next card
@@ -137,20 +144,38 @@ struct NotificationCard: View {
     static let maxStackLayers = 2
     /// Cards scale up slightly under the pointer.
     static let hoverScale: CGFloat = 1.02
+    /// How far the dismiss button sticks out past the card's top-trailing corner.
+    static let dismissOverhang: CGFloat = 5
 
     @Environment(\.typography) private var typography
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The dismiss button overhangs the card, so the pointer can rest on it outside the card's hover area.
+    @State private var isDismissHovered = false
+
+    /// The dismiss button shows only while the pointer is on the card or on the button itself.
+    var showsDismiss: Bool { isHovered || isDismissHovered }
 
     var body: some View {
         VStack(spacing: 0) {
             card
             ForEach(1..<stackLayers + 1, id: \.self) { layer in
-                UnevenRoundedRectangle(bottomLeadingRadius: Self.stackLayerHeight, bottomTrailingRadius: Self.stackLayerHeight)
+                let shape = UnevenRoundedRectangle(bottomLeadingRadius: Self.stackLayerHeight, bottomTrailingRadius: Self.stackLayerHeight)
+                shape
                     .fill(background)
+                    .background(.regularMaterial, in: shape)
                     .opacity(0.8 - 0.25 * Double(layer))
                     .frame(height: Self.stackLayerHeight)
                     .padding(.horizontal, Self.stackLayerInset * CGFloat(layer))
             }
+        }
+        .floatingShadow()
+        .overlay(alignment: .topTrailing) {
+            ExpandingIconButton("Dismiss", systemImage: "xmark", expandsToward: .leading, action: dismiss)
+                .onHover { isDismissHovered = $0 }
+                .offset(x: Self.dismissOverhang, y: -Self.dismissOverhang)
+                .opacity(showsDismiss ? 1 : 0)
+                .allowsHitTesting(showsDismiss)
+                .animation(.easeOut(duration: 0.15), value: showsDismiss)
         }
         .scaleEffect(isHovered && !reduceMotion ? Self.hoverScale : 1)
         .animation(.easeOut(duration: 0.15), value: isHovered)
@@ -161,72 +186,61 @@ struct NotificationCard: View {
     private var stackLayers: Int { min(notification.occurrences - 1, Self.maxStackLayers) }
 
     private var card: some View {
-        ZStack(alignment: .topTrailing) {
-            Button(action: activate) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 4) {
-                        if let symbol = severitySymbol {
-                            Image(systemName: symbol)
-                                .foregroundStyle(accent ?? .secondary)
-                                .accessibilityLabel(notification.severity.rawValue)
-                        }
-                        if let symbol = actionSymbol {
-                            Image(systemName: symbol)
-                        }
-                        Text(notification.source.isEmpty ? "Notification" : notification.source)
-                        Text(notification.receivedAt, style: .time)
-                        if notification.occurrences > 1 {
-                            Text("×\(notification.occurrences)")
-                                .monospacedDigit()
-                                .padding(.horizontal, 5)
-                                .background(.quaternary, in: Capsule())
-                                .accessibilityLabel("Received \(notification.occurrences) times")
-                        }
+        Button(action: activate) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 4) {
+                    if let symbol = severitySymbol {
+                        Image(systemName: symbol)
+                            .foregroundStyle(accent ?? .secondary)
+                            .accessibilityLabel(notification.severity.rawValue)
                     }
-                    .font(typography.font(.caption1))
-                    .foregroundStyle(.secondary)
-                    if !notification.title.isEmpty {
-                        Text(notification.title).font(typography.font(.body).bold())
+                    if let symbol = actionSymbol {
+                        Image(systemName: symbol)
                     }
-                    if !notification.subtitle.isEmpty {
-                        Text(notification.subtitle).font(typography.font(.callout))
-                    }
-                    if !notification.body.isEmpty {
-                        Text(notification.body).font(typography.font(.callout)).lineLimit(8)
-                    }
-                    if notification.shownByMacOS {
-                        Text("Shown by macOS for its buttons")
-                            .font(typography.font(.caption2))
-                            .foregroundStyle(.secondary)
+                    Text(notification.source.isEmpty ? "Notification" : notification.source)
+                    Text(notification.receivedAt, style: .time)
+                    if notification.occurrences > 1 {
+                        Text("×\(notification.occurrences)")
+                            .monospacedDigit()
+                            .padding(.horizontal, 5)
+                            .background(.quaternary, in: Capsule())
+                            .accessibilityLabel("Received \(notification.occurrences) times")
                     }
                 }
-                .padding(10)
-                .padding(.trailing, 16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(background, in: RoundedRectangle(cornerRadius: Self.cornerRadius))
-                // The tints are translucent; the material keeps a card sliding over another (when one
-                // above it is removed) from showing the other's text through it.
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Self.cornerRadius))
-                .overlay {
-                    if let accent {
-                        RoundedRectangle(cornerRadius: Self.cornerRadius)
-                            .strokeBorder(accent, lineWidth: notification.severity == .critical ? 2 : 1)
-                    }
+                .font(typography.font(.caption1))
+                .foregroundStyle(.secondary)
+                if !notification.title.isEmpty {
+                    Text(notification.title).font(typography.font(.body).bold())
                 }
-                .opacity(notification.severity == .low ? 0.6 : 1)
-                .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+                if !notification.subtitle.isEmpty {
+                    Text(notification.subtitle).font(typography.font(.callout))
+                }
+                if !notification.body.isEmpty {
+                    Text(notification.body).font(typography.font(.callout)).lineLimit(8)
+                }
+                if notification.shownByMacOS {
+                    Text("Shown by macOS for its buttons")
+                        .font(typography.font(.caption2))
+                        .foregroundStyle(.secondary)
+                }
             }
-            .buttonStyle(.plain)
-            .help(notification.clickDescription)
-
-            Button(action: dismiss) {
-                Image(systemName: "xmark")
-                    .font(typography.font(.caption1))
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(background, in: RoundedRectangle(cornerRadius: Self.cornerRadius))
+            // The tints are translucent; the material keeps a card sliding over another (when one
+            // above it is removed) from showing the other's text through it.
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Self.cornerRadius))
+            .overlay {
+                if let accent {
+                    RoundedRectangle(cornerRadius: Self.cornerRadius)
+                        .strokeBorder(accent, lineWidth: notification.severity == .critical ? 2 : 1)
+                }
             }
-            .buttonStyle(.borderless)
-            .padding(8)
-            .accessibilityLabel("Dismiss")
+            .opacity(notification.severity == .low ? 0.6 : 1)
+            .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
         }
+        .buttonStyle(.plain)
+        .help(notification.clickDescription)
     }
 
     private var accent: Color? {
@@ -262,6 +276,113 @@ struct NotificationCard: View {
         }
     }
 
+}
+
+/// A small round icon button. Under the pointer it widens into a capsule that shows its title next to the
+/// icon, which stays in place, and turns white.
+struct ExpandingIconButton: View {
+    let title: String
+    let systemImage: String
+    /// The side the title opens on. The button grows toward it when it is anchored on the other side.
+    let expandsToward: HorizontalEdge
+    let action: () -> Void
+
+    static let diameter: CGFloat = 18
+
+    init(_ title: String, systemImage: String, expandsToward: HorizontalEdge, action: @escaping () -> Void) {
+        self.title = title
+        self.systemImage = systemImage
+        self.expandsToward = expandsToward
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+        }
+        .buttonStyle(ExpandingIconButtonStyle(expandsToward: expandsToward))
+        .accessibilityLabel(title)
+    }
+}
+
+struct ExpandingIconButtonStyle: ButtonStyle {
+    let expandsToward: HorizontalEdge
+
+    func makeBody(configuration: Configuration) -> some View {
+        ExpandingIconButtonBody(configuration: configuration, expandsToward: expandsToward)
+    }
+}
+
+struct ExpandingIconButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let expandsToward: HorizontalEdge
+
+    @Environment(\.typography) private var typography
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovered = false
+
+    private var isHighlighted: Bool { isEnabled && (isHovered || configuration.isPressed) }
+
+    var body: some View {
+        let style = ExpandingLabelStyle(
+            isExpanded: isHighlighted,
+            titleEdge: expandsToward,
+            diameter: ExpandingIconButton.diameter * typography.scale
+        )
+        // Vibrant `.secondary` and plain white do not interpolate, so animating between them flashes.
+        // A white copy fades in over the secondary label instead.
+        configuration.label
+            .foregroundStyle(.secondary)
+            .overlay {
+                configuration.label
+                    .foregroundStyle(.white)
+                    .opacity(isHighlighted ? 1 : 0)
+                    .accessibilityHidden(true)
+            }
+            .labelStyle(style)
+            .font(typography.font(.caption1))
+            .background(.regularMaterial, in: Capsule())
+            .clipShape(Capsule())
+            .floatingShadow()
+            .contentShape(Capsule())
+            .opacity(isEnabled ? 1 : 0.5)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: isHighlighted)
+            .onHover { isHovered = $0 }
+    }
+}
+
+/// The icon in a circle `diameter` wide; when expanded, the title beside it on `titleEdge`.
+struct ExpandingLabelStyle: LabelStyle {
+    let isExpanded: Bool
+    let titleEdge: HorizontalEdge
+    let diameter: CGFloat
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 0) {
+            if isExpanded, titleEdge == .leading { title(configuration) }
+            configuration.icon
+                .fontWeight(.semibold)
+                .frame(width: diameter, height: diameter)
+            if isExpanded, titleEdge == .trailing { title(configuration) }
+        }
+    }
+
+    private func title(_ configuration: Configuration) -> some View {
+        configuration.title
+            .lineLimit(1)
+            .fixedSize()
+            .padding(titleEdge == .leading ? .leading : .trailing, diameter / 2)
+            .transition(.opacity)
+    }
+}
+
+extension View {
+    /// Lifts a card or button off whatever is behind the transparent panel. The shadow is cast by the
+    /// composited view, so text inside it casts none of its own.
+    func floatingShadow() -> some View {
+        compositingGroup().shadow(color: .black.opacity(0.5), radius: 5, y: 2)
+    }
 }
 
 private extension SidebarNotification {
