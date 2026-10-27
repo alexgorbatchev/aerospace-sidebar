@@ -180,6 +180,24 @@ struct SettingsStoreTests {
         #expect(store.settings.history.maxCount == 70)
     }
 
+    /// Writing in place, as `echo … > config.toml` does, leaves the directory untouched.
+    @Test func watchingAppliesEditsWrittenInPlace() async throws {
+        try "[history]\nmax_count = 60\n".write(to: file.url, atomically: true, encoding: .utf8)
+        let store = SettingsStore(file: file)
+        try store.startWatching()
+        defer { store.stopWatching() }
+
+        let handle = try FileHandle(forWritingTo: file.url)
+        try handle.truncate(atOffset: 0)
+        try handle.write(contentsOf: Data("[history]\nmax_count = 80\n".utf8))
+        try handle.close()
+        for _ in 0..<150 where store.settings.history.maxCount != 80 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        #expect(store.settings.history.maxCount == 80)
+    }
+
     @Test func watchingFailsForUncreatableDirectory() {
         let store = SettingsStore(file: SettingsFile(url: URL(fileURLWithPath: "/nonexistent-root/x/config.toml")))
 

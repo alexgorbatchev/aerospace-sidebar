@@ -4,8 +4,8 @@ import os
 
 /// Current settings, kept in sync with `config.toml` in both directions.
 ///
-/// The store watches the file's directory, so edits made by hand or by another tool apply
-/// immediately, including atomic replacements. An invalid file keeps the last valid settings and
+/// The store watches the file, so edits made by hand or by another tool apply right away, whether
+/// they write the file in place or replace it atomically. An invalid file keeps the last valid settings and
 /// reports the problem in `loadError`.
 @MainActor
 @Observable
@@ -21,7 +21,7 @@ public final class SettingsStore {
 
     @ObservationIgnored private var onChange: [@MainActor (SidebarSettings) -> Void] = []
     @ObservationIgnored private var onFontChange: [@MainActor (SidebarSettings.Font) -> Void] = []
-    @ObservationIgnored private var watcher: (any DispatchSourceFileSystemObject)?
+    @ObservationIgnored private var watcher: FileWatcher?
 
     public init(file: SettingsFile) {
         self.file = file
@@ -81,23 +81,18 @@ public final class SettingsStore {
         }
     }
 
-    /// Reloads whenever the settings directory changes; creates the directory if needed.
+    /// Reloads whenever `config.toml` changes, once it has been unchanged for a moment so a file still
+    /// being written is not read; creates the directory if needed, so the file's creation is seen too.
     public func startWatching() throws {
-        let directory = file.url.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let descriptor = open(directory.path, O_EVTONLY)
-        guard descriptor >= 0 else { throw CocoaError(.fileReadNoPermission) }
-        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: descriptor, eventMask: [.write, .rename, .delete], queue: .main)
-        source.setEventHandler { [weak self] in
-            MainActor.assumeIsolated { self?.reload() }
-        }
-        source.setCancelHandler { close(descriptor) }
-        source.resume()
-        watcher = source
+        try FileManager.default.createDirectory(at: file.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        watcher?.stop()
+        let watcher = FileWatcher(url: file.url, delay: .milliseconds(100)) { [weak self] in self?.reload() }
+        watcher.start()
+        self.watcher = watcher
     }
 
     public func stopWatching() {
-        watcher?.cancel()
+        watcher?.stop()
         watcher = nil
     }
 
