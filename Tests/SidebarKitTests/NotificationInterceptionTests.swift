@@ -47,6 +47,17 @@ struct NotificationBannersTests {
         #expect(NotificationBanners.content(of: banner) == BannerContent(title: "First", subtitle: "Second", body: "Body"))
     }
 
+    /// macOS's own notifications have no app: their description starts with the title instead.
+    @Test func descriptionStartingWithTheTitleNamesNoApp() {
+        let banner = FakeElement([kAXDescriptionAttribute: "Disk Not Ejected Properly, Eject “4TB” before disconnecting"], children: [
+            FakeElement([kAXValueAttribute: "Disk Not Ejected Properly", kAXIdentifierAttribute: "title"]),
+            FakeElement([kAXValueAttribute: "Eject “4TB” before disconnecting", kAXIdentifierAttribute: "body"]),
+        ])
+
+        #expect(NotificationBanners.content(of: banner)
+            == BannerContent(appName: "", title: "Disk Not Ejected Properly", body: "Eject “4TB” before disconnecting"))
+    }
+
     @Test func unlabeledTextCanFillBody() {
         let banner = FakeElement(children: ["A", "B", "C"].map { FakeElement([kAXValueAttribute: $0]) })
 
@@ -201,13 +212,14 @@ struct SystemNotificationInterceptorTests {
         #expect(plainWindow.moves.isEmpty)
     }
 
-    @Test func bannerWithoutAppNameHasNoClickAction() {
+    @Test func bannerWithoutAppNameComesFromMacOSWithNoClickAction() {
         var received: [SidebarNotification] = []
         let interceptor = SystemNotificationInterceptor { received.append($0) }
         let banner = FakeElement([kAXSubroleAttribute: "AXNotificationCenterBanner"], children: [FakeElement([kAXValueAttribute: "Title"])])
 
         interceptor.process(window: FakeElement.window(banner))
 
+        #expect(received.map(\.source) == [SystemNotificationInterceptor.systemSource])
         #expect(received.map(\.action) == [nil])
     }
 

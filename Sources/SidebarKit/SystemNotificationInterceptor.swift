@@ -17,6 +17,8 @@ public final class SystemNotificationInterceptor {
     static let offScreen = CGPoint(x: -5000, y: -5000)
     static let maxRememberedBanners = 500
     static let duplicateWindow: TimeInterval = 10
+    /// The source shown for notifications that macOS itself posts.
+    static let systemSource = "macOS"
 
     private let onNotification: @MainActor (SidebarNotification) -> Void
     private let leavesToMacOS: @MainActor (String) -> Bool
@@ -64,7 +66,7 @@ public final class SystemNotificationInterceptor {
             }
             guard isNew(identifier: identifier, content: content) else { continue }
             onNotification(SidebarNotification(
-                source: content.appName,
+                source: content.appName.isEmpty ? Self.systemSource : content.appName,
                 title: content.title,
                 subtitle: content.subtitle,
                 body: content.body,

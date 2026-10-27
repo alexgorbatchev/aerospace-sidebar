@@ -14,6 +14,7 @@ public protocol AccessibilityElement {
 
 /// Text read from one NotificationCenter banner.
 public struct BannerContent: Equatable, Sendable {
+    /// The posting app, or empty for a notification from macOS itself.
     public var appName = ""
     public var title = ""
     public var subtitle = ""
@@ -26,7 +27,8 @@ public struct BannerContent: Equatable, Sendable {
 ///
 /// Observed NotificationCenter behavior on macOS 26:
 /// - Banners are elements with one of `bannerSubroles`, nested a few levels below the hosting window.
-/// - The banner's `AXDescription` starts with the posting app's name, followed by ", ".
+/// - The banner's `AXDescription` starts with the posting app's name, followed by ", ". macOS's own
+///   notifications, such as Disk Not Ejected Properly, have no app: their description starts with the title.
 /// - Text elements carry an `AXIdentifier` of `title`, `subtitle` or `body`.
 /// - A plain banner exposes exactly the actions in `plainBannerActions`; notification actions such as
 ///   Snooze, Join or Reply appear as additional named actions or as controls inside the banner.
@@ -79,6 +81,9 @@ public enum NotificationBanners {
             } else if content.body.isEmpty {
                 content.body = value
             }
+        }
+        if content.appName == content.title {
+            content.appName = ""
         }
         return content
     }
