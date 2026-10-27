@@ -1,0 +1,11 @@
+[
+  {
+    "author": {
+      "name": "Alex Gorbatchev",
+      "email": "alex.gorbatchev@gmail.com"
+    },
+    "timestamp": 1793135567,
+    "op": "SetKey",
+    "key": "ASIDE"
+  }
+]
