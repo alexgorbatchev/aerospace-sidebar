@@ -239,7 +239,7 @@ struct NotificationCard: View {
             .opacity(notification.severity == .low ? 0.6 : 1)
             .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableButtonStyle())
         .help(notification.clickDescription)
     }
 
