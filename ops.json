@@ -1,10 +1,11 @@
 [
   {
     "author": {
-      "name": "git-task-automation",
-      "email": "automation@git-task.local"
+      "name": "Alex Gorbatchev",
+      "email": "alex.gorbatchev@gmail.com"
     },
-    "timestamp": 1793144252,
-    "op": "ClearAssignee"
+    "timestamp": 1793144663,
+    "op": "AddComment",
+    "text": "Follow-up: added the @Suite(.leavesDesktopAlone) trait (Tests/SidebarKitTests/TestWindows.swift) on every window-creating suite. A test fails if it ends with a visible window that is opaque on a display, titled and able to become key, or key. It checks window state because the test process runs no event loop, so key notifications never fire. TestPanel and the forTesting factories moved to TestWindows.swift."
   }
 ]
