@@ -11,7 +11,7 @@ import SwiftUI
 @MainActor
 public final class SettingsWindowController: NSObject, NSWindowDelegate {
     public let window: NSPanel
-    public let tabs: NSTabViewController
+    public let tabs: SettingsTabsController
     let editor: SettingsEditor
     private let onboarding: OnboardingModel
     private let fontChooser: FontChooser
@@ -29,7 +29,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         self.onboarding = onboarding
         self.fontChooser = fontChooser
         editor = SettingsEditor(store: store)
-        tabs = NSTabViewController()
+        tabs = SettingsTabsController()
         window = NSPanel(
             contentRect: .zero,
             styleMask: [.titled, .closable, .miniaturizable, .nonactivatingPanel],
@@ -42,11 +42,12 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
             self?.window.orderOut(nil)
             self?.fontChooser.close()
         }
+        tabs.onSelectedSizeChange = { [weak self] animate in self?.sizeWindowToSelectedPane(animate: animate) }
         tabs.tabStyle = .toolbar
         tabs.transitionOptions = []
         tabs.addTabViewItem(Self.item(
             "Setup", symbol: "checklist",
-            SetupPane(onboarding: onboarding, editor: editor, close: close).typography(store)
+            SetupPane(onboarding: onboarding).typography(store)
         ))
         tabs.addTabViewItem(Self.item(
             "General", symbol: "gearshape",
@@ -66,10 +67,10 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         // grants Accessibility in System Settings.
         window.isFloatingPanel = true
         window.delegate = self
-        sizeToLargestPane()
+        sizePanes()
         window.center()
         // Text sizes follow the font, previewed or saved, so the panes grow and shrink with it.
-        store.observeFont { [weak self] _ in self?.sizeToLargestPane() }
+        store.observeFont { [weak self] _ in self?.sizePanes() }
     }
 
     /// Opens on the Setup tab with a fresh draft and status.
@@ -92,30 +93,53 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         fontChooser.choose(editor.draft.font, beside: window) { [editor] in editor.draft.font = $0 }
     }
 
-    /// Every pane gets the size of the largest one, so switching tabs never resizes the window. The
-    /// window keeps its top edge in place.
-    private func sizeToLargestPane() {
-        let sizes = tabs.tabViewItems.compactMap(\.viewController?.view).map { view in
-            // A layout pass applies pending SwiftUI updates, such as a font change, before measuring.
-            view.layoutSubtreeIfNeeded()
-            return view.intrinsicContentSize
-        }
-        let size = NSSize(width: sizes.map(\.width).max() ?? 0, height: sizes.map(\.height).max() ?? 0)
-        for item in tabs.tabViewItems {
-            item.viewController?.preferredContentSize = size
-        }
+    /// Each pane reports its content size as its `preferredContentSize`, which changes with its content
+    /// and font; the window takes the selected pane's size.
+    private func sizePanes() {
+        // A layout pass applies pending SwiftUI updates, such as a font change, so the sizes are current.
+        tabs.tabViewItems.forEach { $0.viewController?.view.layoutSubtreeIfNeeded() }
+        sizeWindowToSelectedPane(animate: false)
+    }
+
+    /// Fits the window to the selected pane, keeping its top edge in place.
+    private func sizeWindowToSelectedPane(animate: Bool) {
+        let index = tabs.selectedTabViewItemIndex
+        guard tabs.tabViewItems.indices.contains(index), let selected = tabs.tabViewItems[index].viewController else { return }
+        let content = window.contentRect(forFrameRect: window.frame)
+        let frame = window.frameRect(forContentRect: NSRect(origin: content.origin, size: selected.preferredContentSize))
         let top = window.frame.maxY
-        window.setContentSize(size)
-        window.setFrameTopLeftPoint(NSPoint(x: window.frame.minX, y: top))
-        window.contentMinSize = size
+        window.setFrame(
+            NSRect(x: window.frame.minX, y: top - frame.height, width: frame.width, height: frame.height),
+            display: true,
+            animate: animate && window.isVisible
+        )
     }
 
     private static func item(_ label: String, symbol: String, _ view: some View) -> NSTabViewItem {
         let controller = NSHostingController(rootView: view)
-        controller.sizingOptions = [.intrinsicContentSize]
+        controller.sizingOptions = [.preferredContentSize]
         let item = NSTabViewItem(viewController: controller)
         item.label = label
         item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
         return item
+    }
+}
+
+/// Reports when the selected pane's size changes, by switching tabs or by its content, because
+/// `NSTabViewController` does not resize the window for either.
+public final class SettingsTabsController: NSTabViewController {
+    /// Called with `true` for a tab switch, which animates, and `false` for a content change.
+    var onSelectedSizeChange: ((_ animate: Bool) -> Void)?
+
+    override public func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
+        super.tabView(tabView, didSelect: tabViewItem)
+        onSelectedSizeChange?(true)
+    }
+
+    override public func preferredContentSizeDidChange(for viewController: NSViewController) {
+        super.preferredContentSizeDidChange(for: viewController)
+        if tabViewItems.indices.contains(selectedTabViewItemIndex), tabViewItems[selectedTabViewItemIndex].viewController === viewController {
+            onSelectedSizeChange?(false)
+        }
     }
 }

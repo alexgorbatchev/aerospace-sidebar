@@ -23,7 +23,14 @@ struct TypographyTests {
         #expect(typography.font(.body) == .system(size: 26))
         #expect(typography.font(.callout) == .system(size: 24))
         #expect(typography.font(.caption1) == .system(size: 20))
-        #expect(typography.scale == 2)
+        // Large sizes use the system font's tighter display design, so text grows a little less than 2×.
+        #expect(typography.scale > 1.7 && typography.scale <= 2)
+    }
+
+    @Test func widthScaleCountsHowWideTheFamilyIs() {
+        #expect(Typography(SidebarSettings.Font()).scale == 1)
+        // Monospaced Menlo is wider than the system font at the same size.
+        #expect(Typography(SidebarSettings.Font(name: "Menlo", size: 13)).scale > 1.1)
     }
 
     @Test func usesInstalledFamilyMatchedIgnoringCase() {

@@ -8,16 +8,21 @@ struct Typography: Equatable {
     let family: String?
     /// Body text size in points.
     let size: CGFloat
+    /// How much wider body text is than in macOS's default font. Widths sized to fit text at the default
+    /// font scale with it; the size alone undercounts wide families such as monospaced ones.
+    let scale: CGFloat
+
+    /// Text whose width stands for the average width of body text.
+    static let widthSample = "The quick brown fox jumps over the lazy dog 0123456789"
 
     init(_ settings: SidebarSettings.Font) {
         family = Self.installedFamily(named: settings.name)
         // Previews show sizes before Save validates them.
         let range = SidebarSettings.Font.sizeRange
         size = min(max(settings.size, range.lowerBound), range.upperBound)
+        scale = Self.sampleWidth(Self.bodyFont(family: family, size: size))
+            / Self.sampleWidth(.systemFont(ofSize: SidebarSettings.Font.defaultSize))
     }
-
-    /// The configured size relative to macOS's; widths sized to fit text at the default size scale with it.
-    var scale: CGFloat { size / SidebarSettings.Font.defaultSize }
 
     func font(_ style: NSFont.TextStyle) -> Font {
         let system = NSFont.preferredFont(forTextStyle: style)
@@ -27,8 +32,14 @@ struct Typography: Equatable {
     }
 
     /// The body font as an `NSFont`, for AppKit APIs such as the font panel.
-    var bodyFont: NSFont {
+    var bodyFont: NSFont { Self.bodyFont(family: family, size: size) }
+
+    private static func bodyFont(family: String?, size: CGFloat) -> NSFont {
         family.flatMap { NSFontManager.shared.font(withFamily: $0, traits: [], weight: 5, size: size) } ?? .systemFont(ofSize: size)
+    }
+
+    private static func sampleWidth(_ font: NSFont) -> CGFloat {
+        NSAttributedString(string: widthSample, attributes: [.font: font]).size().width
     }
 
     /// The installed family whose name matches `name` ignoring case; `nil` when empty or not installed.

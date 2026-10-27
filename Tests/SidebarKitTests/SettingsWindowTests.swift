@@ -158,8 +158,12 @@ struct SettingsPaneTests {
         )
     }
 
-    func setup(close: @escaping () -> Void = {}) -> SetupPane {
-        SetupPane(onboarding: onboarding, editor: editor, close: close)
+    func setup() -> SetupPane {
+        SetupPane(onboarding: onboarding)
+    }
+
+    func general(configURL: URL? = nil, close: @escaping () -> Void = {}) -> GeneralPane {
+        GeneralPane(editor: editor, configURL: configURL ?? store.file.url, reveal: { _ in }, chooseFont: {}, close: close)
     }
 
     @Test func setupOffersActionsForMissingSteps() throws {
@@ -177,6 +181,9 @@ struct SettingsPaneTests {
         #expect(loginItems.status == .enabled)
         #expect(throws: Never.self) { try sut.find(text: "No AeroSpace config found.") }
         #expect(throws: Never.self) { try sut.find(button: "Update AeroSpace Config") }
+        // Setup steps act immediately; only General has a draft to save.
+        #expect(throws: (any Error).self) { try sut.find(button: "Save") }
+        #expect(throws: (any Error).self) { try sut.find(button: "Cancel") }
     }
 
     @Test func finishedStepsShowCheckmarks() throws {
@@ -234,7 +241,7 @@ struct SettingsPaneTests {
 
         try sut.find(ViewType.Toggle.self).tap()
         try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Apps left to macOS" }).setInput("zoom.us, Calendar")
-        try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Font" }).setInput("Menlo")
+        try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Family" }).setInput("Menlo")
         try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Size" }).setInput("15")
         try sut.find(button: "Show in Finder").tap()
         try sut.find(button: "Choose…").tap()
@@ -258,6 +265,7 @@ struct SettingsPaneTests {
         let general = try GeneralPane(editor: editor, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, close: {})
             .environment(\.typography, typography).inspect()
         let setupPane = try setup().environment(\.typography, typography).inspect()
+        #expect(throws: Never.self) { try general.find(text: "Family:") }
 
         #expect(try general.find(text: "Font").attributes().font() == typography.font(.headline))
         #expect(try general.find(text: store.file.url.path).attributes().font() == typography.font(.subheadline))
@@ -283,12 +291,22 @@ struct SettingsPaneTests {
     @Test func invalidSaveStaysOpenAndShowsStatus() throws {
         var closed = 0
         editor.draft.history.retentionHours = 0
-        let sut = try setup(close: { closed += 1 }).inspect()
+        let sut = try general(close: { closed += 1 }).inspect()
 
         try sut.find(button: "Save").tap()
 
         #expect(closed == 0)
         #expect(editor.status == "Keep for must be between 1 and 720 hours.")
+    }
+
+    @Test func settingsFileUnderHomeIsShownWithTilde() throws {
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/aerospace-sidebar/config.toml")
+
+        #expect(throws: Never.self) { try general(configURL: url).inspect().find(text: "~/.config/aerospace-sidebar/config.toml") }
+    }
+
+    @Test func everyNumberFieldHasArrows() throws {
+        #expect(try general().inspect().findAll(ViewType.Stepper.self).count == 3)
     }
 
     @Test func numberFieldShowsUnit() throws {
@@ -304,7 +322,10 @@ struct SettingsPaneTests {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: host.fittingSize), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
         host.layoutSubtreeIfNeeded()
-        let stepper = try #require(Self.subviews(of: host).compactMap { $0 as? NSStepper }.first)
+        // AppKit's steppers carry no label; Size is the pane's last number field, so its arrows are lowest.
+        let stepper = try #require(Self.subviews(of: host).compactMap { $0 as? NSStepper }.max { a, b in
+            a.convert(a.bounds, to: host).minY < b.convert(b.bounds, to: host).minY
+        })
 
         Self.click(stepper, up: true)
         #expect(editor.draft.font.size == 14)
@@ -393,6 +414,57 @@ struct SettingsWindowControllerTests {
         #expect(NSFontManager.shared.target == nil)
     }
 
+    @Test func eachTabSizesTheWindowToItsOwnContent() throws {
+        _ = NSApplication.shared
+        let directory = try TemporaryDirectory()
+        let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        let controller = SettingsWindowController(store: store, onboarding: OnboardingModel(
+            accessibility: FakePlatform(),
+            loginItems: FakeLoginItems(),
+            setup: AeroSpaceSetup(home: directory.url, environment: [:], cli: FakeAeroSpaceCLI()),
+            performer: RecordingPerformer(),
+            copy: { _ in }
+        ), reveal: { _ in })
+        controller.show()
+        let setup = controller.window.frame
+
+        controller.tabs.selectedTabViewItemIndex = 1
+        let general = controller.window.frame
+        controller.tabs.selectedTabViewItemIndex = 0
+
+        #expect(general.height > setup.height)
+        #expect(general.maxY == setup.maxY)
+        #expect(controller.window.frame == setup)
+        controller.window.close()
+    }
+
+    @Test func windowFollowsSetupContentThatChangesWhileOpen() async throws {
+        _ = NSApplication.shared
+        let directory = try TemporaryDirectory()
+        let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        let onboarding = OnboardingModel(
+            accessibility: FakePlatform(),
+            loginItems: FakeLoginItems(),
+            setup: AeroSpaceSetup(home: directory.url, environment: [:], cli: FakeAeroSpaceCLI()),
+            performer: RecordingPerformer(),
+            copy: { _ in }
+        )
+        let controller = SettingsWindowController(store: store, onboarding: onboarding, reveal: { _ in })
+        controller.show()
+        let before = controller.window.frame
+
+        // A config with problems adds warning lines to the Setup pane.
+        try directory.write("[mode.main.binding]\nalt-f = 'fullscreen --no-outer-gaps'\n", to: ".aerospace.toml")
+        onboarding.refresh()
+        for _ in 0..<100 where controller.window.frame.height == before.height {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(controller.window.frame.height > before.height)
+        #expect(controller.window.frame.maxY == before.maxY)
+        controller.window.close()
+    }
+
     @Test func previewResizesWindowAndCancelRestoresIt() throws {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
@@ -431,7 +503,8 @@ struct SettingsWindowControllerTests {
         store.update { $0.font.size = 26 }
 
         #expect(controller.window.frame.height > before.height)
-        #expect(controller.window.contentRect(forFrameRect: controller.window.frame).width == SettingsMetrics.paneWidth * 2)
+        let width = SettingsMetrics.paneWidth * Typography(SidebarSettings.Font(size: 26)).scale
+        #expect(abs(controller.window.contentRect(forFrameRect: controller.window.frame).width - width) <= 1)
         #expect(controller.window.frame.maxY == before.maxY)
         #expect(controller.window.frame.minX == before.minX)
     }

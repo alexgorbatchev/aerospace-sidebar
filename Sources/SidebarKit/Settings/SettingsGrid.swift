@@ -10,7 +10,9 @@ enum SettingsMetrics {
     static let rowSpacing: CGFloat = 8
     static let columnSpacing: CGFloat = 8
     static let sectionTopPadding: CGFloat = 12
-    static let fieldMinWidth: CGFloat = 320
+    /// Text fields have a fixed width: a flexible one leaves the grid's column widths open, and the
+    /// grid then measures rows at one width and draws them at another, unevening the spacing.
+    static let fieldWidth: CGFloat = 320
     static let numberFieldWidth: CGFloat = 80
     /// Gap between a number field and its stepper arrows.
     static let stepperSpacing: CGFloat = 2
@@ -25,7 +27,9 @@ struct SettingsGrid<Content: View>: View {
         Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: SettingsMetrics.columnSpacing, verticalSpacing: SettingsMetrics.rowSpacing) {
             content()
         }
-        .padding([.top, .horizontal], SettingsMetrics.paneMargin)
+        // Offered more height than its rows measured, a grid spreads the extra between them; keep it below.
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(SettingsMetrics.paneMargin)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
@@ -114,7 +118,7 @@ struct SetupStep: View {
     }
 }
 
-/// Separator, status line, Cancel and Save, at the bottom of every pane.
+/// Separator, status line, Cancel and Save, at the bottom of panes that edit `config.toml`.
 struct SettingsButtonBar: View {
     let editor: SettingsEditor
     let close: () -> Void

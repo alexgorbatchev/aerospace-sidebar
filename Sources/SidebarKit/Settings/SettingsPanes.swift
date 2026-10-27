@@ -1,10 +1,9 @@
 import SwiftUI
 
 /// Setup: Accessibility, launch at login and the AeroSpace config, each with a one-click action.
+/// Its steps take effect immediately, so it has no Cancel or Save.
 struct SetupPane: View {
     let onboarding: OnboardingModel
-    let editor: SettingsEditor
-    let close: () -> Void
 
     @Environment(\.typography) private var typography
 
@@ -21,36 +20,43 @@ struct SetupPane: View {
                     )
                 }
                 SettingsHint(text: "Lets the sidebar read macOS notifications and hide their banners.")
+                // Extra buttons sit next to their step: in an accessory column, long hints spanning both
+                // columns would widen the step column and push them away from it.
                 SettingsRow(label: "Open at login") {
-                    switch onboarding.loginItem {
-                    case .requiresApproval:
-                        SetupStep(title: "Open Login Items", doneTitle: "", isDone: false, action: onboarding.openLoginItemsSettings)
-                    case .enabled, .disabled, .unavailable:
-                        SetupStep(
-                            title: "Add to Login Items",
-                            doneTitle: "Opens at login",
-                            isDone: onboarding.loginItem == .enabled,
-                            action: onboarding.addLoginItem
-                        )
+                    HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.columnSpacing) {
+                        switch onboarding.loginItem {
+                        case .requiresApproval:
+                            SetupStep(title: "Open Login Items", doneTitle: "", isDone: false, action: onboarding.openLoginItemsSettings)
+                        case .enabled, .disabled, .unavailable:
+                            SetupStep(
+                                title: "Add to Login Items",
+                                doneTitle: "Opens at login",
+                                isDone: onboarding.loginItem == .enabled,
+                                action: onboarding.addLoginItem
+                            )
+                        }
+                        if onboarding.loginItem == .enabled || onboarding.loginItem == .requiresApproval {
+                            Button("Remove", font: typography.font(.body), action: onboarding.removeLoginItem)
+                        }
                     }
-                } accessory: {
-                    if onboarding.loginItem == .enabled || onboarding.loginItem == .requiresApproval {
-                        Button("Remove", font: typography.font(.body), action: onboarding.removeLoginItem)
-                    }
+                    // The grid would otherwise squeeze the step to fit, truncating its buttons.
+                    .fixedSize()
                 }
                 SettingsHint(text: loginHint)
 
                 SettingsSectionHeader(title: "AeroSpace")
                 SettingsRow(label: "Config") {
-                    SetupStep(
-                        title: "Update AeroSpace Config",
-                        doneTitle: "AeroSpace configured",
-                        isDone: aeroSpaceConfigured,
-                        action: { Task { await onboarding.updateAeroSpace() } }
-                    )
-                    .disabled(onboarding.isUpdatingAeroSpace)
-                } accessory: {
-                    Button("Copy Settings", font: typography.font(.body), action: onboarding.copySnippet)
+                    HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.columnSpacing) {
+                        SetupStep(
+                            title: "Update AeroSpace Config",
+                            doneTitle: "AeroSpace configured",
+                            isDone: aeroSpaceConfigured,
+                            action: { Task { await onboarding.updateAeroSpace() } }
+                        )
+                        .disabled(onboarding.isUpdatingAeroSpace)
+                        Button("Copy Settings", font: typography.font(.body), action: onboarding.copySnippet)
+                    }
+                    .fixedSize()
                 }
                 SettingsHint(text: aeroSpaceHint)
                 if case .ready(let analysis, _) = onboarding.aeroSpace {
@@ -60,7 +66,6 @@ struct SetupPane: View {
                 }
                 SettingsHint(text: onboarding.message)
             }
-            SettingsButtonBar(editor: editor, close: close)
         }
         .frame(width: SettingsMetrics.paneWidth * typography.scale)
         .task {
@@ -126,36 +131,45 @@ struct GeneralPane: View {
                 SettingsRow(label: "Apps left to macOS") {
                     TextField("Apps left to macOS", text: $editor.appsLeftToMacOSText, prompt: Text("zoom.us, Calendar"))
                         .labelsHidden()
-                        .frame(minWidth: SettingsMetrics.fieldMinWidth * typography.scale)
+                        .frame(width: SettingsMetrics.fieldWidth * typography.scale)
                 }
                 SettingsHint(text: "Comma-separated app names, as shown in their notifications. Their notifications stay on screen and are also listed.")
 
                 SettingsSectionHeader(title: "History")
                 SettingsRow(label: "Keep for") {
-                    NumberField(title: "Keep for", value: $editor.draft.history.retentionHours, unit: "hours")
+                    NumberField(
+                        title: "Keep for", value: $editor.draft.history.retentionHours,
+                        stepRange: SidebarSettings.History.retentionRange, unit: "hours"
+                    )
                 }
                 SettingsRow(label: "Keep at most") {
-                    NumberField(title: "Keep at most", value: $editor.draft.history.maxCount, unit: "notifications")
+                    NumberField(
+                        title: "Keep at most", value: $editor.draft.history.maxCount,
+                        stepRange: SidebarSettings.History.maxCountRange, unit: "notifications"
+                    )
                 }
                 SettingsHint(text: "Notifications survive restarts until they are older than this or the list is full.")
 
                 SettingsSectionHeader(title: "Font")
-                SettingsRow(label: "Font") {
-                    TextField("Font", text: $editor.draft.font.name, prompt: Text("System font"))
+                SettingsRow(label: "Family") {
+                    TextField("Family", text: $editor.draft.font.name, prompt: Text("System font"))
                         .labelsHidden()
-                        .frame(minWidth: SettingsMetrics.fieldMinWidth * typography.scale)
+                        .frame(width: SettingsMetrics.fieldWidth * typography.scale)
                 } accessory: {
                     Button("Choose…", font: typography.font(.body), action: chooseFont)
                 }
                 SettingsRow(label: "Size") {
                     NumberField(title: "Size", value: $editor.draft.font.size, stepRange: SidebarSettings.Font.sizeRange, unit: "points")
                 }
-                SettingsHint(text: "Choose… picks a family and size in the font panel; a typed name matches families ignoring case. Leave it empty for the system font. Every text size in the sidebar and Settings scales with this size. Changes show right away; Cancel undoes them.")
+                SettingsHint(text: "Leave empty for the system font. All text sizes scale with Size.")
 
                 SettingsSectionHeader(title: "File")
                 SettingsRow(label: "Settings file") {
-                    Text(configURL.path)
+                    Text((configURL.path as NSString).abbreviatingWithTildeInPath)
                         .font(typography.font(.subheadline))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(configURL.path)
                         .textSelection(.enabled)
                 } accessory: {
                     Button("Show in Finder", font: typography.font(.body)) { reveal(configURL) }
