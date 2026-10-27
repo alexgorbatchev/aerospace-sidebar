@@ -1,7 +1,7 @@
 ---
 name: aerospace-sidebar
 description: Push notifications into the aerospace-sidebar macOS app with the aerospace-sidebar CLI or aerospace-sidebar:// URLs. Use when a task should alert the user on their Mac, report a finished build or agent run, or offer a click-to-run command or link.
-last_modified: 2026-10-26 21:49
+last_modified: 2026-10-26 22:06
 ---
 
 # aerospace-sidebar
@@ -37,7 +37,7 @@ Sends a notification to the running app over its control socket (`$(getconf DARW
 | `--run <command>` | shell command | none | Run with the user's login shell (`$SHELL -lc`) in the current directory when the notification is clicked; output is discarded |
 
 - A notification needs `--title` or `--body`.
-- An `--icon` id the font does not have is not an error: the notification shows without an icon and its body ends with `Invalid icon: <id>`. The command still prints `OK: pushed`.
+- An `--icon` id the font does not have is not an error: the notification shows without an icon and with a small `Invalid icon: <id>` note under its text. The command still prints `OK: pushed`.
 - `--open` and `--run` are mutually exclusive. Without either, a click only dismisses the notification.
 - Hovering a notification shows what a click will do, including the full command.
 

@@ -250,6 +250,11 @@ struct NotificationCard: View {
                 if !notification.body.isEmpty {
                     Text(notification.body).font(typography.font(.callout)).lineLimit(8)
                 }
+                if let invalidIcon = notification.invalidIcon {
+                    Text("Invalid icon: \(invalidIcon)")
+                        .font(typography.font(.caption2))
+                        .foregroundStyle(.secondary)
+                }
                 if notification.shownByMacOS {
                     Text("Shown by macOS for its buttons")
                         .font(typography.font(.caption2))

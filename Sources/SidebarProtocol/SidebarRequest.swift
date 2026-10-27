@@ -48,7 +48,7 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
     public let body: String
     public let severity: NotificationSeverity
     /// sketchybar-app-font icon id, such as `slack` or `:slack:`. The app resolves it; an unknown id is
-    /// reported in the notification's body rather than rejected.
+    /// noted on the notification rather than rejected.
     public let icon: String?
     public let action: NotificationAction?
 

@@ -114,6 +114,14 @@ struct SidebarViewTests {
         #expect(try icon.attributes().font() == .custom(AppIconFont.family, fixedSize: 10))
     }
 
+    @Test func notesUnknownIconLikeOtherCardNotes() throws {
+        model.add(SidebarNotification(source: "cli", title: "Typo", invalidIcon: "slak"))
+
+        let note = try view().inspect().find(text: "Invalid icon: slak")
+
+        #expect(try note.attributes().font() == Typography(SidebarSettings.Font()).font(.caption2))
+    }
+
     @Test func marksNotificationsMacOSStillShows() throws {
         model.add(SidebarNotification(source: "Calendar", title: "Standup", shownByMacOS: true))
 

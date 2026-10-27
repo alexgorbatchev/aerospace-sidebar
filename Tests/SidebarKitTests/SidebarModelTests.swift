@@ -54,6 +54,7 @@ struct SidebarModelTests {
         SidebarNotification(source: "s", title: "t", body: "other"),
         SidebarNotification(source: "s", title: "t", body: "b", severity: .high),
         SidebarNotification(source: "s", title: "t", body: "b", icon: .init(id: "slack")),
+        SidebarNotification(source: "s", title: "t", body: "b", invalidIcon: "nope"),
         SidebarNotification(source: "s", title: "t", body: "b", action: .activateApp(name: "s")),
         SidebarNotification(source: "s", title: "t", body: "b", shownByMacOS: true),
     ])
@@ -145,19 +146,20 @@ struct SidebarModelTests {
         )
 
         #expect(notification.icon == SidebarNotification.Icon(id: "slack"))
+        #expect(notification.invalidIcon == nil)
         #expect(notification.body == "b")
     }
 
-    @Test(arguments: [("b", "b\n\nInvalid icon: :nope:"), ("", "Invalid icon: :nope:")])
-    func namesUnknownIconAtTheEndOfTheBody(body: String, expected: String) throws {
+    @Test func keepsUnknownIconApartFromTheText() throws {
         let notification = SidebarNotification(
-            payload: try NotificationPayload(title: "t", body: body, icon: ":nope:"),
+            payload: try NotificationPayload(title: "t", body: "b", icon: ":nope:"),
             source: "cli",
             icons: .vendored
         )
 
         #expect(notification.icon == nil)
-        #expect(notification.body == expected)
+        #expect(notification.invalidIcon == ":nope:")
+        #expect(notification.body == "b")
     }
 
     @Test(arguments: [

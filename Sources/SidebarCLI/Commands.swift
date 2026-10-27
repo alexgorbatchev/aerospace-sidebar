@@ -43,7 +43,7 @@ struct NotificationFields: ParsableArguments {
     var severity: NotificationSeverity = .normal
 
     @Option(help: ArgumentHelp(
-        "App icon from sketchybar-app-font, such as slack or :slack:. An unknown id is named in the body.",
+        "App icon from sketchybar-app-font, such as slack or :slack:. An unknown id is noted on the notification.",
         valueName: "id"
     ))
     var icon: String?

@@ -32,6 +32,8 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
     public let body: String
     public let severity: NotificationSeverity
     public let icon: Icon?
+    /// The icon id a push named that the font does not have; the card notes it under the text.
+    public let invalidIcon: String?
     public let action: ClickAction?
     /// macOS kept presenting the original notification because it needs interaction.
     public let shownByMacOS: Bool
@@ -48,6 +50,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         body: String = "",
         severity: NotificationSeverity = .normal,
         icon: Icon? = nil,
+        invalidIcon: String? = nil,
         action: ClickAction? = nil,
         shownByMacOS: Bool = false,
         receivedAt: Date = Date(),
@@ -60,19 +63,16 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         self.body = body
         self.severity = severity
         self.icon = icon
+        self.invalidIcon = invalidIcon
         self.action = action
         self.shownByMacOS = shownByMacOS
         self.receivedAt = receivedAt
         self.occurrences = occurrences
     }
 
-    /// A pushed notification. An icon id that `icons` does not know is named at the end of the body.
+    /// A pushed notification. An icon id that `icons` does not know is kept as `invalidIcon`.
     public init(payload: NotificationPayload, source: String, icons: AppIconFont, receivedAt: Date = Date()) {
         let icon = payload.icon.flatMap(icons.icon(for:))
-        var body = payload.body
-        if let value = payload.icon, icon == nil {
-            body = [body, "Invalid icon: \(value)"].filter { !$0.isEmpty }.joined(separator: "\n\n")
-        }
         let action: ClickAction? = switch payload.action {
         case nil: nil
         case .open(let url): .open(url)
@@ -82,9 +82,10 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
             source: source,
             title: payload.title,
             subtitle: payload.subtitle,
-            body: body,
+            body: payload.body,
             severity: payload.severity,
             icon: icon,
+            invalidIcon: icon == nil ? payload.icon : nil,
             action: action,
             receivedAt: receivedAt
         )
@@ -95,8 +96,8 @@ extension SidebarNotification {
     /// Same sender, text, severity, icon, click action and presentation; only identity, time and count may differ.
     func hasSameContent(as other: SidebarNotification) -> Bool {
         source == other.source && title == other.title && subtitle == other.subtitle && body == other.body
-            && severity == other.severity && icon == other.icon && action == other.action
-            && shownByMacOS == other.shownByMacOS
+            && severity == other.severity && icon == other.icon && invalidIcon == other.invalidIcon
+            && action == other.action && shownByMacOS == other.shownByMacOS
     }
 
     /// This entry with `newer` folded in: it keeps its identity, takes `newer`'s time, and adds its count.
@@ -109,6 +110,7 @@ extension SidebarNotification {
             body: body,
             severity: severity,
             icon: icon,
+            invalidIcon: invalidIcon,
             action: action,
             shownByMacOS: shownByMacOS,
             receivedAt: max(receivedAt, newer.receivedAt),
