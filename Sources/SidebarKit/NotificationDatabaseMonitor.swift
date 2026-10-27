@@ -118,6 +118,16 @@ public final class NotificationDatabaseMonitor {
         guard let last = records.last else { return }
         recordID = last.recordID
         let readAt = now()
+        // How late the read is after delivery, and after macOS wrote the log, shows whether a delay comes
+        // from macOS or from watching the file.
+        let deliveredAgo = readAt.timeIntervalSince(last.deliveredAt)
+        let writtenAgo = FileWatcher.signature(of: database.logURL).map {
+            readAt.timeIntervalSince1970 - (Double($0.modified) + Double($0.modifiedNanoseconds) / 1e9)
+        }
+        Self.logger.info("""
+            Read \(records.map(\.identifier), privacy: .public); newest delivered \(deliveredAgo, format: .fixed(precision: 1), privacy: .public) s \
+            ago, log written \(writtenAgo ?? -1, format: .fixed(precision: 1), privacy: .public) s ago
+            """)
         pending += records.map { ($0, readAt) }
         scheduleDelivery()
     }
