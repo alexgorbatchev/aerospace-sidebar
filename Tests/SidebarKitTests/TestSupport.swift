@@ -7,12 +7,15 @@ import Foundation
 @MainActor
 final class FakeElement: AccessibilityElement {
     var attributes: [String: String]
+    var flags: [String: Bool] = [:]
     var childElements: [FakeElement]
     var actions: [String]
     var actionSucceeds = true
     var performed: [String] = []
     var position: CGPoint?
     var moves: [CGPoint] = []
+    /// Whether `setPosition` changes `position`; NotificationCenter may keep a window where it is.
+    var keepsMoves = true
 
     init(
         _ attributes: [String: String] = [:],
@@ -27,6 +30,7 @@ final class FakeElement: AccessibilityElement {
     }
 
     func string(_ attribute: String) -> String? { attributes[attribute] }
+    func bool(_ attribute: String) -> Bool? { flags[attribute] }
     var children: [any AccessibilityElement] { childElements }
     var actionNames: [String] { actions }
 
@@ -36,7 +40,9 @@ final class FakeElement: AccessibilityElement {
     }
 
     func setPosition(_ point: CGPoint) -> Bool {
-        position = point
+        if keepsMoves {
+            position = point
+        }
         moves.append(point)
         return true
     }
@@ -51,8 +57,22 @@ final class FakeElement: AccessibilityElement {
         ], actions: ["AXPress", "Name:Close\nTarget:0x0\nSelector:(null)"])
     }
 
+    /// A collapsed stack of alerts: only the newest alert's text, and a description ending in ", stacked".
+    static func alertStack(id: String = "stack-1", app: String = "Self Service", title: String = "Slack", body: String = "Update complete.") -> FakeElement {
+        let stack = banner(id: id, app: app, title: title, body: body)
+        stack.attributes[kAXSubroleAttribute] = "AXNotificationCenterAlertStack"
+        stack.attributes[kAXDescriptionAttribute] = "\(app), \(title), \(body), stacked"
+        stack.actions = ["AXPress", "Name:Show Details\nTarget:0x0\nSelector:(null)", "Name:Clear All\nTarget:0x0\nSelector:(null)"]
+        return stack
+    }
+
+    /// NotificationCenter's "Notification Center" window as macOS 26 lays it out.
     static func window(_ banners: FakeElement..., position: CGPoint = .zero) -> FakeElement {
-        FakeElement([kAXRoleAttribute: kAXWindowRole], children: [FakeElement(children: banners)], position: position)
+        FakeElement(
+            [kAXRoleAttribute: kAXWindowRole, kAXSubroleAttribute: "AXSystemDialog", kAXTitleAttribute: "Notification Center"],
+            children: [FakeElement([kAXIdentifierAttribute: "AXNotificationListItems"], children: banners)],
+            position: position
+        )
     }
 }
 
@@ -71,6 +91,7 @@ final class FakePlatform: AccessibilityPlatform {
     var promptRequests: [Bool] = []
     var pid: pid_t? = 42
     var windowsByPID: [pid_t: [FakeElement]] = [:]
+    var applicationsByPID: [pid_t: FakeElement] = [:]
     var observeSucceeds = true
     var observedPIDs: [pid_t] = []
     var handler: (@MainActor (any AccessibilityElement) -> Void)?
@@ -81,6 +102,8 @@ final class FakePlatform: AccessibilityPlatform {
     }
 
     func notificationCenterPID() -> pid_t? { pid }
+
+    func application(ofProcess pid: pid_t) -> (any AccessibilityElement)? { applicationsByPID[pid] }
 
     func windows(ofProcess pid: pid_t) -> [any AccessibilityElement] { windowsByPID[pid] ?? [] }
 

@@ -15,6 +15,33 @@ struct NotificationBannersTests {
         #expect(banners.map { $0.string(kAXIdentifierAttribute) } == [nil, "second"])
     }
 
+    /// Only the four subroles NotificationCenter uses for notifications count, matched exactly.
+    @Test func recognizesExactlyTheNotificationSubroles() {
+        let subroles = [
+            "AXNotificationCenterBanner", "AXNotificationCenterAlert", "AXNotificationCenterBannerStack",
+            "AXNotificationCenterAlertStack", "AXNotificationCenterNextFocus", "AXNotificationCenterBannerWindow",
+        ]
+        let root = FakeElement(children: subroles.map { FakeElement([kAXSubroleAttribute: $0, kAXIdentifierAttribute: $0]) })
+
+        #expect(NotificationBanners.find(in: root).map { $0.string(kAXIdentifierAttribute) } == Array(subroles.prefix(4)))
+        #expect(NotificationBanners.kind(of: FakeElement.alertStack()) == .stack)
+        #expect(NotificationBanners.kind(of: FakeElement.banner()) == .banner)
+        #expect(NotificationBanners.kind(of: FakeElement()) == nil)
+    }
+
+    @Test func detectsTheOpenHistoryPanel() {
+        let application = FakeElement()
+        let window = FakeElement.window(FakeElement.banner())
+        #expect(!NotificationBanners.isPanelOpen(application: application, windows: [window]))
+        #expect(!NotificationBanners.isPanelOpen(application: nil, windows: []))
+
+        application.flags["AXExpanded"] = true
+        #expect(NotificationBanners.isPanelOpen(application: application, windows: [window]))
+
+        let panel = FakeElement.window(FakeElement([kAXIdentifierAttribute: NotificationBanners.panelMarker]))
+        #expect(NotificationBanners.isPanelOpen(application: nil, windows: [window, panel]))
+    }
+
     @Test func stopsAtMaxDepth() {
         var element = FakeElement.banner()
         for _ in 0..<3 {
@@ -274,6 +301,94 @@ struct SystemNotificationInterceptorTests {
         later.childElements.append(FakeElement([kAXRoleAttribute: kAXTextFieldRole]))
         interceptor.process(window: FakeElement.window(later))
         #expect(received.map(\.shownByMacOS) == [false, true])
+    }
+
+    /// A collapsed stack exposes only its newest notification, so it is pressed open and its notifications
+    /// are handled one by one on later passes. It is not pressed again while it expands.
+    @Test func expandsStacksInsteadOfReportingThem() {
+        var now = Date(timeIntervalSince1970: 0)
+        var received: [SidebarNotification] = []
+        let interceptor = SystemNotificationInterceptor(now: { now }) { received.append($0) }
+        let stack = FakeElement.alertStack()
+        let window = FakeElement.window(stack)
+
+        #expect(interceptor.sweep(windows: [window], application: nil) == .pending)
+        #expect(interceptor.sweep(windows: [window], application: nil) == .pending)
+        #expect(stack.performed == [kAXPressAction])
+        #expect(received.isEmpty)
+        #expect(window.position == SystemNotificationInterceptor.offScreen)
+
+        now += SystemNotificationInterceptor.expansionGrace
+        interceptor.sweep(windows: [window], application: nil)
+        #expect(stack.performed == [kAXPressAction, kAXPressAction])
+
+        let expanded = [FakeElement.banner(id: "a", title: "First"), FakeElement.banner(id: "b", title: "Second")]
+        expanded.forEach { $0.attributes[kAXSubroleAttribute] = "AXNotificationCenterAlert" }
+        let expandedWindow = FakeElement.window(expanded[0], expanded[1])
+        #expect(interceptor.sweep(windows: [expandedWindow], application: nil) == .pending)
+        #expect(received.map(\.title) == ["First", "Second"])
+        #expect(expanded.map(\.performed.count) == [1, 1])
+
+        #expect(interceptor.sweep(windows: [FakeElement.window()], application: nil) == .settled)
+    }
+
+    @Test func leavesStacksFromAppsLeftToMacOSCollapsed() {
+        var received: [SidebarNotification] = []
+        let interceptor = SystemNotificationInterceptor(leavesToMacOS: { $0 == "Self Service" }) { received.append($0) }
+        let stack = FakeElement.alertStack()
+        let window = FakeElement.window(stack)
+
+        #expect(interceptor.sweep(windows: [window], application: nil) == .settled)
+
+        #expect(stack.performed.isEmpty)
+        #expect(window.moves.isEmpty)
+        #expect(received.map(\.title) == ["Slack"])
+        #expect(received.map(\.shownByMacOS) == [true])
+    }
+
+    @Test func leavesEverythingAloneWhileTheHistoryPanelIsOpen() {
+        var received = 0
+        let interceptor = SystemNotificationInterceptor { _ in received += 1 }
+        let banner = FakeElement.banner()
+        let stack = FakeElement.alertStack()
+        let window = FakeElement.window(banner, stack, FakeElement([kAXIdentifierAttribute: NotificationBanners.panelMarker]))
+
+        #expect(interceptor.sweep(windows: [window], application: nil) == .settled)
+
+        #expect(banner.performed.isEmpty)
+        #expect(stack.performed.isEmpty)
+        #expect(window.moves.isEmpty)
+        #expect(received == 0)
+    }
+
+    /// A window is hidden only when every notification in it is intercepted, and only once.
+    @Test func hidesEachWindowOnItsOwn() {
+        let interceptor = SystemNotificationInterceptor { _ in }
+        let interactive = FakeElement.banner(id: "native")
+        interactive.actions.append("Name:Snooze\nTarget:0x0\nSelector:(null)")
+        let kept = FakeElement.window(interactive)
+        let hidden = FakeElement.window(FakeElement.banner(id: "plain"))
+
+        #expect(interceptor.sweep(windows: [kept, hidden], application: FakeElement()) == .pending)
+        interceptor.sweep(windows: [kept, hidden], application: FakeElement())
+
+        #expect(kept.moves.isEmpty)
+        #expect(hidden.moves == [SystemNotificationInterceptor.offScreen])
+    }
+
+    @Test func toleratesAWindowThatRefusesToMove() {
+        var received = 0
+        let interceptor = SystemNotificationInterceptor { _ in received += 1 }
+        let banner = FakeElement.banner()
+        let window = FakeElement.window(banner)
+        window.keepsMoves = false
+
+        interceptor.process(window: window)
+
+        #expect(window.moves == [SystemNotificationInterceptor.offScreen])
+        #expect(window.position == .zero)
+        #expect(banner.performed.count == 1)
+        #expect(received == 1)
     }
 
     @Test func restoresOnlyOffScreenWindows() {

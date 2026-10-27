@@ -6,6 +6,7 @@ import ApplicationServices
 public protocol AccessibilityPlatform {
     func isTrusted(prompt: Bool) -> Bool
     func notificationCenterPID() -> pid_t?
+    func application(ofProcess pid: pid_t) -> (any AccessibilityElement)?
     func windows(ofProcess pid: pid_t) -> [any AccessibilityElement]
     /// Calls `handler` with each element NotificationCenter reports as created or changed.
     /// Returns a token that keeps the observation alive, or nil when it cannot be set up.
@@ -14,18 +15,30 @@ public protocol AccessibilityPlatform {
 
 /// Keeps a `SystemNotificationInterceptor` attached to the NotificationCenter process:
 /// waits for the Accessibility permission and re-attaches when NotificationCenter relaunches.
+///
+/// Each event NotificationCenter reports starts a sweep of its windows, repeated every `sweepInterval`
+/// while notifications are still closing or stacks expanding, and for `settleDuration` after the last
+/// event. A banner reports a single layout change as it starts sliding in, and its close action only
+/// works once the slide-in ends, so the repeats are what close it (NotificationNanny re-sweeps the same
+/// way). Sweeping stops `maxSweepDuration` after the last event even if a notification never closes.
 @MainActor
 public final class NotificationCenterMonitor {
     nonisolated public static let notificationCenterBundleID = "com.apple.notificationcenterui"
+    static let sweepInterval: TimeInterval = 0.25
+    static let settleDuration: TimeInterval = 1.5
+    static let maxSweepDuration: TimeInterval = 10
 
     private let platform: any AccessibilityPlatform
     private let interceptor: SystemNotificationInterceptor
     private let onStatus: @MainActor (InterceptionStatus) -> Void
     private let workspaceCenter: NotificationCenter
     private let permissionPollInterval: TimeInterval
+    private let now: () -> Date
     private var observation: AnyObject?
     private var attachedPID: pid_t?
     private var permissionTimer: Timer?
+    private var sweepTimer: Timer?
+    private var lastEvent: Date?
     private var launchObserver: NSObjectProtocol?
     public private(set) var isRunning = false
 
@@ -35,13 +48,20 @@ public final class NotificationCenterMonitor {
         interceptor: SystemNotificationInterceptor,
         workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
         permissionPollInterval: TimeInterval = 2,
+        now: @escaping () -> Date = Date.init,
         onStatus: @escaping @MainActor (InterceptionStatus) -> Void
     ) {
         self.platform = platform
         self.interceptor = interceptor
         self.workspaceCenter = workspaceCenter
         self.permissionPollInterval = permissionPollInterval
+        self.now = now
         self.onStatus = onStatus
+    }
+
+    isolated deinit {
+        sweepTimer?.invalidate()
+        permissionTimer?.invalidate()
     }
 
     /// Prompts for the Accessibility permission when missing, then attaches once it is granted.
@@ -85,10 +105,48 @@ public final class NotificationCenterMonitor {
         }
         launchObserver = nil
         observation = nil
+        stopSweeping()
         if let attachedPID {
             interceptor.restore(platform.windows(ofProcess: attachedPID))
         }
         attachedPID = nil
+    }
+
+    /// Sweeps now and keeps sweeping until NotificationCenter settles.
+    func notificationCenterChanged() {
+        lastEvent = now()
+        sweep()
+        guard sweepTimer == nil else { return }
+        sweepTimer = Timer.scheduledTimer(withTimeInterval: Self.sweepInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sweepAgain() }
+        }
+    }
+
+    /// A repeated sweep; stops once NotificationCenter has been quiet long enough.
+    func sweepAgain() {
+        let outcome = sweep()
+        let quiet = lastEvent.map { now().timeIntervalSince($0) } ?? .infinity
+        if quiet >= Self.maxSweepDuration {
+            if outcome == .pending {
+                SystemNotificationInterceptor.logger.notice("Notifications still closing after \(Self.maxSweepDuration, privacy: .public) s")
+            }
+            stopSweeping()
+        } else if outcome == .settled, quiet >= Self.settleDuration {
+            stopSweeping()
+        }
+    }
+
+    var isSweeping: Bool { sweepTimer != nil }
+
+    @discardableResult
+    private func sweep() -> SystemNotificationInterceptor.Outcome {
+        guard let attachedPID else { return .settled }
+        return interceptor.sweep(windows: platform.windows(ofProcess: attachedPID), application: platform.application(ofProcess: attachedPID))
+    }
+
+    private func stopSweeping() {
+        sweepTimer?.invalidate()
+        sweepTimer = nil
     }
 
     private func attach() {
@@ -97,8 +155,8 @@ public final class NotificationCenterMonitor {
             onStatus(.notificationCenterUnavailable)
             return
         }
-        observation = platform.observe(process: pid) { [weak self] element in
-            self?.interceptor.process(window: element)
+        observation = platform.observe(process: pid) { [weak self] _ in
+            self?.notificationCenterChanged()
         }
         guard observation != nil else {
             SystemNotificationInterceptor.logger.error("Cannot observe NotificationCenter (pid \(pid, privacy: .public))")
@@ -107,9 +165,8 @@ public final class NotificationCenterMonitor {
         }
         SystemNotificationInterceptor.logger.info("Attached to NotificationCenter (pid \(pid, privacy: .public))")
         attachedPID = pid
-        let windows = platform.windows(ofProcess: pid)
-        interceptor.restore(windows)
-        windows.forEach(interceptor.process(window:))
+        interceptor.restore(platform.windows(ofProcess: pid))
+        notificationCenterChanged()
         onStatus(.active)
     }
 }
@@ -127,6 +184,10 @@ public struct SystemAccessibility: AccessibilityPlatform {
         NSRunningApplication
             .runningApplications(withBundleIdentifier: NotificationCenterMonitor.notificationCenterBundleID)
             .first?.processIdentifier
+    }
+
+    public func application(ofProcess pid: pid_t) -> (any AccessibilityElement)? {
+        AXElement(AXUIElementCreateApplication(pid))
     }
 
     public func windows(ofProcess pid: pid_t) -> [any AccessibilityElement] {
@@ -193,6 +254,10 @@ struct AXElement: AccessibilityElement {
 
     func string(_ attribute: String) -> String? {
         self.attribute(attribute) as? String
+    }
+
+    func bool(_ attribute: String) -> Bool? {
+        self.attribute(attribute) as? Bool
     }
 
     var children: [any AccessibilityElement] {

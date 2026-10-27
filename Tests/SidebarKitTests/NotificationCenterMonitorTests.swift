@@ -10,14 +10,16 @@ struct NotificationCenterMonitorTests {
         let workspaceCenter = NotificationCenter()
         var statuses: [InterceptionStatus] = []
         var received: [SidebarNotification] = []
+        var now = Date(timeIntervalSince1970: 0)
         var monitor: NotificationCenterMonitor!
 
         @MainActor init() {
-            let interceptor = SystemNotificationInterceptor { [unowned self] in received.append($0) }
+            let interceptor = SystemNotificationInterceptor(now: { [unowned self] in now }) { [unowned self] in received.append($0) }
             monitor = NotificationCenterMonitor(
                 platform: platform,
                 interceptor: interceptor,
                 workspaceCenter: workspaceCenter,
+                now: { [unowned self] in now },
                 onStatus: { [unowned self] in statuses.append($0) }
             )
         }
@@ -37,14 +39,67 @@ struct NotificationCenterMonitorTests {
         #expect(harness.received.count == 1)
     }
 
-    @Test func forwardsObservedElementsToInterceptor() throws {
+    /// The element an event names may be the banner or its list rather than the window, so every event
+    /// sweeps NotificationCenter's windows.
+    @Test func eventsSweepNotificationCenterWindows() throws {
         let harness = Harness()
         harness.monitor.start()
+        defer { harness.monitor.stop() }
+        let banner = FakeElement.banner()
+        let window = FakeElement.window(banner)
+        harness.platform.windowsByPID[42] = [window]
 
         let handler = try #require(harness.platform.handler)
-        handler(FakeElement.window(FakeElement.banner()))
+        handler(banner)
 
         #expect(harness.received.count == 1)
+        #expect(window.position == SystemNotificationInterceptor.offScreen)
+        #expect(harness.monitor.isSweeping)
+    }
+
+    /// Sweeps repeat while a notification is still closing, stop once NotificationCenter has been quiet
+    /// for `settleDuration`, and give up after `maxSweepDuration`.
+    @Test func keepsSweepingUntilNotificationCenterSettles() throws {
+        let harness = Harness()
+        let banner = FakeElement.banner()
+        harness.platform.windowsByPID[42] = [FakeElement.window(banner)]
+        harness.monitor.start()
+        defer { harness.monitor.stop() }
+        #expect(banner.performed.count == 1)
+
+        harness.now += NotificationCenterMonitor.settleDuration
+        harness.monitor.sweepAgain()
+        #expect(banner.performed.count == 2)
+        #expect(harness.monitor.isSweeping)
+
+        harness.now += NotificationCenterMonitor.maxSweepDuration
+        harness.monitor.sweepAgain()
+        #expect(!harness.monitor.isSweeping)
+
+        harness.platform.windowsByPID[42] = []
+        harness.monitor.notificationCenterChanged()
+        harness.monitor.sweepAgain()
+        #expect(harness.monitor.isSweeping)
+        harness.now += NotificationCenterMonitor.settleDuration
+        harness.monitor.sweepAgain()
+        #expect(!harness.monitor.isSweeping)
+    }
+
+    @Test func leavesTheHistoryPanelAlone() {
+        let harness = Harness()
+        let application = FakeElement()
+        application.flags["AXExpanded"] = true
+        harness.platform.applicationsByPID[42] = application
+        let banner = FakeElement.banner()
+        let window = FakeElement.window(banner, position: SystemNotificationInterceptor.offScreen)
+        harness.platform.windowsByPID[42] = [window]
+
+        harness.monitor.start()
+        defer { harness.monitor.stop() }
+
+        #expect(banner.performed.isEmpty)
+        #expect(harness.received.isEmpty)
+        #expect(window.position == .zero)
     }
 
     @Test func waitsForAccessibilityPermission() {
@@ -153,6 +208,7 @@ struct NotificationCenterMonitorTests {
         harness.monitor.start()
 
         harness.monitor.stop()
+        #expect(!harness.monitor.isSweeping)
         harness.workspaceCenter.post(name: NSWorkspace.didLaunchApplicationNotification, object: nil)
 
         #expect(window.position == .zero)
@@ -178,6 +234,7 @@ struct SystemAccessibilityTests {
         let application = AXElement(AXUIElementCreateApplication(pid))
 
         #expect(application.string(kAXRoleAttribute) == (trusted ? kAXApplicationRole : nil))
+        #expect(application.bool(kAXRoleAttribute) == nil)
         #expect(application.children.isEmpty == !trusted)
         _ = application.actionNames
         if trusted {
@@ -205,6 +262,7 @@ struct SystemAccessibilityTests {
 
         #expect(platform.windows(ofProcess: -1).isEmpty)
         #expect(platform.observe(process: -1) { _ in } == nil)
+        #expect(platform.application(ofProcess: -1)?.bool("AXExpanded") == nil)
         #expect(element.string(kAXRoleAttribute) == nil)
         #expect(element.actionNames.isEmpty)
         #expect(!element.perform(kAXPressAction))

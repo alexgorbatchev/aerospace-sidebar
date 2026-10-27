@@ -5,6 +5,8 @@ import CoreGraphics
 @MainActor
 public protocol AccessibilityElement {
     func string(_ attribute: String) -> String?
+    /// A boolean attribute such as `AXExpanded`.
+    func bool(_ attribute: String) -> Bool?
     var children: [any AccessibilityElement] { get }
     var actionNames: [String] { get }
     @discardableResult func perform(_ action: String) -> Bool
@@ -23,10 +25,17 @@ public struct BannerContent: Equatable, Sendable {
     var isEmpty: Bool { title.isEmpty && body.isEmpty }
 }
 
-/// Reads and dismisses NotificationCenter banners through the accessibility tree.
+/// Reads, expands and dismisses NotificationCenter notifications through the accessibility tree.
 ///
 /// Observed NotificationCenter behavior on macOS 26:
-/// - Banners are elements with one of `bannerSubroles`, nested a few levels below the hosting window.
+/// - Notifications are elements with one of the subroles in `kinds`, nested a few levels below the
+///   "Notification Center" window (subrole `AXSystemDialog`). Every banner and alert on screen shares
+///   that one window, and so does the history panel while it is open.
+/// - Alerts from one app collapse into an `AXNotificationCenterAlertStack` that exposes only the newest
+///   alert's text and ends its description with ", stacked". Pressing the stack expands it into one
+///   `AXNotificationCenterAlert` per notification, next to a heading and "Show Less" and "Clear" buttons.
+///   `AXNotificationCenterBannerStack` groups entries in the history panel (macos-notification-cli,
+///   AriSweedler/dotfiles notif-center, SignalLadder, OmniWM).
 /// - The banner's `AXDescription` starts with the posting app's name, followed by ", ". macOS's own
 ///   notifications, such as Disk Not Ejected Properly, have no app: their description starts with the title.
 /// - Text elements carry an `AXIdentifier` of `title`, `subtitle` or `body`.
@@ -41,20 +50,52 @@ public enum NotificationBanners {
         kAXTextFieldRole, kAXTextAreaRole, kAXButtonRole, kAXPopUpButtonRole, kAXMenuButtonRole, kAXCheckBoxRole,
     ]
 
-    public static let bannerSubroles: Set<String> = [
-        "AXNotificationCenterBanner",
-        "AXNotificationCenterBannerWindow",
-        "AXNotificationCenterAlert",
-        "AXNotificationCenterNotification",
+    public enum Kind: Equatable, Sendable {
+        /// A temporary notification that slides away on its own.
+        case banner
+        /// A persistent notification that stays until dismissed.
+        case alert
+        /// Several notifications from one app, collapsed into one entry.
+        case stack
+    }
+
+    /// Matched exactly: NotificationCenter has other `AXNotificationCenter…` subroles, such as
+    /// `AXNotificationCenterNextFocus` (AnyDoor).
+    public static let kinds: [String: Kind] = [
+        "AXNotificationCenterBanner": .banner,
+        "AXNotificationCenterAlert": .alert,
+        "AXNotificationCenterBannerStack": .stack,
+        "AXNotificationCenterAlertStack": .stack,
     ]
 
-    /// Banner elements under `root`, without descending into a banner.
+    /// Present only while Notification Center's history panel is open (AnyDoor, OmniWM).
+    static let panelMarker = "widget-editor-button"
+
+    public static func kind(of element: any AccessibilityElement) -> Kind? {
+        element.string(kAXSubroleAttribute).flatMap { kinds[$0] }
+    }
+
+    /// Notification elements under `root`, without descending into a notification.
     public static func find(in root: any AccessibilityElement, maxDepth: Int = 6) -> [any AccessibilityElement] {
-        if let subrole = root.string(kAXSubroleAttribute), bannerSubroles.contains(subrole) {
+        if kind(of: root) != nil {
             return [root]
         }
         guard maxDepth > 0 else { return [] }
         return root.children.flatMap { find(in: $0, maxDepth: maxDepth - 1) }
+    }
+
+    /// Whether Notification Center's history panel is open. Its entries share the banners' window and
+    /// subroles, so they must be left alone: closing them would delete the user's history. The
+    /// NotificationCenter application reports `AXExpanded` while the panel is open (AnyDoor), and the panel
+    /// shows an Edit Widgets button with `panelMarker` as its identifier (AnyDoor, OmniWM).
+    public static func isPanelOpen(application: (any AccessibilityElement)?, windows: [any AccessibilityElement]) -> Bool {
+        application?.bool("AXExpanded") == true || windows.contains { contains(identifier: panelMarker, in: $0, maxDepth: 6) }
+    }
+
+    private static func contains(identifier: String, in element: any AccessibilityElement, maxDepth: Int) -> Bool {
+        if element.string(kAXIdentifierAttribute) == identifier { return true }
+        guard maxDepth > 0 else { return false }
+        return element.children.contains { contains(identifier: identifier, in: $0, maxDepth: maxDepth - 1) }
     }
 
     public static func content(of banner: any AccessibilityElement) -> BannerContent {
