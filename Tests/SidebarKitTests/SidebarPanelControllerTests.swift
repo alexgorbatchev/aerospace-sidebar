@@ -60,16 +60,16 @@ struct SidebarPanelControllerTests {
     }
 
     @Test func pinHidesPanelWhenTargetScreenIsGone() {
-        var visibleFrame: CGRect? = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let visibleFrame = Mutable<CGRect?>(CGRect(x: 0, y: 0, width: 1440, height: 900))
         let controller = SidebarPanelController.forTesting(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
             settings: settings,
-            targetVisibleFrame: { visibleFrame },
+            targetVisibleFrame: { visibleFrame.value },
             notificationCenter: NotificationCenter()
         )
         controller.pin()
 
-        visibleFrame = nil
+        visibleFrame.value = nil
         controller.pin()
 
         #expect(!controller.panel.isVisible)
@@ -77,16 +77,16 @@ struct SidebarPanelControllerTests {
 
     @Test func repinsWhenScreenParametersChange() {
         let notificationCenter = NotificationCenter()
-        var visibleFrame = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let visibleFrame = Mutable(CGRect(x: 0, y: 0, width: 1440, height: 900))
         let controller = SidebarPanelController.forTesting(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
             settings: settings,
-            targetVisibleFrame: { visibleFrame },
+            targetVisibleFrame: { visibleFrame.value },
             notificationCenter: notificationCenter
         )
         controller.pin()
 
-        visibleFrame = CGRect(x: 0, y: 80, width: 2560, height: 1300)
+        visibleFrame.value = CGRect(x: 0, y: 80, width: 2560, height: 1300)
         notificationCenter.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
 
         #expect(controller.panel.frame == CGRect(x: 2260, y: 80, width: 300, height: 1300))

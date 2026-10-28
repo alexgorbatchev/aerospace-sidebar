@@ -418,8 +418,8 @@ struct SystemNotificationInterceptorTests {
 
     @Test func listsInteractiveNotificationsWithoutButtonsWhenSettingsSaySo() throws {
         var received: [SidebarNotification] = []
-        var leavesActionable = false
-        let interceptor = SystemNotificationInterceptor(leavesActionableToMacOS: { leavesActionable }) { received.append($0) }
+        let leavesActionable = Mutable(false)
+        let interceptor = SystemNotificationInterceptor(leavesActionableToMacOS: { leavesActionable.value }) { received.append($0) }
         let reply = FakeElement.banner(id: "reply", app: "Messages", title: "Alex")
         reply.childElements.append(FakeElement([kAXRoleAttribute: kAXTextFieldRole]))
         let window = FakeElement.window(reply)
@@ -431,7 +431,7 @@ struct SystemNotificationInterceptorTests {
         #expect(received.map(\.shownByMacOS) == [false])
         #expect(received.map(\.action) == [.activateApp(name: "Messages")])
 
-        leavesActionable = true
+        leavesActionable.value = true
         let later = FakeElement.banner(id: "reply-2", app: "Messages", title: "Sam")
         later.childElements.append(FakeElement([kAXRoleAttribute: kAXTextFieldRole]))
         interceptor.process(window: FakeElement.window(later))

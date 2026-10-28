@@ -189,7 +189,7 @@ struct SettingsPaneTests {
     @Test func permissionsOfferStepsUntilGranted() throws {
         onboarding.refresh()
         let sut = try permissionsPane().inspect()
-        #expect(try sut.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Not done" }).count == 3)
+        #expect(sut.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Not done" }).count == 3)
         #expect(throws: Never.self) { try sut.find(textWhere: { text, _ in text == "Required to read and hide banners." }) }
         #expect(throws: Never.self) { try sut.find(textWhere: { text, _ in text.hasPrefix("Optional. Lists notifications that showed no banner") }) }
         #expect(throws: Never.self) { try sut.find(text: "Optional. Starts the sidebar when you log in.") }
@@ -202,13 +202,13 @@ struct SettingsPaneTests {
         loginItems.status = .enabled
         onboarding.refresh()
         let granted = try permissionsPane().inspect()
-        #expect(try granted.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Done" }).count == 3)
+        #expect(granted.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Done" }).count == 3)
         // The checkmark says it; no text repeats it.
         for done in ["Accessibility granted", "Full Disk Access granted", "Opens at login"] {
             #expect(throws: (any Error).self) { try granted.find(text: done) }
         }
         #expect(throws: (any Error).self) { try granted.find(button: "Open Accessibility") }
-        #expect(try granted.findAll(ViewType.Button.self, where: { try $0.labelView().text().string() == "Remove" }).count == 3)
+        #expect(granted.findAll(ViewType.Button.self, where: { try $0.labelView().text().string() == "Remove" }).count == 3)
     }
 
     /// Remove takes the app off each permission's list in System Settings and reports the result.
@@ -235,7 +235,7 @@ struct SettingsPaneTests {
     @Test func permissionsManageLoginItem() throws {
         onboarding.refresh()
         let disabled = try permissionsPane().inspect()
-        #expect(try disabled.findAll(ViewType.Button.self, where: { try $0.labelView().text().string() == "Remove" }).count == 2)
+        #expect(disabled.findAll(ViewType.Button.self, where: { try $0.labelView().text().string() == "Remove" }).count == 2)
         try disabled.find(button: "Add to Login Items").tap()
         #expect(loginItems.status == .enabled)
 
@@ -276,7 +276,7 @@ struct SettingsPaneTests {
         let missing = try sidebarPane().inspect()
         #expect(throws: Never.self) { try missing.find(text: "No AeroSpace config found.") }
         #expect(throws: Never.self) { try missing.find(button: "Update Config") }
-        #expect(try missing.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Not done" }).count == 1)
+        #expect(missing.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Not done" }).count == 1)
         #expect(throws: (any Error).self) { try missing.find(button: "Write Again") }
         try missing.find(button: "Copy Settings").tap()
 
@@ -285,7 +285,7 @@ struct SettingsPaneTests {
         let configured = try sidebarPane().inspect()
         #expect(throws: (any Error).self) { try configured.find(text: "AeroSpace configured") }
         #expect(throws: Never.self) { try configured.find(text: ".aerospace.toml reserves 300 points on the right for the sidebar.") }
-        #expect(try configured.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Done" }).count == 1)
+        #expect(configured.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Done" }).count == 1)
         #expect(throws: Never.self) { try configured.find(button: "Write Again") }
     }
 

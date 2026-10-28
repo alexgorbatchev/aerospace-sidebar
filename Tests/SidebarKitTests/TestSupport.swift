@@ -152,6 +152,17 @@ final class FakePlatform: AccessibilityPlatform {
     }
 }
 
+/// A value a test changes after handing a closure that reads it to the code under test. A captured local
+/// `var` changed later would be shared mutable state between the test and that `@MainActor` closure.
+@MainActor
+final class Mutable<Value> {
+    var value: Value
+
+    init(_ value: Value) {
+        self.value = value
+    }
+}
+
 @MainActor
 final class InMemoryStore: NotificationStore {
     var stored: [SidebarNotification]
