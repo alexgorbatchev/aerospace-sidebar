@@ -439,7 +439,7 @@ struct NotificationCard: View {
         }
         parts += [notification.title, notification.subtitle, notification.body].filter { !$0.isEmpty }.map { Text($0) }
         parts += notes.map { Text($0) }
-        return parts.dropFirst().reduce(parts[0]) { $0 + Text(", ") + $1 }
+        return parts.dropFirst().reduce(parts[0]) { Text("\($0), \($1)") }
     }
 
     private var accent: Color? {
