@@ -175,7 +175,10 @@ enum SaberBeam {
     /// Where the head stops: one lap plus the beam's length, by which time the beam has faded out.
     static let end: CGFloat = 1 + length
     static let tailLayers = 4
-    static let layerOpacity: Double = 1 / Double(tailLayers)
+    /// How opaque the beam is at its head, where every layer overlaps.
+    static let peakOpacity: Double = 0.15
+    /// Each layer's opacity, so that `tailLayers` of them stacked reach `peakOpacity`: 1 - (1 - a)^n = peak.
+    static let layerOpacity: Double = 1 - pow(1 - peakOpacity, 1 / Double(tailLayers))
     /// The outline's width.
     static let lineWidth: CGFloat = 1
     static let coreWidth: CGFloat = 1.5
