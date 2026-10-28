@@ -84,7 +84,9 @@ reset-permissions:
 
 # The alerts come from alerter (brew install vjeantet/tap/alerter); each alerter waits in the background
 # until its alert is answered or closed, or for alert_timeout seconds. They are sent as Script Editor, like
-# the osascript notification, so keep Script Editor out of apps_left_to_macos.
+# the osascript notification, so keep Script Editor out of apps_left_to_macos. A Reply alert whose field is
+# still open when alerter exits can never be closed: answer or close it before alert_timeout, or run
+# killall NotificationCenter.
 # Push test notifications through the CLI, the URL scheme and macOS itself, plus alerts with buttons
 test-notifications alert_timeout="600":
     @command -v alerter >/dev/null || { echo "alerter not found; install it with: brew install vjeantet/tap/alerter" >&2; exit 1; }
