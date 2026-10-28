@@ -4,10 +4,8 @@
       "name": "Alex Gorbatchev",
       "email": "alex.gorbatchev@gmail.com"
     },
-    "timestamp": 1793155738,
-    "op": "CreateTask",
-    "title": "mouse hover effect",
-    "kind": "task",
-    "description": "on mouse hover notifications should have a faint saber border effect, same effect should apply to the buttons: dismiss, dismiss all and settings"
+    "timestamp": 1793159193,
+    "op": "SetStatus",
+    "status": "DONE"
   }
 ]
