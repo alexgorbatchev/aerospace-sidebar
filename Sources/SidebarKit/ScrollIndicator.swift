@@ -16,7 +16,8 @@ struct ScrollMetrics: Equatable {
     init(_ geometry: ScrollGeometry) {
         self.init(
             contentHeight: geometry.contentSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom,
-            visibleHeight: geometry.containerSize.height,
+            // `containerSize` leaves out the content insets, which stay visible around the content.
+            visibleHeight: geometry.containerSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom,
             offset: geometry.contentOffset.y + geometry.contentInsets.top
         )
     }

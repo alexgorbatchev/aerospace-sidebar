@@ -13,7 +13,22 @@ struct ScrollMetricsTests {
             containerSize: CGSize(width: 300, height: 400)
         )
 
-        #expect(ScrollMetrics(geometry) == ScrollMetrics(contentHeight: 1030, visibleHeight: 400, offset: 100))
+        #expect(ScrollMetrics(geometry) == ScrollMetrics(contentHeight: 1030, visibleHeight: 430, offset: 100))
+    }
+
+    /// SwiftUI reports a scroll view with content margins as a container that much shorter than its frame;
+    /// scrolled to the end, the bottom margin is in view and nothing is hidden below.
+    @Test func scrolledToTheEndWithContentMarginsHasNothingBelow() {
+        let geometry = ScrollGeometry(
+            contentOffset: CGPoint(x: 0, y: 759),
+            contentSize: CGSize(width: 300, height: 1757),
+            contentInsets: EdgeInsets(top: 0, leading: 0, bottom: 16, trailing: 0),
+            containerSize: CGSize(width: 300, height: 998)
+        )
+        let metrics = ScrollMetrics(geometry)
+
+        #expect(metrics.offset == metrics.maxOffset)
+        #expect(metrics.hasContentAbove && !metrics.hasContentBelow)
     }
 
     @Test func contentThatFitsIsNotScrollable() {
