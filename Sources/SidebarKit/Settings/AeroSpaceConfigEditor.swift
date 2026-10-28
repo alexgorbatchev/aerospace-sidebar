@@ -62,10 +62,11 @@ public enum AeroSpaceConfigEditor {
     }
 
     /// The config with the sidebar's strip reserved and the float rule added where needed.
-    public static func apply(to text: String, sidebar: SidebarSettings.Sidebar) throws -> String {
+    /// - Parameter rewritingBlock: Writes the managed block even when the gap already matches.
+    public static func apply(to text: String, sidebar: SidebarSettings.Sidebar, rewritingBlock: Bool = false) throws -> String {
         let analysis = analyze(text, sidebar: sidebar)
         var result = text
-        if !analysis.gapMatches {
+        if rewritingBlock || !analysis.gapMatches {
             result = try writeBlock(for: sidebar, in: result)
         }
         if analysis.missingFloatRule {

@@ -57,6 +57,19 @@ struct AeroSpaceSyncTests {
         #expect(sut.message == nil)
     }
 
+    /// Write Again writes and reloads a config that already matches, which a sync leaves alone.
+    @Test func writesMatchingConfigAgainOnRequest() async throws {
+        try home.write("[gaps]\nouter.left = [{ monitor.main = 250 }, 0]\n\n\(AeroSpaceConfigEditor.floatRule)\n", to: ".config/aerospace/aerospace.toml")
+        let sut = sync()
+
+        await sut.update(rewritingBlock: true)
+
+        #expect(cli.calls == [["reload-config", "--dry-run", "--no-gui"], ["reload-config", "--no-gui"]])
+        #expect(sut.message?.hasPrefix("Updated and reloaded AeroSpace.") == true)
+        #expect(try String(contentsOf: home.url.appendingPathComponent(".config/aerospace/aerospace.toml"), encoding: .utf8).contains(AeroSpaceConfigEditor.blockStart))
+        #expect(sut.isConfigured)
+    }
+
     @Test func syncUpdatesAndReloadsMismatchedConfig() async throws {
         try home.write("[gaps]\nouter.right = [{ monitor.main = 305 }, 5]\n", to: ".config/aerospace/aerospace.toml")
         let sut = sync()

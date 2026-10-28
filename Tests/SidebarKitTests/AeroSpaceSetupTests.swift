@@ -129,6 +129,17 @@ struct AeroSpaceConfigEditorTests {
         #expect(try AeroSpaceConfigEditor.apply(to: configured, sidebar: Self.right) == configured + "\n" + Self.ruleWithComment + "\n")
     }
 
+    /// Write Again puts a matching gap that is not in the managed block back into one.
+    @Test func rewritesConfiguredGapIntoBlockOnRequest() throws {
+        let configured = "[gaps]\nouter.right = [{ monitor.main = 305 }, 5]\n\n\(Self.rule)\n"
+
+        let result = try AeroSpaceConfigEditor.apply(to: configured, sidebar: Self.right, rewritingBlock: true)
+
+        #expect(result.contains(AeroSpaceConfigEditor.blockStart))
+        #expect(AeroSpaceConfigEditor.analyze(result, sidebar: Self.right).isConfigured)
+        #expect(try AeroSpaceConfigEditor.apply(to: result, sidebar: Self.right, rewritingBlock: true) == result)
+    }
+
     @Test func snippetConfiguresAnEmptyGapsTable() {
         let snippet = AeroSpaceConfigEditor.snippet(for: Self.left)
 

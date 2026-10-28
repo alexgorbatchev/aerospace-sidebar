@@ -101,7 +101,8 @@ public struct AeroSpaceSetup: Sendable {
     /// running the edit is kept without either step. The previous config is kept next to it as
     /// `aerospace.toml.bak`, replacing an older backup. Symlinked configs are edited at their target.
     /// Generated configs are edited too: the sidebar puts its block back after each regeneration.
-    public func apply(sidebar: SidebarSettings.Sidebar) async throws(SetupError) -> Outcome {
+    /// - Parameter rewritingBlock: Writes the managed block and reloads even when the config already matches.
+    public func apply(sidebar: SidebarSettings.Sidebar, rewritingBlock: Bool = false) async throws(SetupError) -> Outcome {
         let url: URL
         do {
             url = try AeroSpaceConfig.locate(home: home, environment: environment).resolvingSymlinksInPath()
@@ -118,7 +119,7 @@ public struct AeroSpaceSetup: Sendable {
         }
         let edited: String
         do {
-            edited = try AeroSpaceConfigEditor.apply(to: original, sidebar: sidebar)
+            edited = try AeroSpaceConfigEditor.apply(to: original, sidebar: sidebar, rewritingBlock: rewritingBlock)
         } catch let AeroSpaceConfigEditor.EditError.unsupported(reason) {
             throw .unsupported(reason)
         } catch {

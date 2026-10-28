@@ -43,11 +43,13 @@ public final class AeroSpaceSync {
     }
 
     /// Edits the config to reserve the saved sidebar and reloads AeroSpace.
-    public func update() async {
+    /// - Parameter rewritingBlock: Writes the managed block and reloads even when the config already
+    ///   matches, for Write Again.
+    public func update(rewritingBlock: Bool = false) async {
         isUpdating = true
         defer { isUpdating = false }
         do {
-            switch try await setup.apply(sidebar: sidebar()) {
+            switch try await setup.apply(sidebar: sidebar(), rewritingBlock: rewritingBlock) {
             case .updated(let backup):
                 message = "Updated and reloaded AeroSpace. The previous config is in \(backup.lastPathComponent)."
             case .updatedWithoutReload(let backup):
