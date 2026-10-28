@@ -5,6 +5,21 @@ import Testing
 
 @MainActor
 struct SidebarModelTests {
+    /// The dismissed Full Disk Access note stays dismissed after a relaunch.
+    @Test func remembersTheDismissedFullDiskAccessNote() throws {
+        let fixture = try NotificationDatabaseFixture()
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), defaults: fixture.defaults)
+        #expect(!model.fullDiskAccessNoteDismissed)
+
+        model.dismissFullDiskAccessNote()
+
+        #expect(model.fullDiskAccessNoteDismissed)
+        #expect(SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), defaults: fixture.defaults).fullDiskAccessNoteDismissed)
+        let inMemory = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        inMemory.dismissFullDiskAccessNote()
+        #expect(inMemory.fullDiskAccessNoteDismissed)
+    }
+
     @Test func ordersBySeverityThenRecency() {
         let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
         let names: [(String, NotificationSeverity)] = [

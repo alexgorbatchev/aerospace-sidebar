@@ -148,6 +148,8 @@ struct SettingsGroupBoxStyle: GroupBoxStyle {
 struct SetupStep: View {
     let title: String
     let isDone: Bool
+    /// Finds the step's button on screen, for steps whose action starts from it.
+    var anchor: ScreenFrameAnchor?
     let action: () -> Void
 
     @Environment(\.typography) private var typography
@@ -159,6 +161,11 @@ struct SetupStep: View {
                 .accessibilityLabel(isDone ? "Done" : "Not done")
             if !isDone {
                 Button(title, font: typography.font(.body), action: action)
+                    .background {
+                        if let anchor {
+                            ScreenFrameReader(anchor: anchor)
+                        }
+                    }
             }
         }
     }

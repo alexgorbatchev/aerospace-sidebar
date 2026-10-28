@@ -142,6 +142,7 @@ struct NotificationDatabaseMonitorTests {
     final class Harness {
         var now = Date(timeIntervalSinceReferenceDate: 900_000_000)
         var received: [SidebarNotification] = []
+        var statuses: [NotificationDatabaseStatus] = []
     }
 
     func makeMonitor(_ harness: Harness, grace: TimeInterval = 3) -> NotificationDatabaseMonitor {
@@ -151,7 +152,8 @@ struct NotificationDatabaseMonitorTests {
             defaults: fixture.defaults,
             grace: grace,
             appName: { $0 == "com.apple.ScriptEditor2" ? "Script Editor" : nil },
-            now: { harness.now }
+            now: { harness.now },
+            onStatus: { harness.statuses.append($0) }
         ) { harness.received.append($0) }
     }
 
@@ -164,7 +166,7 @@ struct NotificationDatabaseMonitorTests {
         let monitor = makeMonitor(harness)
         monitor.start()
         defer { monitor.stop() }
-        #expect(monitor.isReadable)
+        #expect(monitor.status == .reading)
 
         let focus = try fixture.insert(title: "During Focus", subtitle: "Sub")
         identities.insert(try fixture.insert(title: "Shown as a banner").uuidString)
@@ -217,24 +219,58 @@ struct NotificationDatabaseMonitorTests {
         #expect(harness.received.map(\.title) == ["After"])
     }
 
-    @Test func waitsForFullDiskAccess() throws {
+    /// A database that cannot be opened is tried again until it opens; one that fails a read is reported but
+    /// still watched, since only missing access stops reading.
+    @Test func waitsForTheDatabase() throws {
         let harness = Harness()
         let monitor = makeMonitor(harness)
 
         monitor.start()
         monitor.open()
-        #expect(!monitor.isReadable)
+        #expect(monitor.status == .unreadable)
         #expect(monitor.isWaitingForAccess)
 
         try fixture.create()
         monitor.open()
-        #expect(monitor.isReadable)
+        #expect(monitor.status == .reading)
         #expect(!monitor.isWaitingForAccess)
 
-        try FileManager.default.removeItem(at: fixture.database.url.deletingLastPathComponent())
+        try fixture.execute("DROP TABLE app")
         monitor.readNewRecords()
+        #expect(monitor.status == .unreadable)
+        #expect(!monitor.isWaitingForAccess)
+
         monitor.stop()
-        #expect(!monitor.isReadable)
+        #expect(harness.statuses == [.unreadable, .reading, .unreadable, .stopped])
+    }
+
+    /// `checkAccess` opens a database it waits for at once, and reads one it watches.
+    @Test func checksAccessOnRequest() throws {
+        let harness = Harness()
+        let monitor = makeMonitor(harness, grace: 0)
+        monitor.checkAccess()
+        #expect(monitor.status == .stopped)
+
+        monitor.start()
+        defer { monitor.stop() }
+        try fixture.create()
+        monitor.checkAccess()
+        #expect(monitor.status == .reading)
+
+        try fixture.insert(title: "Checked")
+        monitor.checkAccess()
+        monitor.deliverPending()
+        #expect(harness.received.map(\.title) == ["Checked"])
+    }
+
+    /// Only SQLite's `SQLITE_AUTH`, which macOS returns while Full Disk Access is missing, asks for it.
+    @Test func tellsMissingAccessFromOtherFailures() {
+        let denied = NotificationDatabase.Failure.sqlite(SQLITE_AUTH, message: "authorization denied")
+        let missing = NotificationDatabase.Failure.sqlite(SQLITE_CANTOPEN, message: "unable to open database file")
+
+        #expect(denied == .accessDenied("authorization denied") && denied.isAccessDenied)
+        #expect(missing == .unreadable("unable to open database file") && !missing.isAccessDenied)
+        #expect(denied.description == "Cannot read the notification database: authorization denied")
     }
 
     /// A write to the database wakes the monitor, which lists the record once its grace period ends.

@@ -7,8 +7,8 @@ import PermissionFlow
 public protocol PermissionGuiding {
     func state(of pane: PermissionFlowPane) -> PermissionAuthorizationState
     /// Opens the pane in System Settings, next to a floating panel from which the user drags the app into
-    /// the pane's list.
-    func authorize(_ pane: PermissionFlowPane)
+    /// the pane's list. The panel flies there from `sourceFrame`, the clicked button's frame on screen.
+    func authorize(_ pane: PermissionFlowPane, from sourceFrame: CGRect?)
     /// Takes the app off the pane's list, granted or not.
     func reset(_ pane: PermissionFlowPane) async -> CommandResult
 }
@@ -41,8 +41,8 @@ public final class PermissionFlowGuide: PermissionGuiding {
         PermissionStatusRegistry.provider(for: pane).authorizationState()
     }
 
-    public func authorize(_ pane: PermissionFlowPane) {
-        controller.authorize(pane: pane)
+    public func authorize(_ pane: PermissionFlowPane, from sourceFrame: CGRect?) {
+        controller.authorize(pane: pane, sourceFrameInScreen: sourceFrame)
     }
 
     /// Resets the app's entry through `tccutil`, the only supported way to revoke a privacy permission.
@@ -63,8 +63,10 @@ public final class PermissionFlowGuide: PermissionGuiding {
     }
 }
 
-/// Full Disk Access as the sidebar needs it: whether the notification database opens. PermissionFlow's own
-/// check probes other protected paths, which says nothing about this one.
+/// Full Disk Access as the sidebar needs it: whether macOS lets the notification database open. PermissionFlow's
+/// own check probes other protected paths, which says nothing about this one. Only macOS refusing access
+/// means it is not granted; a database that fails otherwise, such as one a macOS update changed, leaves it
+/// unknown.
 public struct NotificationDatabaseAccess: PermissionStatusProviding {
     public let database: NotificationDatabase
 
@@ -75,6 +77,11 @@ public struct NotificationDatabaseAccess: PermissionStatusProviding {
     public var capability: PermissionStatusCapability { .preflightSupported }
 
     public func authorizationState() -> PermissionAuthorizationState {
-        (try? database.latestRecordID()) != nil ? .granted : .notGranted
+        do {
+            _ = try database.latestRecordID()
+            return .granted
+        } catch {
+            return error.isAccessDenied ? .notGranted : .unknown
+        }
     }
 }

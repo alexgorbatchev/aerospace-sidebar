@@ -256,6 +256,11 @@ public final class SidebarModel {
     /// rule hid it: what Settings › Rules tests rules against. Repeats stack, and the history limits apply.
     public private(set) var received: [SidebarNotification] = []
     public var interception: InterceptionStatus = .starting
+    /// Whether notifications that showed no banner are listed from the notification database.
+    public var database: NotificationDatabaseStatus = .stopped
+    /// Whether the user dismissed the sidebar's note asking for Full Disk Access; Settings › Permissions
+    /// still offers it.
+    public private(set) var fullDiskAccessNoteDismissed: Bool
     /// Identifiers of the hidden macOS alerts with choices that still exist; only their cards offer choices.
     public var presentAlerts: Set<String> = []
     /// Opens native notifications, performs alert choices and closes hidden notifications whose cards are gone;
@@ -266,6 +271,8 @@ public final class SidebarModel {
     @ObservationIgnored private let store: any NotificationStore
     /// Where `received` is kept; without one it lasts until the app quits.
     @ObservationIgnored private let receivedStore: (any NotificationStore)?
+    /// Where choices such as `fullDiskAccessNoteDismissed` are kept; without one they last until the app quits.
+    @ObservationIgnored private let defaults: UserDefaults?
     @ObservationIgnored private let now: () -> Date
     /// How long and how many notifications are kept.
     @ObservationIgnored public private(set) var history: SidebarSettings.History
@@ -278,6 +285,7 @@ public final class SidebarModel {
         performer: any NotificationActionPerforming = WorkspaceActionPerformer(),
         store: any NotificationStore,
         receivedStore: (any NotificationStore)? = nil,
+        defaults: UserDefaults? = nil,
         history: SidebarSettings.History = SidebarSettings.History(),
         rules: [SidebarSettings.Rule] = [],
         now: @escaping () -> Date = Date.init
@@ -285,6 +293,8 @@ public final class SidebarModel {
         self.performer = performer
         self.store = store
         self.receivedStore = receivedStore
+        self.defaults = defaults
+        fullDiskAccessNoteDismissed = defaults?.bool(forKey: Self.fullDiskAccessNoteDismissedKey) ?? false
         self.history = history
         self.rules = NotificationRules(rules)
         self.now = now
@@ -298,6 +308,14 @@ public final class SidebarModel {
             .sorted { $0.receivedAt > $1.receivedAt }
             .prefix(history.maxCount))
         listedNotifications = Self.nativeIdentifiers(in: notifications)
+    }
+
+    static let fullDiskAccessNoteDismissedKey = "fullDiskAccessNoteDismissed"
+
+    /// Stops asking for Full Disk Access in the sidebar, also after a relaunch.
+    public func dismissFullDiskAccessNote() {
+        fullDiskAccessNoteDismissed = true
+        defaults?.set(true, forKey: Self.fullDiskAccessNoteDismissedKey)
     }
 
     /// Applies new history limits, dropping notifications they no longer allow.

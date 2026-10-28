@@ -27,12 +27,25 @@ public struct DeliveredNotification: Equatable, Sendable {
 ///   whose `req` dictionary holds `titl`, `subt` and `body`.
 public struct NotificationDatabase: Sendable {
     public enum Failure: Error, Equatable, CustomStringConvertible {
-        /// The database is missing, or macOS refused access because Full Disk Access is not granted.
+        /// macOS refused access because Full Disk Access is not granted; SQLite reports `SQLITE_AUTH`
+        /// ("authorization denied").
+        case accessDenied(String)
+        /// The database is missing or not in the expected shape.
         case unreadable(String)
+
+        /// The failure a SQLite result code stands for.
+        static func sqlite(_ result: Int32, message: String) -> Failure {
+            result == SQLITE_AUTH ? .accessDenied(message) : .unreadable(message)
+        }
+
+        /// Whether Full Disk Access is what is missing.
+        public var isAccessDenied: Bool {
+            if case .accessDenied = self { true } else { false }
+        }
 
         public var description: String {
             switch self {
-            case .unreadable(let message): "Cannot read the notification database: \(message)"
+            case .accessDenied(let message), .unreadable(let message): "Cannot read the notification database: \(message)"
             }
         }
     }
@@ -117,7 +130,7 @@ private final class Connection {
         guard result == SQLITE_OK, let handle else {
             let message = handle.map { String(cString: sqlite3_errmsg($0)) } ?? String(cString: sqlite3_errstr(result))
             sqlite3_close(handle)
-            throw .unreadable(message)
+            throw .sqlite(result, message: message)
         }
         self.handle = handle
     }
@@ -128,8 +141,9 @@ private final class Connection {
 
     func prepare(_ sql: String) throws(NotificationDatabase.Failure) -> Statement {
         var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
-            throw .unreadable(String(cString: sqlite3_errmsg(handle)))
+        let result = sqlite3_prepare_v2(handle, sql, -1, &statement, nil)
+        guard result == SQLITE_OK, let statement else {
+            throw .sqlite(result, message: String(cString: sqlite3_errmsg(handle)))
         }
         return Statement(connection: self, handle: statement)
     }
@@ -161,7 +175,7 @@ private final class Statement {
         switch sqlite3_step(handle) {
         case SQLITE_ROW: return true
         case SQLITE_DONE: return false
-        default: throw .unreadable(String(cString: sqlite3_errmsg(connection.handle)))
+        case let result: throw .sqlite(result, message: String(cString: sqlite3_errmsg(connection.handle)))
         }
     }
 

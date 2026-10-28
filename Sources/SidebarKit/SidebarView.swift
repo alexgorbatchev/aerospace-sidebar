@@ -1,3 +1,4 @@
+import PermissionFlow
 import SidebarProtocol
 import SwiftUI
 
@@ -8,6 +9,8 @@ struct SidebarView: View {
     let side: SidebarSettings.Sidebar.Side
     /// Shows the Settings window on a group.
     let openSettings: (SettingsGroup) -> Void
+    /// Starts granting a permission from the clicked button's frame on screen.
+    let setUp: (PermissionFlowPane, CGRect?) -> Void
 
     static let margin: CGFloat = 16
     /// The panel starts right under the menu bar, which already leaves room above the buttons.
@@ -20,26 +23,31 @@ struct SidebarView: View {
     @State private var scrollMetrics = ScrollMetrics()
     @State private var isScrolling = false
     @State private var hoveredID: SidebarNotification.ID?
+    /// PermissionFlow's drag panel flies from the clicked Set Up… button to System Settings.
+    @State private var accessibilityAnchor = ScreenFrameAnchor()
+    @State private var fullDiskAccessAnchor = ScreenFrameAnchor()
 
     var body: some View {
         VStack(alignment: screenEdge, spacing: 6) {
             controls
             if let message = statusMessage {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(message)
-                        .font(typography.font(.callout))
-                        .foregroundStyle(.secondary)
+                StatusNote(text: message) {
                     if model.interception == .needsAccessibility {
-                        Button("Set Up…", font: typography.font(.body)) { openSettings(.permissions) }
+                        Button("Set Up…", font: typography.font(.body)) { setUp(.accessibility, accessibilityAnchor.screenFrame) }
+                            .screenFrameAnchor(accessibilityAnchor)
+                            .accessibilityLabel("Set Up Accessibility")
                     }
                 }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                // The panel is transparent, so text outside cards gets the cards' material.
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: NotificationCard.cornerRadius))
-                .floatingShadow()
-                .padding(.horizontal, Self.margin)
-                .transition(.opacity)
+            }
+            if asksForFullDiskAccess {
+                StatusNote(text: Self.fullDiskAccessNote) {
+                    HStack(spacing: 6) {
+                        Button("Set Up…", font: typography.font(.body)) { setUp(.fullDiskAccess, fullDiskAccessAnchor.screenFrame) }
+                            .screenFrameAnchor(fullDiskAccessAnchor)
+                            .accessibilityLabel("Set Up Full Disk Access")
+                        Button("Dismiss", font: typography.font(.body)) { model.dismissFullDiskAccessNote() }
+                    }
+                }
             }
             // The list spans the full width so the scroll indicator sits in the margin on the sidebar's screen edge.
             ScrollView {
@@ -93,6 +101,7 @@ struct SidebarView: View {
         // Changes arrive from the model, outside any view action, so the view animates them itself.
         .animation(Self.motion, value: model.notifications)
         .animation(Self.motion, value: model.interception)
+        .animation(Self.motion, value: asksForFullDiskAccess)
         .animation(Self.motion, value: model.presentAlerts)
     }
 
@@ -140,6 +149,13 @@ struct SidebarView: View {
         )
     }
 
+    static let fullDiskAccessNote = "Grant Full Disk Access to also list notifications that showed no banner."
+
+    /// Full Disk Access is optional, so the note asking for it can be dismissed for good.
+    private var asksForFullDiskAccess: Bool {
+        model.database == .needsFullDiskAccess && !model.fullDiskAccessNoteDismissed
+    }
+
     private var statusMessage: String? {
         switch model.interception {
         case .starting, .active: nil
@@ -147,6 +163,30 @@ struct SidebarView: View {
         case .needsAccessibility: "Grant Accessibility access to show macOS notifications here."
         case .notificationCenterUnavailable: "macOS notifications cannot be read right now."
         }
+    }
+}
+
+/// A note above the list, such as what the sidebar needs to work, with buttons that act on it.
+private struct StatusNote<Actions: View>: View {
+    let text: String
+    @ViewBuilder let actions: () -> Actions
+
+    @Environment(\.typography) private var typography
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(text)
+                .font(typography.font(.callout))
+                .foregroundStyle(.secondary)
+            actions()
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // The panel is transparent, so text outside cards gets the cards' material.
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: NotificationCard.cornerRadius))
+        .floatingShadow()
+        .padding(.horizontal, SidebarView.margin)
+        .transition(.opacity)
     }
 }
 

@@ -131,7 +131,6 @@ final class RecordingAlerts: NativeNotificationControlling {
 @MainActor
 final class FakePlatform: AccessibilityPlatform {
     var trusted = true
-    var promptRequests: [Bool] = []
     var pid: pid_t? = 42
     var windowsByPID: [pid_t: [FakeElement]] = [:]
     var applicationsByPID: [pid_t: FakeElement] = [:]
@@ -142,10 +141,7 @@ final class FakePlatform: AccessibilityPlatform {
     /// The menu bar clock; nil when none can be found.
     var clock: FakeElement?
 
-    func isTrusted(prompt: Bool) -> Bool {
-        promptRequests.append(prompt)
-        return trusted
-    }
+    func isTrusted() -> Bool { trusted }
 
     func notificationCenterPID() -> pid_t? { pid }
 
@@ -298,13 +294,16 @@ extension AeroSpaceSetup {
 final class FakePermissions: PermissionGuiding {
     var states: [PermissionFlowPane: PermissionAuthorizationState] = [:]
     var authorized: [PermissionFlowPane] = []
+    /// The frame each `authorize` call started from.
+    var sourceFrames: [CGRect?] = []
     var resets: [PermissionFlowPane] = []
     var resetResult = CommandResult(status: 0, output: "")
 
     func state(of pane: PermissionFlowPane) -> PermissionAuthorizationState { states[pane] ?? .notGranted }
 
-    func authorize(_ pane: PermissionFlowPane) {
+    func authorize(_ pane: PermissionFlowPane, from sourceFrame: CGRect?) {
         authorized.append(pane)
+        sourceFrames.append(sourceFrame)
     }
 
     func reset(_ pane: PermissionFlowPane) async -> CommandResult {

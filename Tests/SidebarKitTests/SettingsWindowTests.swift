@@ -197,6 +197,8 @@ struct SettingsPaneTests {
         try sut.find(button: "Open Full Disk Access").tap()
         try sut.find(button: "Open Accessibility").tap()
         #expect(permissions.authorized == [.fullDiskAccess, .accessibility])
+        // Outside a window the buttons have no frame on screen, so the panel appears without flying in.
+        #expect(permissions.sourceFrames == [nil, nil])
 
         permissions.states = [.accessibility: .granted, .fullDiskAccess: .granted]
         loginItems.status = .enabled
@@ -211,10 +213,26 @@ struct SettingsPaneTests {
         #expect(granted.findAll(ViewType.Button.self, where: { try $0.labelView().text().string() == "Remove" }).count == 3)
     }
 
+    /// A notification database that fails for another reason than missing access leaves Full Disk Access
+    /// unknown: the step stays offered, and a warning says why it cannot tell.
+    @Test func fullDiskAccessThatCannotBeCheckedSaysSo() throws {
+        let warning = "Cannot tell whether it is granted: the notification database does not open, which a macOS update can cause."
+        #expect(throws: (any Error).self) { try permissionsPane().inspect().find(text: warning) }
+
+        permissions.states = [.fullDiskAccess: .unknown]
+        onboarding.refresh()
+
+        let sut = try permissionsPane().inspect()
+        #expect(throws: Never.self) { try sut.find(text: warning) }
+        #expect(throws: Never.self) { try sut.find(button: "Open Full Disk Access") }
+    }
+
     /// Remove takes the app off each permission's list in System Settings and reports the result.
     @Test func permissionsCanBeRemoved() async throws {
         permissions.states = [.accessibility: .granted, .fullDiskAccess: .granted]
         onboarding.refresh()
+        var changes = 0
+        onboarding.onPermissionsChanged = { changes += 1 }
         let removes = try permissionsPane().inspect().findAll(ViewType.Button.self, where: { try $0.labelView().text().string() == "Remove" })
 
         try removes[0].tap()
@@ -224,11 +242,12 @@ struct SettingsPaneTests {
         #expect(permissions.resets == [.accessibility])
         #expect(!onboarding.accessibilityGranted)
         #expect(onboarding.message == "Removed AerospaceSidebar from Accessibility.")
+        #expect(changes == 1)
 
         permissions.resetResult = CommandResult(status: 70, output: "tccutil: Failed to reset SystemPolicyAllFiles\n")
         await onboarding.removeFullDiskAccess()
         #expect(permissions.resets == [.accessibility, .fullDiskAccess])
-        #expect(onboarding.fullDiskAccessGranted)
+        #expect(onboarding.fullDiskAccess == .granted)
         #expect(onboarding.message == "Cannot remove AerospaceSidebar from Full Disk Access: tccutil: Failed to reset SystemPolicyAllFiles")
     }
 
@@ -611,7 +630,7 @@ struct SettingsWindowControllerTests {
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
         let workspaceCenter = NotificationCenter()
         let controller = SettingsWindowController.forTesting(store: store, aeroSpace: .fake(store: store, home: directory.url), workspaceCenter: workspaceCenter)
-        controller.follow(frontmostApp: SettingsWindowController.systemSettingsBundleID)
+        controller.follower.follow(frontmostApp: SystemSettingsFollower.systemSettingsBundleID)
         #expect(controller.window.level == .normal)
         controller.show()
         defer { controller.window.orderOut(nil) }
@@ -621,7 +640,7 @@ struct SettingsWindowControllerTests {
         #expect(controller.window.level == SettingsWindowController.level)
         #expect(controller.window.isVisible)
 
-        controller.follow(frontmostApp: SettingsWindowController.systemSettingsBundleID)
+        controller.follower.follow(frontmostApp: SystemSettingsFollower.systemSettingsBundleID)
         #expect(controller.window.level == .normal)
         #expect(controller.window.isVisible)
     }

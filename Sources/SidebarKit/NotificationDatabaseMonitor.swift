@@ -1,20 +1,38 @@
 import AppKit
 import os
 
+/// Whether `NotificationDatabaseMonitor` lists notifications that showed no banner.
+public enum NotificationDatabaseStatus: Equatable, Sendable {
+    /// Not started, or stopped because macOS notifications are left to macOS.
+    case stopped
+    case reading
+    /// macOS refuses access until Full Disk Access is granted; the monitor tries again meanwhile.
+    case needsFullDiskAccess
+    /// The database cannot be read for another reason, such as a macOS update changing it.
+    case unreadable
+}
+
 /// Lists notifications from the notification database that no banner showed.
 ///
 /// Each new record waits `grace` seconds for the accessibility path to report its banner, and is listed
 /// only if it did not. The id of the newest record read is kept in `defaults`, so notifications delivered
 /// while the sidebar was not running are listed at the next launch; the first launch starts from the
 /// newest record rather than importing the whole history. Without Full Disk Access the database cannot be
-/// read, and the monitor tries again every `accessRetryInterval` seconds.
+/// read, and the monitor tries again every `accessRetryInterval` seconds; access taken away while reading
+/// shows when the next read fails, or at once through `checkAccess()`.
 @MainActor
 public final class NotificationDatabaseMonitor {
     nonisolated static let logger = Logger(category: "database")
     static let recordIDKey = "notificationDatabaseRecordID"
     static let accessRetryInterval: TimeInterval = 5
 
-    public private(set) var isReadable = false
+    public private(set) var status = NotificationDatabaseStatus.stopped {
+        didSet {
+            if status != oldValue {
+                onStatus(status)
+            }
+        }
+    }
 
     private let database: NotificationDatabase
     private let identities: NotificationIdentities
@@ -22,6 +40,7 @@ public final class NotificationDatabaseMonitor {
     private let grace: TimeInterval
     private let appName: @MainActor (String) -> String?
     private let now: () -> Date
+    private let onStatus: @MainActor (NotificationDatabaseStatus) -> Void
     private let onNotification: @MainActor (SidebarNotification) -> Void
     private var watcher: FileWatcher?
     private var retryTimer: Timer?
@@ -33,6 +52,7 @@ public final class NotificationDatabaseMonitor {
     ///   - grace: How long a new record waits for its banner before it is listed. macOS writes a record 5–7 s
     ///     after delivering it, while a banner is reported within about a second, so a short grace suffices.
     ///   - appName: The display name of the app with a bundle identifier, or nil for none installed.
+    ///   - onStatus: Called with each change of `status`.
     public init(
         database: NotificationDatabase,
         identities: NotificationIdentities,
@@ -40,6 +60,7 @@ public final class NotificationDatabaseMonitor {
         grace: TimeInterval = 1,
         appName: @escaping @MainActor (String) -> String? = InstalledApps.name,
         now: @escaping () -> Date = Date.init,
+        onStatus: @escaping @MainActor (NotificationDatabaseStatus) -> Void = { _ in },
         onNotification: @escaping @MainActor (SidebarNotification) -> Void
     ) {
         self.database = database
@@ -48,6 +69,7 @@ public final class NotificationDatabaseMonitor {
         self.grace = grace
         self.appName = appName
         self.now = now
+        self.onStatus = onStatus
         self.onNotification = onNotification
     }
 
@@ -69,7 +91,18 @@ public final class NotificationDatabaseMonitor {
         deliveryTimer?.invalidate()
         deliveryTimer = nil
         pending = []
-        isReadable = false
+        status = .stopped
+    }
+
+    /// Checks the database now rather than at the next retry or change, such as after Full Disk Access was
+    /// removed.
+    public func checkAccess() {
+        guard status != .stopped else { return }
+        if watcher == nil {
+            open()
+        } else {
+            readNewRecords()
+        }
     }
 
     /// Whether the monitor is waiting for Full Disk Access.
@@ -81,18 +114,13 @@ public final class NotificationDatabaseMonitor {
         do {
             latest = try database.latestRecordID()
         } catch {
-            log(error)
-            isReadable = false
-            if retryTimer == nil {
-                retryTimer = Timer.scheduledTimer(withTimeInterval: Self.accessRetryInterval, repeats: true) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.open() }
-                }
-            }
+            failed(error)
+            retryLater()
             return
         }
         retryTimer?.invalidate()
         retryTimer = nil
-        isReadable = true
+        status = .reading
         lastError = nil
         Self.logger.info("Reading the notification database")
         // A recreated database starts its record ids over.
@@ -113,9 +141,15 @@ public final class NotificationDatabaseMonitor {
         do {
             records = try database.notifications(after: recordID, deliveredBy: now())
         } catch {
-            log(error)
+            failed(error)
+            // Without access, a change to the database would only fail again; opening it is what tells
+            // when access is back.
+            if error.isAccessDenied {
+                retryLater()
+            }
             return
         }
+        status = .reading
         guard let last = records.last else { return }
         recordID = last.recordID
         let readAt = now()
@@ -171,8 +205,20 @@ public final class NotificationDatabaseMonitor {
         set { defaults.set(NSNumber(value: newValue), forKey: Self.recordIDKey) }
     }
 
-    /// Logs each distinct failure once, so a missing permission does not flood the log every retry.
-    private func log(_ error: NotificationDatabase.Failure) {
+    /// Stops watching the database and tries to open it again every `accessRetryInterval` seconds.
+    private func retryLater() {
+        watcher?.stop()
+        watcher = nil
+        guard retryTimer == nil else { return }
+        retryTimer = Timer.scheduledTimer(withTimeInterval: Self.accessRetryInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.open() }
+        }
+    }
+
+    /// Reports the failure, logging each distinct one once so a missing permission does not flood the log
+    /// every retry.
+    private func failed(_ error: NotificationDatabase.Failure) {
+        status = error.isAccessDenied ? .needsFullDiskAccess : .unreadable
         guard error != lastError else { return }
         lastError = error
         Self.logger.error("\(error.description, privacy: .public)")

@@ -23,10 +23,10 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let onboarding: OnboardingModel
     private let aeroSpace: AeroSpaceSync
     private let fontChooser: FontChooser
-    private let workspaceCenter: NotificationCenter
+    /// Steps behind System Settings while it is in front.
+    let follower: SystemSettingsFollower
     /// Visible frame of the screen the sidebar is on.
     private let sidebarScreenFrame: @MainActor () -> CGRect?
-    private var activationObserver: NSObjectProtocol?
     /// What each pane needs to show all of its content, as it last reported it.
     private var paneSizes: [SettingsGroup: CGSize] = [:]
     /// Set by opening the window until `sizeWindow` can center it: panes report their sizes after the
@@ -35,7 +35,6 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// Where `sizeWindow` last centered the window. While the window is still there, size changes keep it
     /// centered; once moved, it keeps its top edge instead.
     private var centeredFrame: NSRect?
-    static let systemSettingsBundleID = "com.apple.systempreferences"
     /// Above the sidebar, which would otherwise cover the part of Settings over its strip.
     static let level = NSWindow.Level(rawValue: SidebarPanelController.level.rawValue + 1)
     /// A window size larger than the title bar and sidebar, for measuring them.
@@ -78,7 +77,6 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         self.onboarding = onboarding
         self.aeroSpace = aeroSpace
         self.fontChooser = fontChooser
-        self.workspaceCenter = workspaceCenter
         self.sidebarScreenFrame = sidebarScreenFrame
         editor = SettingsEditor(store: store)
         window = panelType.init(
@@ -88,6 +86,9 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
+        // Settings stays above other apps' windows and the sidebar until it is closed, except System Settings,
+        // where the Permissions steps send the user.
+        follower = SystemSettingsFollower(window: window, level: Self.level, workspaceCenter: workspaceCenter)
         super.init()
 
         let close: () -> Void = { [weak self] in
@@ -137,39 +138,10 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         // Panels hide when their app deactivates by default; this app is never active.
         window.hidesOnDeactivate = false
-        // Settings stays above other apps' windows and the sidebar until it is closed, except System Settings,
-        // where the Permissions steps send the user: floating over it, Settings would cover the permission
-        // lists and their switches.
-        window.level = NSWorkspace.shared.frontmostApplication?.bundleIdentifier != Self.systemSettingsBundleID ? Self.level : .normal
-        activationObserver = workspaceCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
-        ) { [weak self] notification in
-            let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-            let bundleIdentifier = app?.bundleIdentifier
-            MainActor.assumeIsolated { self?.follow(frontmostApp: bundleIdentifier) }
-        }
         window.delegate = self
         sizePanes()
         // Text sizes follow the font, previewed or saved, so the panes grow and shrink with it.
         store.observeFont { [weak self] _ in self?.sizePanes() }
-    }
-
-    isolated deinit {
-        activationObserver.map(workspaceCenter.removeObserver)
-    }
-
-    /// Floats above the sidebar unless System Settings is in front. A window keeps its place in the stack
-    /// when its level changes, so it is also ordered behind or in front explicitly.
-    func follow(frontmostApp bundleIdentifier: String?) {
-        let floats = bundleIdentifier != Self.systemSettingsBundleID
-        guard (window.level == Self.level) != floats else { return }
-        window.level = floats ? Self.level : .normal
-        guard window.isVisible else { return }
-        if floats {
-            window.orderFrontRegardless()
-        } else {
-            window.orderBack(nil)
-        }
     }
 
     /// Opens on `group` with a fresh draft and status, centered on the sidebar's screen unless it is already

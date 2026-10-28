@@ -4,7 +4,10 @@ import ApplicationServices
 /// The system services `NotificationCenterMonitor` needs; `SystemAccessibility` is the real one.
 @MainActor
 public protocol AccessibilityPlatform {
-    func isTrusted(prompt: Bool) -> Bool
+    /// Whether the app has the Accessibility permission. It never prompts: macOS's prompt opens System
+    /// Settings without PermissionFlow's drag panel, which the sidebar's Set Up… and Settings › Permissions
+    /// offer instead.
+    func isTrusted() -> Bool
     func notificationCenterPID() -> pid_t?
     func application(ofProcess pid: pid_t) -> (any AccessibilityElement)?
     func windows(ofProcess pid: pid_t) -> [any AccessibilityElement]
@@ -20,6 +23,10 @@ public protocol AccessibilityPlatform {
 
 /// Keeps a `SystemNotificationInterceptor` attached to the NotificationCenter process:
 /// waits for the Accessibility permission and re-attaches when NotificationCenter relaunches.
+///
+/// The permission can be granted or taken away at any time, in System Settings or through Settings ›
+/// Permissions, so it is checked every `permissionPollInterval` while the monitor runs: the monitor attaches
+/// once it is granted and lets go of NotificationCenter once it is gone.
 ///
 /// NotificationCenter's exit is watched directly, because launch notifications alone missed its
 /// relaunches (SignalLadder); after an exit the monitor retries attaching with a doubling delay, and
@@ -54,6 +61,8 @@ public final class NotificationCenterMonitor {
     private var observation: AnyObject?
     private var attachedPID: pid_t?
     private var permissionTimer: Timer?
+    /// Set while the Accessibility permission is missing; `checkPermission()` attaches once it arrives.
+    private(set) var isWaitingForPermission = false
     private var sweepTimer: Timer?
     private var historyTimer: Timer?
     private var lastEvent: Date?
@@ -64,7 +73,8 @@ public final class NotificationCenterMonitor {
     public private(set) var isRunning = false
 
     /// - Parameters:
-    ///   - permissionPollInterval: How often to check whether the Accessibility permission was granted.
+    ///   - permissionPollInterval: How often to check whether the Accessibility permission was granted or
+    ///     taken away.
     ///   - initialReattachDelay: How long to wait before the first attempt to attach again after
     ///     NotificationCenter exits or cannot be attached to; the delay doubles up to `maxReattachDelay`.
     public init(
@@ -94,7 +104,7 @@ public final class NotificationCenterMonitor {
         reattachTimer?.invalidate()
     }
 
-    /// Prompts for the Accessibility permission when missing, then attaches once it is granted.
+    /// Attaches, or waits for the Accessibility permission when it is missing.
     public func start() {
         guard !isRunning else { return }
         isRunning = true
@@ -110,27 +120,30 @@ public final class NotificationCenterMonitor {
                 MainActor.assumeIsolated { self?.attachUnlessWaitingForPermission() }
             },
         ]
-        if platform.isTrusted(prompt: true) {
-            attach()
-        } else {
-            onStatus(.needsAccessibility)
-            permissionTimer = Timer.scheduledTimer(withTimeInterval: permissionPollInterval, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated { self?.checkPermission() }
-            }
+        permissionTimer = Timer.scheduledTimer(withTimeInterval: permissionPollInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkPermission() }
         }
+        attach()
     }
 
-    /// Attaches once the Accessibility permission has been granted.
-    func checkPermission() {
-        guard platform.isTrusted(prompt: false) else { return }
-        permissionTimer?.invalidate()
-        permissionTimer = nil
-        attach()
+    /// Attaches once the Accessibility permission has been granted, and lets go of NotificationCenter once
+    /// it has been taken away.
+    public func checkPermission() {
+        guard isRunning else { return }
+        if platform.isTrusted() {
+            guard isWaitingForPermission else { return }
+            isWaitingForPermission = false
+            attach()
+        } else if !isWaitingForPermission {
+            SystemNotificationInterceptor.logger.notice("The Accessibility permission was taken away")
+            waitForPermission()
+        }
     }
 
     /// Stops observing and moves any hidden NotificationCenter window back on-screen.
     public func stop() {
         isRunning = false
+        isWaitingForPermission = false
         permissionTimer?.invalidate()
         permissionTimer = nil
         workspaceObservers.forEach(workspaceCenter.removeObserver)
@@ -204,14 +217,29 @@ public final class NotificationCenterMonitor {
     func notificationCenterExited(pid: pid_t) {
         guard pid == attachedPID else { return }
         SystemNotificationInterceptor.logger.notice("NotificationCenter (pid \(pid, privacy: .public)) exited")
+        detach()
+        onStatus(.notificationCenterUnavailable)
+        scheduleReattach()
+    }
+
+    /// Stops observing NotificationCenter, leaving its windows where they are.
+    private func detach() {
         observation = nil
         exitWatch = nil
         attachedPID = nil
         stopSweeping()
         stopOpeningHistory()
         interceptor.detach()
-        onStatus(.notificationCenterUnavailable)
-        scheduleReattach()
+    }
+
+    /// Lets go of NotificationCenter, whose windows can no longer be read or moved, until
+    /// `checkPermission()` finds the Accessibility permission granted.
+    private func waitForPermission() {
+        detach()
+        reattachTimer?.invalidate()
+        reattachTimer = nil
+        isWaitingForPermission = true
+        onStatus(.needsAccessibility)
     }
 
     private func scheduleReattach() {
@@ -228,15 +256,12 @@ public final class NotificationCenterMonitor {
 
     /// Until the Accessibility permission arrives, `checkPermission()` attaches and the status says so.
     private func attachUnlessWaitingForPermission() {
-        guard permissionTimer == nil else { return }
+        guard !isWaitingForPermission else { return }
         attach()
     }
 
     private func attach() {
-        guard platform.isTrusted(prompt: false) else {
-            onStatus(.notificationCenterUnavailable)
-            return
-        }
+        guard platform.isTrusted() else { return waitForPermission() }
         guard let pid = platform.notificationCenterPID() else {
             SystemNotificationInterceptor.logger.error("NotificationCenter is not running")
             onStatus(.notificationCenterUnavailable)
@@ -326,8 +351,8 @@ extension NotificationCenterMonitor: NativeNotificationControlling {
 public struct SystemAccessibility: AccessibilityPlatform {
     public init() {}
 
-    public func isTrusted(prompt: Bool) -> Bool {
-        AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": prompt] as CFDictionary)
+    public func isTrusted() -> Bool {
+        AXIsProcessTrusted()
     }
 
     public func notificationCenterPID() -> pid_t? {

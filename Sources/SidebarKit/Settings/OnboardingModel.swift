@@ -8,11 +8,14 @@ import PermissionFlow
 @Observable
 public final class OnboardingModel {
     public private(set) var accessibilityGranted = false
-    /// Whether the notification database can be read, which takes Full Disk Access.
-    public private(set) var fullDiskAccessGranted = false
+    /// Whether macOS lets the notification database open, which takes Full Disk Access; `.unknown` while the
+    /// database fails for another reason.
+    public private(set) var fullDiskAccess = PermissionAuthorizationState.notGranted
     public private(set) var loginItem = LoginItemStatus.unavailable
     /// Result of the last action that removed a permission or changed the login item.
     public private(set) var message: String?
+    /// Called after a permission was removed, so whatever depends on it can check it now.
+    @ObservationIgnored public var onPermissionsChanged: @MainActor () -> Void = {}
 
     @ObservationIgnored private let permissions: any PermissionGuiding
     @ObservationIgnored private let loginItems: any LoginItemService
@@ -25,20 +28,15 @@ public final class OnboardingModel {
 
     public func refresh() {
         accessibilityGranted = permissions.state(of: .accessibility) == .granted
-        fullDiskAccessGranted = permissions.state(of: .fullDiskAccess) == .granted
+        fullDiskAccess = permissions.state(of: .fullDiskAccess)
         loginItem = loginItems.status
     }
 
-    /// Opens the Full Disk Access pane with the drag panel; macOS offers no prompt for it.
-    public func requestFullDiskAccess() {
-        permissions.authorize(.fullDiskAccess)
-        refresh()
-    }
-
-    /// Opens the Accessibility pane with the drag panel. The prompt that adds the app to the pane's list
-    /// comes from `NotificationCenterMonitor` at launch.
-    public func requestAccessibility() {
-        permissions.authorize(.accessibility)
+    /// Opens the pane in System Settings with PermissionFlow's drag panel, which flies there from
+    /// `sourceFrame`, the clicked button's frame on screen. The sidebar never shows macOS's own Accessibility
+    /// prompt, which opens the pane without the panel, and macOS has none for Full Disk Access.
+    public func authorize(_ pane: PermissionFlowPane, from sourceFrame: CGRect? = nil) {
+        permissions.authorize(pane, from: sourceFrame)
         refresh()
     }
 
@@ -59,6 +57,7 @@ public final class OnboardingModel {
             ? "Removed AerospaceSidebar from \(name)."
             : "Cannot remove AerospaceSidebar from \(name): \(result.output.trimmingCharacters(in: .whitespacesAndNewlines))"
         refresh()
+        onPermissionsChanged()
     }
 
     public func addLoginItem() {

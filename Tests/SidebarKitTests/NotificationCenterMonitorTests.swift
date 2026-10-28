@@ -32,7 +32,6 @@ struct NotificationCenterMonitorTests {
 
         harness.monitor.start()
 
-        #expect(harness.platform.promptRequests.first == true)
         #expect(harness.platform.observedPIDs == [42])
         #expect(harness.statuses == [.active])
         #expect(hidden.moves == [.zero, SystemNotificationInterceptor.offScreen])
@@ -115,6 +114,58 @@ struct NotificationCenterMonitorTests {
         harness.monitor.checkPermission()
         #expect(harness.statuses == [.needsAccessibility, .active])
         harness.monitor.stop()
+    }
+
+    /// The sidebar never shows macOS's own prompt; the needsAccessibility status offers PermissionFlow instead.
+    @Test func losingAccessibilityLetsGoOfNotificationCenterUntilItIsBack() throws {
+        let harness = Harness()
+        harness.monitor.start()
+        defer { harness.monitor.stop() }
+        let handler = try #require(harness.platform.handler)
+
+        harness.platform.trusted = false
+        harness.monitor.checkPermission()
+        harness.monitor.checkPermission()
+        #expect(harness.statuses == [.active, .needsAccessibility])
+        #expect(harness.monitor.isWaitingForPermission)
+
+        let banner = FakeElement.banner()
+        harness.platform.windowsByPID[42] = [FakeElement.window(banner)]
+        handler(banner)
+        #expect(harness.received.isEmpty)
+
+        harness.platform.trusted = true
+        harness.monitor.checkPermission()
+        #expect(harness.statuses == [.active, .needsAccessibility, .active])
+        #expect(harness.platform.observedPIDs == [42, 42])
+        #expect(harness.received.count == 1)
+    }
+
+    /// An attempt to attach again, after NotificationCenter exited or the Mac woke, that finds the permission
+    /// gone says so and waits for it rather than retrying.
+    @Test func attachingWithoutAccessibilityWaitsForIt() throws {
+        let harness = Harness()
+        harness.monitor.start()
+        defer { harness.monitor.stop() }
+        let exited = try #require(harness.platform.exitHandlers[42])
+        exited()
+        #expect(harness.monitor.isWaitingToReattach)
+
+        harness.platform.trusted = false
+        harness.workspaceCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+
+        #expect(harness.statuses == [.active, .notificationCenterUnavailable, .needsAccessibility])
+        #expect(!harness.monitor.isWaitingToReattach)
+        #expect(harness.monitor.isWaitingForPermission)
+    }
+
+    @Test func checksNothingWhileStopped() {
+        let harness = Harness()
+        harness.platform.trusted = false
+
+        harness.monitor.checkPermission()
+
+        #expect(harness.statuses.isEmpty)
     }
 
     @Test func attachesOnceAccessibilityIsGrantedLater() async throws {
@@ -471,7 +522,7 @@ struct SystemAccessibilityTests {
     @Test(.enabled(if: dockPID != nil, "requires a logged-in session"))
     func readsRunningAppWithOrWithoutPermission() throws {
         let pid = try #require(Self.dockPID)
-        let trusted = platform.isTrusted(prompt: false)
+        let trusted = platform.isTrusted()
         let application = AXElement(AXUIElementCreateApplication(pid))
 
         #expect(application.string(kAXRoleAttribute) == (trusted ? kAXApplicationRole : nil))

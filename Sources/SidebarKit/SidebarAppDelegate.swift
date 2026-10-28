@@ -1,5 +1,6 @@
 import AppKit
 import os
+import PermissionFlow
 import SidebarProtocol
 
 /// Wires the sidebar panel, settings, notification interception, the URL scheme and the control socket.
@@ -19,20 +20,30 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     public private(set) var settingsWindow: SettingsWindowController?
     public private(set) var monitor: NotificationCenterMonitor?
     public private(set) var databaseMonitor: NotificationDatabaseMonitor?
+    /// The notification database, read by `databaseMonitor` and checked for Full Disk Access by `onboarding`.
+    public let notificationDatabase: NotificationDatabase
+    /// The Permissions steps, shared by Settings and the sidebar's Set Up… buttons; made on first use.
+    public private(set) lazy var onboarding: OnboardingModel = {
+        let onboarding = makeOnboarding(notificationDatabase)
+        onboarding.onPermissionsChanged = { [weak self] in self?.permissionsChanged() }
+        return onboarding
+    }()
     /// Notifications listed from NotificationCenter or its database, shared so neither lists one twice,
     /// and kept across launches.
     private let identities: NotificationIdentities
     private var server: ControlServer?
     private var pruneTimer: Timer?
-    private let makeController: @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor (SettingsGroup) -> Void) -> SidebarPanelController
+    private let makeController: @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor (SettingsGroup) -> Void, _ setUp: @escaping @MainActor (PermissionFlowPane, CGRect?) -> Void) -> SidebarPanelController
     private let makeMonitor: @MainActor (SidebarModel, SettingsStore, NotificationIdentities) -> NotificationCenterMonitor
-    private let makeDatabaseMonitor: @MainActor (SidebarModel, NotificationIdentities) -> NotificationDatabaseMonitor
+    private let makeDatabaseMonitor: @MainActor (SidebarModel, NotificationIdentities, NotificationDatabase) -> NotificationDatabaseMonitor
     private let makeServer: @MainActor (SidebarModel, AppIconFont) -> ControlServer
-    private let makeSettingsWindow: @MainActor (SettingsStore, AeroSpaceSync, SidebarModel) -> SettingsWindowController
+    private let makeOnboarding: @MainActor (NotificationDatabase) -> OnboardingModel
+    private let makeSettingsWindow: @MainActor (SettingsStore, AeroSpaceSync, OnboardingModel, SidebarModel) -> SettingsWindowController
     private let urlSender: @MainActor () -> String?
 
     /// - Parameters:
     ///   - identities: Notifications already listed; tests pass one that is not saved in `UserDefaults.standard`.
+    ///   - notificationDatabase: macOS's notification database; tests pass one in a temporary directory.
     ///   - urlSender: Name of the process that opened the URL being handled.
     public init(
         settings: SettingsStore = SettingsStore(file: SettingsFile(
@@ -43,25 +54,28 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
             SidebarModel(
                 store: FileNotificationStore(),
                 receivedStore: FileNotificationStore(url: FileNotificationStore.receivedURL),
+                defaults: .standard,
                 history: $0.history,
                 rules: $0.rules
             )
         },
         icons: AppIconFont = .bundled(),
         identities: NotificationIdentities = NotificationIdentities(defaults: .standard),
-        makeController: @escaping @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor (SettingsGroup) -> Void) -> SidebarPanelController = {
-            SidebarPanelController(model: $0, settings: $1, openSettings: $2)
+        notificationDatabase: NotificationDatabase = NotificationDatabase(home: FileManager.default.homeDirectoryForCurrentUser),
+        makeController: @escaping @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor (SettingsGroup) -> Void, _ setUp: @escaping @MainActor (PermissionFlowPane, CGRect?) -> Void) -> SidebarPanelController = {
+            SidebarPanelController(model: $0, settings: $1, openSettings: $2, setUp: $3)
         },
         makeMonitor: @escaping @MainActor (SidebarModel, SettingsStore, NotificationIdentities) -> NotificationCenterMonitor = {
             SidebarAppDelegate.makeMonitor(model: $0, settings: $1, identities: $2)
         },
-        makeDatabaseMonitor: @escaping @MainActor (SidebarModel, NotificationIdentities) -> NotificationDatabaseMonitor = {
-            SidebarAppDelegate.makeDatabaseMonitor(model: $0, identities: $1)
+        makeDatabaseMonitor: @escaping @MainActor (SidebarModel, NotificationIdentities, NotificationDatabase) -> NotificationDatabaseMonitor = {
+            SidebarAppDelegate.makeDatabaseMonitor(model: $0, identities: $1, database: $2)
         },
         makeServer: @escaping @MainActor (SidebarModel, AppIconFont) -> ControlServer = { SidebarAppDelegate.makeServer(model: $0, icons: $1) },
         makeAeroSpaceSync: @MainActor (SettingsStore) -> AeroSpaceSync = SidebarAppDelegate.makeAeroSpaceSync,
-        makeSettingsWindow: @escaping @MainActor (SettingsStore, AeroSpaceSync, SidebarModel) -> SettingsWindowController = { store, aeroSpace, model in
-            SettingsWindowController(store: store, onboarding: SidebarAppDelegate.makeOnboarding(), aeroSpace: aeroSpace) { model.received }
+        makeOnboarding: @escaping @MainActor (NotificationDatabase) -> OnboardingModel = SidebarAppDelegate.makeOnboarding(notificationDatabase:),
+        makeSettingsWindow: @escaping @MainActor (SettingsStore, AeroSpaceSync, OnboardingModel, SidebarModel) -> SettingsWindowController = { store, aeroSpace, onboarding, model in
+            SettingsWindowController(store: store, onboarding: onboarding, aeroSpace: aeroSpace) { model.received }
         },
         urlSender: @escaping @MainActor () -> String? = SidebarAppDelegate.currentAppleEventSender
     ) {
@@ -69,19 +83,21 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         self.model = makeModel(settings.settings)
         self.icons = icons
         self.identities = identities
+        self.notificationDatabase = notificationDatabase
         self.aeroSpace = makeAeroSpaceSync(settings)
         self.syncedSidebar = settings.settings.sidebar
         self.makeController = makeController
         self.makeMonitor = makeMonitor
         self.makeDatabaseMonitor = makeDatabaseMonitor
         self.makeServer = makeServer
+        self.makeOnboarding = makeOnboarding
         self.makeSettingsWindow = makeSettingsWindow
         self.urlSender = urlSender
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.mainMenu = Self.makeMainMenu()
-        let controller = makeController(model, settings) { [weak self] in self?.showSettings($0) }
+        let controller = makeController(model, settings, { [weak self] in self?.showSettings($0) }, { [weak self] in self?.setUp($0, from: $1) })
         controller.pin()
         self.controller = controller
 
@@ -90,7 +106,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         let monitor = makeMonitor(model, settings, identities)
         self.monitor = monitor
         model.alerts = monitor
-        let databaseMonitor = makeDatabaseMonitor(model, identities)
+        let databaseMonitor = makeDatabaseMonitor(model, identities, notificationDatabase)
         self.databaseMonitor = databaseMonitor
         settings.observe { [weak self, model] settings in
             self?.sidebarChanged(to: settings.sidebar)
@@ -135,9 +151,22 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
 
     /// Opens the Settings window on `group`, creating it on first use.
     public func showSettings(_ group: SettingsGroup = .general) {
-        let window = settingsWindow ?? makeSettingsWindow(settings, aeroSpace, model)
+        let window = settingsWindow ?? makeSettingsWindow(settings, aeroSpace, onboarding, model)
         settingsWindow = window
         window.show(group)
+    }
+
+    /// Shows Settings › Permissions, where the step's status and Remove are, and opens `pane` in System
+    /// Settings with PermissionFlow's drag panel, which flies there from `sourceFrame` on screen.
+    public func setUp(_ pane: PermissionFlowPane, from sourceFrame: CGRect?) {
+        showSettings(.permissions)
+        onboarding.authorize(pane, from: sourceFrame)
+    }
+
+    /// Checks the permissions now that Settings removed one, rather than at the monitors' next poll or read.
+    private func permissionsChanged() {
+        monitor?.checkPermission()
+        databaseMonitor?.checkAccess()
     }
 
     /// Brings AeroSpace's reserved strip in line with the sidebar and moves native notifications out from
@@ -214,10 +243,14 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     public static func makeDatabaseMonitor(
         model: SidebarModel,
         identities: NotificationIdentities,
-        database: NotificationDatabase = NotificationDatabase(home: FileManager.default.homeDirectoryForCurrentUser),
+        database: NotificationDatabase,
         defaults: UserDefaults = .standard
     ) -> NotificationDatabaseMonitor {
-        NotificationDatabaseMonitor(database: database, identities: identities, defaults: defaults) { model.add($0) }
+        NotificationDatabaseMonitor(
+            database: database, identities: identities, defaults: defaults,
+            onStatus: { model.database = $0 },
+            onNotification: { model.add($0) }
+        )
     }
 
     public static func makeServer(
@@ -234,11 +267,10 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    public static func makeOnboarding() -> OnboardingModel {
+    /// - Parameter notificationDatabase: Whether it opens tells whether Full Disk Access is granted.
+    public static func makeOnboarding(notificationDatabase: NotificationDatabase) -> OnboardingModel {
         OnboardingModel(
-            permissions: PermissionFlowGuide(
-                notificationDatabase: NotificationDatabase(home: FileManager.default.homeDirectoryForCurrentUser)
-            ),
+            permissions: PermissionFlowGuide(notificationDatabase: notificationDatabase),
             loginItems: MainAppLoginItem()
         )
     }

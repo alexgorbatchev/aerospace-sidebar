@@ -18,25 +18,27 @@ struct OnboardingModelTests {
     @Test func refreshesLiveState() throws {
         let sut = model()
         #expect(!sut.accessibilityGranted && sut.loginItem == .disabled)
-        #expect(!sut.fullDiskAccessGranted)
+        #expect(sut.fullDiskAccess == .notGranted)
 
         permissions.states = [.accessibility: .granted, .fullDiskAccess: .granted]
         loginItems.status = .enabled
         sut.refresh()
 
         #expect(sut.accessibilityGranted && sut.loginItem == .enabled)
-        #expect(sut.fullDiskAccessGranted)
+        #expect(sut.fullDiskAccess == .granted)
     }
 
-    /// Both privacy permissions go through PermissionFlow's drag panel.
+    /// Both privacy permissions go through PermissionFlow's drag panel, which flies from the clicked button.
     @Test func guidesThroughPrivacyPanes() {
         let sut = model()
+        let button = CGRect(x: 10, y: 20, width: 80, height: 24)
 
-        sut.requestAccessibility()
-        sut.requestFullDiskAccess()
+        sut.authorize(.accessibility, from: button)
+        sut.authorize(.fullDiskAccess)
 
         #expect(permissions.authorized == [.accessibility, .fullDiskAccess])
-        #expect(!sut.accessibilityGranted && !sut.fullDiskAccessGranted)
+        #expect(permissions.sourceFrames == [button, nil])
+        #expect(!sut.accessibilityGranted && sut.fullDiskAccess != .granted)
     }
 
     @Test func managesLoginItem() {

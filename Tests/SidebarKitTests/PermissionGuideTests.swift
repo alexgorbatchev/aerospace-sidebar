@@ -6,12 +6,13 @@ import Testing
 
 @MainActor
 struct PermissionGuideTests {
-    /// Full Disk Access counts as granted exactly when the notification database opens.
+    /// Full Disk Access counts as granted when the notification database opens; a database that fails for
+    /// another reason than macOS refusing access, here a missing one, leaves it unknown.
     @Test func reportsFullDiskAccessByTheNotificationDatabase() throws {
         let fixture = try NotificationDatabaseFixture()
         let access = NotificationDatabaseAccess(database: fixture.database)
         #expect(access.capability == .preflightSupported)
-        #expect(access.authorizationState() == .notGranted)
+        #expect(access.authorizationState() == .unknown)
 
         try fixture.create()
 

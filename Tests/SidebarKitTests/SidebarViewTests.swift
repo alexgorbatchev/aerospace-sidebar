@@ -1,4 +1,5 @@
 import Foundation
+import PermissionFlow
 @testable import SidebarKit
 import SidebarProtocol
 import SwiftUI
@@ -14,8 +15,12 @@ struct SidebarViewTests {
         model = SidebarModel(performer: performer, store: InMemoryStore())
     }
 
-    func view(side: SidebarSettings.Sidebar.Side = .right, openSettings: @escaping (SettingsGroup) -> Void = { _ in }) -> SidebarView {
-        SidebarView(model: model, side: side, openSettings: openSettings)
+    func view(
+        side: SidebarSettings.Sidebar.Side = .right,
+        openSettings: @escaping (SettingsGroup) -> Void = { _ in },
+        setUp: @escaping (PermissionFlowPane, CGRect?) -> Void = { _, _ in }
+    ) -> SidebarView {
+        SidebarView(model: model, side: side, openSettings: openSettings, setUp: setUp)
     }
 
     func button(_ title: String, in sut: InspectableView<ViewType.ClassifiedView>) throws -> InspectableView<ViewType.Button> {
@@ -337,15 +342,38 @@ struct SidebarViewTests {
         #expect(throws: Never.self) { try view().inspect().find(text: "just a body") }
     }
 
+    /// Set Up… starts PermissionFlow's Accessibility step rather than only opening Settings.
     @Test func promptsForSetupWhenAccessibilityIsMissing() throws {
         model.interception = .needsAccessibility
-        var opened: [SettingsGroup] = []
+        var setUps: [PermissionFlowPane] = []
 
-        let sut = try view(openSettings: { opened.append($0) }).inspect()
-        try sut.find(button: "Set Up…").tap()
+        let sut = try view(setUp: { pane, _ in setUps.append(pane) }).inspect()
+        try button("Set Up Accessibility", in: sut).tap()
 
         #expect(throws: Never.self) { try sut.find(text: "Grant Accessibility access to show macOS notifications here.") }
-        #expect(opened == [.permissions])
+        #expect(setUps == [.accessibility])
+        #expect(throws: (any Error).self) { try sut.find(text: SidebarView.fullDiskAccessNote) }
+    }
+
+    /// Full Disk Access is optional: the note asking for it starts its step or goes for good.
+    @Test func asksForFullDiskAccessUntilDismissed() throws {
+        model.database = .needsFullDiskAccess
+        var setUps: [PermissionFlowPane] = []
+
+        let sut = try view(setUp: { pane, _ in setUps.append(pane) }).inspect()
+        try button("Set Up Full Disk Access", in: sut).tap()
+        #expect(setUps == [.fullDiskAccess])
+        try sut.find(button: "Dismiss").tap()
+
+        #expect(model.fullDiskAccessNoteDismissed)
+        #expect(throws: (any Error).self) { try view().inspect().find(text: SidebarView.fullDiskAccessNote) }
+    }
+
+    @Test func asksForFullDiskAccessOnlyWhileMacOSRefusesIt() throws {
+        for status in [NotificationDatabaseStatus.stopped, .reading, .unreadable] {
+            model.database = status
+            #expect(throws: (any Error).self) { try view().inspect().find(text: SidebarView.fullDiskAccessNote) }
+        }
     }
 
     @Test func settingsButtonOpensSettings() throws {

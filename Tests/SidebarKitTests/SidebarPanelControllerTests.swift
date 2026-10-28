@@ -31,6 +31,29 @@ struct SidebarPanelControllerTests {
         #expect(controller.panel.isVisible)
     }
 
+    /// The sidebar steps behind System Settings, which AeroSpace floats and so may sit under the strip, while
+    /// the user grants a permission there.
+    @Test func stepsBehindSystemSettings() {
+        let workspaceCenter = NotificationCenter()
+        let controller = SidebarPanelController.forTesting(
+            model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
+            settings: settings,
+            targetVisibleFrame: { CGRect(x: 0, y: 40, width: 1440, height: 860) },
+            workspaceCenter: workspaceCenter
+        )
+        defer { controller.panel.orderOut(nil) }
+
+        controller.follower.follow(frontmostApp: SystemSettingsFollower.systemSettingsBundleID)
+        controller.pin()
+        #expect(controller.panel.level == .normal)
+        #expect(controller.panel.isVisible)
+
+        workspaceCenter.post(name: NSWorkspace.didActivateApplicationNotification, object: nil,
+                             userInfo: [NSWorkspace.applicationUserInfoKey: NSRunningApplication.current])
+        #expect(controller.panel.level == SidebarPanelController.level)
+        #expect(controller.panel.isVisible)
+    }
+
     @Test func repinsWhenSideOrWidthChanges() {
         let controller = SidebarPanelController.forTesting(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),

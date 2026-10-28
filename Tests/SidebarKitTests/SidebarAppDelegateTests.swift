@@ -9,6 +9,7 @@ struct SidebarAppDelegateTests {
     let directory: TemporaryDirectory
     let settings: SettingsStore
     let platform = FakePlatform()
+    let permissions = FakePermissions()
     let cli = FakeAeroSpaceCLI()
     let database: NotificationDatabaseFixture
     /// Kept in the fixture's defaults domain, never `UserDefaults.standard`.
@@ -23,8 +24,9 @@ struct SidebarAppDelegateTests {
     }
 
     /// Reads a database in the test's directory, never the real one.
-    func makeDatabaseMonitor(_ model: SidebarModel, _ identities: NotificationIdentities) -> NotificationDatabaseMonitor {
-        SidebarAppDelegate.makeDatabaseMonitor(model: model, identities: identities, database: database.database, defaults: database.defaults)
+    /// Keeps the record id in the fixture's defaults domain; the delegate hands it the fixture's database.
+    func makeDatabaseMonitor(_ model: SidebarModel, _ identities: NotificationIdentities, _ database: NotificationDatabase) -> NotificationDatabaseMonitor {
+        SidebarAppDelegate.makeDatabaseMonitor(model: model, identities: identities, database: database, defaults: self.database.defaults)
     }
 
     /// Edits a config in the test's directory, never the real AeroSpace config.
@@ -38,13 +40,15 @@ struct SidebarAppDelegateTests {
             makeModel: { SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), history: $0.history) },
             icons: .vendored,
             identities: identities,
-            makeController: { model, settings, openSettings in
+            notificationDatabase: database.database,
+            makeController: { model, settings, openSettings, setUp in
                 SidebarPanelController.forTesting(
                     model: model,
                     settings: settings,
                     targetVisibleFrame: { CGRect(x: 0, y: 0, width: 1440, height: 900) },
                     notificationCenter: NotificationCenter(),
-                    openSettings: openSettings
+                    openSettings: openSettings,
+                    setUp: setUp
                 )
             },
             makeMonitor: { [platform] model, settings, identities in
@@ -64,8 +68,9 @@ struct SidebarAppDelegateTests {
             makeDatabaseMonitor: makeDatabaseMonitor,
             makeServer: { SidebarAppDelegate.makeServer(model: $0, icons: $1, path: socketPath) },
             makeAeroSpaceSync: makeAeroSpaceSync,
-            makeSettingsWindow: { store, aeroSpace, model in
-                SettingsWindowController.forTesting(store: store, aeroSpace: aeroSpace, history: { model.received })
+            makeOnboarding: { [permissions] _ in OnboardingModel(permissions: permissions, loginItems: FakeLoginItems()) },
+            makeSettingsWindow: { store, aeroSpace, onboarding, model in
+                SettingsWindowController.forTesting(store: store, onboarding: onboarding, aeroSpace: aeroSpace, history: { model.received })
             },
             urlSender: { sender }
         )
@@ -114,11 +119,63 @@ struct SidebarAppDelegateTests {
         let delegate = makeDelegate()
 
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
-        #expect(delegate.databaseMonitor?.isReadable == true)
+        #expect(delegate.model.database == .reading)
 
         settings.update { $0.notifications.replaceSystem = false }
-        #expect(delegate.databaseMonitor?.isReadable == false)
+        #expect(delegate.model.database == .stopped)
         delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
+    }
+
+    /// The sidebar's Set Up… shows the Permissions steps and starts the one it asks for, with PermissionFlow's
+    /// drag panel flying from the button.
+    @Test func setUpShowsPermissionsAndStartsTheStep() throws {
+        let delegate = makeDelegate()
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
+        let button = CGRect(x: 1200, y: 840, width: 70, height: 22)
+
+        delegate.setUp(.fullDiskAccess, from: button)
+
+        let window = try #require(delegate.settingsWindow)
+        defer { window.window.orderOut(nil) }
+        #expect(window.window.isVisible)
+        #expect(window.navigation.selection == .permissions)
+        #expect(permissions.authorized == [.fullDiskAccess])
+        #expect(permissions.sourceFrames == [button])
+    }
+
+    /// Settings › Permissions checks Full Disk Access on the database the monitor reads.
+    @Test func onboardingChecksTheDatabaseTheMonitorReads() throws {
+        let delegate = SidebarAppDelegate(
+            settings: settings,
+            makeModel: { SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), history: $0.history) },
+            identities: identities,
+            notificationDatabase: database.database,
+            makeAeroSpaceSync: makeAeroSpaceSync
+        )
+        // A database that does not exist says nothing about the permission.
+        #expect(delegate.onboarding.fullDiskAccess == .unknown)
+
+        try database.create()
+        delegate.onboarding.refresh()
+
+        #expect(delegate.onboarding.fullDiskAccess == .granted)
+    }
+
+    /// Removing a permission in Settings takes effect at once, rather than at the next poll or notification.
+    @Test func removingAPermissionChecksItAtOnce() async throws {
+        try database.create()
+        permissions.states = [.accessibility: .granted]
+        let delegate = makeDelegate()
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
+        #expect(delegate.model.interception == .active)
+
+        platform.trusted = false
+        await delegate.onboarding.removeAccessibility()
+
+        #expect(delegate.model.interception == .needsAccessibility)
+        #expect(delegate.model.database == .reading)
     }
 
     @Test func settingsTurnInterceptionOffAndOnAndApplyHistory() throws {
@@ -198,7 +255,8 @@ struct SidebarAppDelegateTests {
             makeModel: { _ in first.model },
             icons: .vendored,
             identities: NotificationIdentities(defaults: database.defaults),
-            makeController: { model, settings, _ in
+            notificationDatabase: database.database,
+            makeController: { model, settings, _, _ in
                 SidebarPanelController(model: model, settings: settings, targetVisibleFrame: { nil }, notificationCenter: NotificationCenter())
             },
             makeMonitor: { [platform] model, settings, identities in
@@ -243,7 +301,8 @@ struct SidebarAppDelegateTests {
             settings: unwatchable,
             makeModel: { SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), history: $0.history) },
             identities: identities,
-            makeController: { model, settings, _ in
+            notificationDatabase: database.database,
+            makeController: { model, settings, _, _ in
                 SidebarPanelController(model: model, settings: settings, targetVisibleFrame: { nil }, notificationCenter: NotificationCenter())
             },
             makeMonitor: { [platform] model, _, _ in
@@ -318,16 +377,16 @@ struct SidebarAppDelegateTests {
         let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
 
         let monitor = SidebarAppDelegate.makeMonitor(model: model, settings: settings)
-        let databaseMonitor = SidebarAppDelegate.makeDatabaseMonitor(model: model, identities: NotificationIdentities())
+        let databaseMonitor = SidebarAppDelegate.makeDatabaseMonitor(model: model, identities: NotificationIdentities(), database: database.database)
         let window = SettingsWindowController(
             store: settings,
-            onboarding: SidebarAppDelegate.makeOnboarding(),
+            onboarding: SidebarAppDelegate.makeOnboarding(notificationDatabase: database.database),
             aeroSpace: SidebarAppDelegate.makeAeroSpaceSync(settings: settings),
             history: { model.received }
         )
 
         #expect(!monitor.isRunning)
-        #expect(!databaseMonitor.isReadable)
+        #expect(databaseMonitor.status == .stopped)
         #expect(model.interception == .starting)
         #expect(!window.window.isVisible)
     }

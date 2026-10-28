@@ -1,4 +1,5 @@
 import AppKit
+import PermissionFlow
 import SwiftUI
 
 /// Owns the sidebar panel and keeps it pinned to the reserved strip on the target screen.
@@ -13,6 +14,8 @@ public final class SidebarPanelController: NSObject {
     public static let level: NSWindow.Level = .statusBar
 
     public let panel: NSPanel
+    /// Steps behind System Settings while it is in front.
+    let follower: SystemSettingsFollower
     private let settings: SettingsStore
     private let targetVisibleFrame: @MainActor () -> CGRect?
     private var pinnedSidebar: SidebarSettings.Sidebar
@@ -20,18 +23,23 @@ public final class SidebarPanelController: NSObject {
     /// - Parameters:
     ///   - model: State the sidebar renders.
     ///   - settings: Supplies the sidebar's side, width and font; side and width changes re-pin the panel.
+    ///   - workspaceCenter: Reports which app is in front.
     ///   - openSettings: Shows the Settings window on a group.
+    ///   - setUp: Starts granting a permission from a button at a frame on screen.
     public init(
         model: SidebarModel,
         settings: SettingsStore,
         targetVisibleFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenVisibleFrame,
         notificationCenter: NotificationCenter = .default,
-        openSettings: @escaping @MainActor (SettingsGroup) -> Void = { _ in }
+        workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
+        openSettings: @escaping @MainActor (SettingsGroup) -> Void = { _ in },
+        setUp: @escaping @MainActor (PermissionFlowPane, CGRect?) -> Void = { _, _ in }
     ) {
         self.settings = settings
         self.targetVisibleFrame = targetVisibleFrame
         self.pinnedSidebar = settings.settings.sidebar
-        self.panel = Self.makePanel(model: model, settings: settings, openSettings: openSettings)
+        self.panel = Self.makePanel(model: model, settings: settings, openSettings: openSettings, setUp: setUp)
+        follower = SystemSettingsFollower(window: panel, level: Self.level, workspaceCenter: workspaceCenter)
         super.init()
         settings.observe { [weak self] settings in
             guard let self, settings.sidebar != self.pinnedSidebar else { return }
@@ -53,7 +61,7 @@ public final class SidebarPanelController: NSObject {
             return
         }
         panel.setFrame(SidebarLayout(pinnedSidebar).frame(in: visibleFrame), display: true)
-        panel.orderFrontRegardless()
+        follower.orderIn()
     }
 
     @objc private func screenParametersDidChange(_ notification: Notification) {
@@ -63,7 +71,8 @@ public final class SidebarPanelController: NSObject {
     private static func makePanel(
         model: SidebarModel,
         settings: SettingsStore,
-        openSettings: @escaping @MainActor (SettingsGroup) -> Void
+        openSettings: @escaping @MainActor (SettingsGroup) -> Void,
+        setUp: @escaping @MainActor (PermissionFlowPane, CGRect?) -> Void
     ) -> NSPanel {
         // Borderless with no close button: combined with LSUIElement, AeroSpace classifies
         // the window as a popup and neither tiles it nor hides it on workspace switches.
@@ -73,7 +82,6 @@ public final class SidebarPanelController: NSObject {
             backing: .buffered,
             defer: false
         )
-        panel.level = Self.level
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         panel.hidesOnDeactivate = false
         panel.isMovable = false
@@ -84,7 +92,9 @@ public final class SidebarPanelController: NSObject {
         panel.backgroundColor = NSColor.black.withAlphaComponent(0.01)
         panel.hasShadow = false
 
-        let content = NSHostingView(rootView: SidebarPanelContent(model: model, settings: settings, openSettings: openSettings))
+        let content = NSHostingView(rootView: SidebarPanelContent(
+            model: model, settings: settings, openSettings: openSettings, setUp: setUp
+        ))
         panel.contentView = content
         return panel
     }
@@ -95,9 +105,10 @@ struct SidebarPanelContent: View {
     let model: SidebarModel
     let settings: SettingsStore
     let openSettings: (SettingsGroup) -> Void
+    let setUp: (PermissionFlowPane, CGRect?) -> Void
 
     var body: some View {
-        SidebarView(model: model, side: settings.settings.sidebar.side, openSettings: openSettings)
+        SidebarView(model: model, side: settings.settings.sidebar.side, openSettings: openSettings, setUp: setUp)
             .typography(settings)
     }
 }

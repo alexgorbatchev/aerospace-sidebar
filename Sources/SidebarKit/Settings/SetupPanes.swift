@@ -5,20 +5,29 @@ import SwiftUI
 struct PermissionsPane: View {
     let onboarding: OnboardingModel
 
+    /// PermissionFlow's drag panel flies from the clicked step to System Settings.
+    @State private var accessibilityAnchor = ScreenFrameAnchor()
+    @State private var fullDiskAccessAnchor = ScreenFrameAnchor()
+
     var body: some View {
         SettingsPage {
             SettingsRow(label: "Accessibility") {
                 RemovableStep(remove: { Task { await onboarding.removeAccessibility() } }) {
-                    SetupStep(title: "Open Accessibility", isDone: onboarding.accessibilityGranted, action: onboarding.requestAccessibility)
+                    SetupStep(title: "Open Accessibility", isDone: onboarding.accessibilityGranted, anchor: accessibilityAnchor) {
+                        onboarding.authorize(.accessibility, from: accessibilityAnchor.screenFrame)
+                    }
                 }
             }
             SettingsHint(text: "Required to read and hide banners.")
             SettingsRow(label: "Full Disk Access") {
                 RemovableStep(remove: { Task { await onboarding.removeFullDiskAccess() } }) {
-                    SetupStep(title: "Open Full Disk Access", isDone: onboarding.fullDiskAccessGranted, action: onboarding.requestFullDiskAccess)
+                    SetupStep(title: "Open Full Disk Access", isDone: onboarding.fullDiskAccess == .granted, anchor: fullDiskAccessAnchor) {
+                        onboarding.authorize(.fullDiskAccess, from: fullDiskAccessAnchor.screenFrame)
+                    }
                 }
             }
             SettingsHint(text: "Optional. Lists notifications that showed no banner.")
+            SettingsHint(text: fullDiskAccessWarning, color: .orange, wraps: true)
             SettingsRow(label: "Open at login") {
                 RemovableStep(remove: removeLoginItem) {
                     switch onboarding.loginItem {
@@ -35,6 +44,13 @@ struct PermissionsPane: View {
         }
         // Permissions and login items change in System Settings while this window is open.
         .refreshingWhileShown(onboarding.refresh)
+    }
+
+    /// The notification database fails for a reason other than missing access, so the step cannot tell.
+    private var fullDiskAccessWarning: String? {
+        onboarding.fullDiskAccess == .unknown
+            ? "Cannot tell whether it is granted: the notification database does not open, which a macOS update can cause."
+            : nil
     }
 
     /// Removes the login item while there is one, approved or not.

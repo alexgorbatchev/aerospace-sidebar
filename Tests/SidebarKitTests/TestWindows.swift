@@ -1,4 +1,5 @@
 import AppKit
+import PermissionFlow
 @testable import SidebarKit
 import Testing
 
@@ -90,11 +91,14 @@ extension SidebarPanelController {
         settings: SettingsStore,
         targetVisibleFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenVisibleFrame,
         notificationCenter: NotificationCenter = NotificationCenter(),
-        openSettings: @escaping @MainActor (SettingsGroup) -> Void = { _ in }
+        workspaceCenter: NotificationCenter = NotificationCenter(),
+        openSettings: @escaping @MainActor (SettingsGroup) -> Void = { _ in },
+        setUp: @escaping @MainActor (PermissionFlowPane, CGRect?) -> Void = { _, _ in }
     ) -> SidebarPanelController {
         let controller = SidebarPanelController(
             model: model, settings: settings, targetVisibleFrame: targetVisibleFrame,
-            notificationCenter: notificationCenter, openSettings: openSettings
+            notificationCenter: notificationCenter, workspaceCenter: workspaceCenter,
+            openSettings: openSettings, setUp: setUp
         )
         controller.panel.alphaValue = 0
         return controller
