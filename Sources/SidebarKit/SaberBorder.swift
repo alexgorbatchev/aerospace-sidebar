@@ -169,7 +169,7 @@ struct SaberTrail<Outline: Shape>: Shape {
 /// The look and timing shared by every `SaberBorder`.
 enum SaberBeam {
     /// Seconds from the head entering until the tail has left, one lap.
-    static let duration: TimeInterval = 0.7
+    static let duration: TimeInterval = 0.35
     /// The beam's length as a fraction of the outline.
     static let length: CGFloat = 0.25
     /// Where the head stops: one lap plus the beam's length, by which time the beam has faded out.
