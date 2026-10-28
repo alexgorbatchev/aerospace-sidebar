@@ -24,23 +24,7 @@ public struct LoginShellAeroSpaceCLI: AeroSpaceCommandRunning {
 
     public func run(_ arguments: [String]) async -> CommandResult {
         let shell = await WorkspaceActionPerformer.loginShell
-        return await onBlockingQueue {
-            let process = Process()
-            let pipe = Pipe()
-            process.executableURL = URL(fileURLWithPath: shell)
-            process.arguments = ["-lc", "exec aerospace \"$@\"", "aerospace"] + arguments
-            process.standardOutput = pipe
-            process.standardError = pipe
-            process.standardInput = FileHandle.nullDevice
-            do {
-                try process.run()
-            } catch {
-                return CommandResult(status: 127, output: String(describing: error))
-            }
-            let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            process.waitUntilExit()
-            return CommandResult(status: process.terminationStatus, output: output)
-        }
+        return await SystemCommand.run(shell, ["-lc", "exec aerospace \"$@\"", "aerospace"] + arguments)
     }
 }
 
