@@ -19,6 +19,10 @@ import Foundation
 /// [font]
 /// name = "Menlo"
 /// size = 13
+///
+/// [[rules]]
+/// source = "^Slack$"
+/// action = "high"
 /// ```
 public struct SidebarSettings: Codable, Equatable, Sendable {
     /// The strip the sidebar occupies on the main display. AeroSpace must reserve the same strip with a
@@ -160,17 +164,21 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
     public var notifications = Notifications()
     public var history = History()
     public var font = Font()
+    /// Applied in order to every notification as it arrives; see `Rule`.
+    public var rules: [Rule] = []
 
     public init(
         sidebar: Sidebar = Sidebar(),
         notifications: Notifications = Notifications(),
         history: History = History(),
-        font: Font = Font()
+        font: Font = Font(),
+        rules: [Rule] = []
     ) {
         self.sidebar = sidebar
         self.notifications = notifications
         self.history = history
         self.font = font
+        self.rules = rules
     }
 
     public init(from decoder: Decoder) throws {
@@ -179,5 +187,6 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
         notifications = try container.decodeIfPresent(Notifications.self, forKey: .notifications) ?? Notifications()
         history = try container.decodeIfPresent(History.self, forKey: .history) ?? History()
         font = try container.decodeIfPresent(Font.self, forKey: .font) ?? Font()
+        rules = try container.decodeIfPresent([Rule].self, forKey: .rules) ?? []
     }
 }

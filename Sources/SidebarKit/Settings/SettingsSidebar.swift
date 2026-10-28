@@ -4,7 +4,7 @@ import SwiftUI
 /// The Settings window's groups, in the order the sidebar lists them. General and Permissions act
 /// immediately; the others edit the draft and end with Cancel and Save.
 public enum SettingsGroup: Int, CaseIterable, Identifiable, Sendable {
-    case general, appearance, sidebar, permissions, notifications, history
+    case general, appearance, sidebar, permissions, notifications, rules, history
 
     public var id: Self { self }
 
@@ -15,6 +15,7 @@ public enum SettingsGroup: Int, CaseIterable, Identifiable, Sendable {
         case .sidebar: "Sidebar"
         case .permissions: "Permissions"
         case .notifications: "Notifications"
+        case .rules: "Rules"
         case .history: "History"
         }
     }
@@ -26,6 +27,7 @@ public enum SettingsGroup: Int, CaseIterable, Identifiable, Sendable {
         case .sidebar: "sidebar.right"
         case .permissions: "hand.raised"
         case .notifications: "bell.badge"
+        case .rules: "line.3.horizontal.decrease.circle"
         case .history: "clock.arrow.circlepath"
         }
     }

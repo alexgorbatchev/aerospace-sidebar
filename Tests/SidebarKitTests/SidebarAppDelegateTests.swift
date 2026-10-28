@@ -64,7 +64,9 @@ struct SidebarAppDelegateTests {
             makeDatabaseMonitor: makeDatabaseMonitor,
             makeServer: { SidebarAppDelegate.makeServer(model: $0, icons: $1, path: socketPath) },
             makeAeroSpaceSync: makeAeroSpaceSync,
-            makeSettingsWindow: { SettingsWindowController.forTesting(store: $0, aeroSpace: $1) },
+            makeSettingsWindow: { store, aeroSpace, model in
+                SettingsWindowController.forTesting(store: store, aeroSpace: aeroSpace, listed: { model.notifications })
+            },
             urlSender: { sender }
         )
     }
@@ -243,6 +245,17 @@ struct SidebarAppDelegateTests {
         #expect(delegate.controller != nil)
     }
 
+    @Test func savedRulesApplyToArrivingNotifications() throws {
+        let delegate = makeDelegate()
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
+
+        settings.update { $0.rules = [.init(source: "Safari", action: .hide)] }
+        delegate.application(NSApplication.shared, open: [try SidebarRequest.pushNotification(NotificationPayload(title: "Hidden")).url()])
+
+        #expect(delegate.model.notifications.isEmpty)
+    }
+
     @Test func urlsPushNotificationsLabeledWithSender() throws {
         let delegate = makeDelegate()
         let url = try SidebarRequest.pushNotification(NotificationPayload(title: "From a page", severity: .high, icon: "safari")).url()
@@ -293,7 +306,8 @@ struct SidebarAppDelegateTests {
         let window = SettingsWindowController(
             store: settings,
             onboarding: SidebarAppDelegate.makeOnboarding(),
-            aeroSpace: SidebarAppDelegate.makeAeroSpaceSync(settings: settings)
+            aeroSpace: SidebarAppDelegate.makeAeroSpaceSync(settings: settings),
+            listed: { model.notifications }
         )
 
         #expect(!monitor.isRunning)

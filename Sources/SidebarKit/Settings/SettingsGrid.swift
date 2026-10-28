@@ -18,6 +18,8 @@ enum SettingsMetrics {
     /// grid then measures rows at one width and draws them at another, unevening the spacing.
     static let fieldWidth: CGFloat = 320
     static let numberFieldWidth: CGFloat = 80
+    /// Height of the list of rules.
+    static let ruleListHeight: CGFloat = 120
     /// Gap between a number field and its stepper arrows.
     static let stepperSpacing: CGFloat = 2
     static let buttonBarSpacing: CGFloat = 12

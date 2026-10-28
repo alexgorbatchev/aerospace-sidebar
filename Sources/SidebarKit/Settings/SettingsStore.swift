@@ -114,7 +114,14 @@ public final class SettingsStore {
         if let error = error as? DecodingError {
             switch error {
             case .dataCorrupted(let context), .keyNotFound(_, let context), .typeMismatch(_, let context), .valueNotFound(_, let context):
-                let path = context.codingPath.map(\.stringValue).joined(separator: ".")
+                // Array elements read as `rules[2]`, not `rules.Index 2`.
+                let path = context.codingPath.reduce(into: "") { path, key in
+                    if let index = key.intValue {
+                        path += "[\(index)]"
+                    } else {
+                        path += (path.isEmpty ? "" : ".") + key.stringValue
+                    }
+                }
                 return path.isEmpty ? context.debugDescription : "\(path): \(context.debugDescription)"
             @unknown default:
                 return String(describing: error)

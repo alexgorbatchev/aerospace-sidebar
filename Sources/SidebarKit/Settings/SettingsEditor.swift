@@ -71,6 +71,10 @@ public final class SettingsEditor {
             status = "Size must be between \(SidebarSettings.Font.sizeRange.lowerBound.formatted()) and \(SidebarSettings.Font.sizeRange.upperBound.formatted()) points."
             return false
         }
+        if let (index, problem) = draft.rules.enumerated().lazy.compactMap({ index, rule in rule.problem.map { (index, $0) } }).first {
+            status = "Rule \(index + 1) \(problem)."
+            return false
+        }
         let fontName = font.name.trimmingCharacters(in: .whitespaces)
         if !fontName.isEmpty {
             guard let family = Typography.installedFamily(named: fontName) else {

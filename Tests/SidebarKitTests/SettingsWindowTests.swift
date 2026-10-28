@@ -543,7 +543,7 @@ struct SettingsWindowControllerTests {
         // The selected group names the pane; the title is only for VoiceOver and the window list.
         #expect(controller.window.title == "General")
         #expect(controller.window.titleVisibility == .hidden)
-        #expect(controller.tabs.tabViewItems.map(\.label) == ["General", "Appearance", "Sidebar", "Permissions", "Notifications", "History"])
+        #expect(controller.tabs.tabViewItems.map(\.label) == ["General", "Appearance", "Sidebar", "Permissions", "Notifications", "Rules", "History"])
         #expect(controller.window.styleMask.contains(.nonactivatingPanel))
         #expect(!controller.window.styleMask.contains(.resizable))
         #expect(!controller.window.hidesOnDeactivate)
@@ -713,7 +713,7 @@ struct SettingsWindowControllerTests {
         let before = controller.window.frame
 
         // A long error under the login item makes Permissions the largest pane.
-        let reason = Array(repeating: "The login item service refused the request.", count: 20).joined(separator: " ")
+        let reason = Array(repeating: "The login item service refused the request.", count: 40).joined(separator: " ")
         loginItems.error = NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: reason])
         onboarding.addLoginItem()
         for _ in 0..<100 where controller.window.frame.height == before.height {

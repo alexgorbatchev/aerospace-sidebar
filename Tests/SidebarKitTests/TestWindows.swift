@@ -71,12 +71,13 @@ extension SettingsWindowController {
         fontChooser: FontChooser = FontChooser(),
         workspaceCenter: NotificationCenter = NotificationCenter(),
         sidebarScreenFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenVisibleFrame,
-        terminate: @escaping @MainActor (Any?) -> Void = { _ in }
+        terminate: @escaping @MainActor (Any?) -> Void = { _ in },
+        listed: @escaping @MainActor () -> [SidebarNotification] = { [] }
     ) -> SettingsWindowController {
         SettingsWindowController(
             store: store, onboarding: onboarding, aeroSpace: aeroSpace, fontChooser: fontChooser,
             workspaceCenter: workspaceCenter, sidebarScreenFrame: sidebarScreenFrame, panelType: TestPanel.self,
-            reveal: { _ in }, terminate: terminate
+            listed: listed, reveal: { _ in }, terminate: terminate
         )
     }
 }

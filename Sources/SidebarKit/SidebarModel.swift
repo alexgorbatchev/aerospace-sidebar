@@ -138,6 +138,25 @@ extension SidebarNotification {
         )
     }
 
+    /// This entry with another severity, as a rule sets it.
+    func with(severity: NotificationSeverity) -> SidebarNotification {
+        SidebarNotification(
+            id: id,
+            source: source,
+            title: title,
+            subtitle: subtitle,
+            body: body,
+            severity: severity,
+            icon: icon,
+            invalidIcon: invalidIcon,
+            action: action,
+            shownByMacOS: shownByMacOS,
+            nativeAlert: nativeAlert,
+            receivedAt: receivedAt,
+            occurrences: occurrences
+        )
+    }
+
     /// What a click does, shown before it happens; includes the full command for `run` actions.
     public var clickDescription: String {
         switch action {
@@ -209,6 +228,8 @@ public final class SidebarModel {
     @ObservationIgnored private let now: () -> Date
     /// How long and how many notifications are kept.
     @ObservationIgnored public private(set) var history: SidebarSettings.History
+    /// Change or hide notifications as they arrive.
+    @ObservationIgnored private var rules: NotificationRules
     /// The alerts listed after the last change, to tell when a change drops one.
     @ObservationIgnored private var listedAlerts: Set<String> = []
 
@@ -216,11 +237,13 @@ public final class SidebarModel {
         performer: any NotificationActionPerforming = WorkspaceActionPerformer(),
         store: any NotificationStore,
         history: SidebarSettings.History = SidebarSettings.History(),
+        rules: [SidebarSettings.Rule] = [],
         now: @escaping () -> Date = Date.init
     ) {
         self.performer = performer
         self.store = store
         self.history = history
+        self.rules = NotificationRules(rules)
         self.now = now
         let cutoff = now().addingTimeInterval(-history.retention)
         notifications = Array(store.load()
@@ -240,11 +263,17 @@ public final class SidebarModel {
         }
     }
 
-    /// Inserts the notification by severity, then recency. A notification with the same content as a
-    /// listed one is stacked onto it instead: the entry counts both and moves up as the newest. Beyond
-    /// `history.maxCount`, the least severe and oldest entries are dropped.
+    /// Applies new rules to notifications that arrive from now on; listed ones keep how earlier rules left them.
+    public func apply(rules: [SidebarSettings.Rule]) {
+        self.rules = NotificationRules(rules)
+    }
+
+    /// Inserts the notification by severity, then recency, after the first matching rule has changed its
+    /// severity or hidden it. A notification with the same content as a listed one is stacked onto it
+    /// instead: the entry counts both and moves up as the newest. Beyond `history.maxCount`, the least
+    /// severe and oldest entries are dropped.
     public func add(_ notification: SidebarNotification) {
-        var notification = notification
+        guard var notification = rules.apply(to: notification) else { return }
         if let existing = notifications.firstIndex(where: { $0.hasSameContent(as: notification) }) {
             notification = notifications.remove(at: existing).stacking(notification)
         }
