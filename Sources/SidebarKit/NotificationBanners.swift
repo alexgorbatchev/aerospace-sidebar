@@ -49,12 +49,19 @@ public struct BannerContent: Equatable, Sendable {
 /// - Alert-style notifications (`AXNotificationCenterAlert`) stay on screen until dismissed, like the
 ///   sidebar's own cards. They are judged by their actions and controls like any banner. Their choices,
 ///   such as "Allow…" on macOS's "Privacy & Security" alert, are named actions with no button until the
-///   alert is hovered.
+///   alert is hovered. Hovering shows one choice as a button and two or more under one "Options" menu
+///   button, whose items are not in the accessibility tree. An alert whose NSUserNotification sets an
+///   actions menu also lists the menu's header as a named action, just before Close: the localized Show
+///   by default, else the app's own label; performing it closes the alert without answering it.
 @MainActor
 public enum NotificationBanners {
     /// Accessibility actions every element may offer; the localized ones come from `NotificationCenterLabels`.
     static let standardActions: Set<String> = ["AXPress", "AXShowMenu", "AXScrollToVisible"]
     static let actionButtonIdentifier = "action_button"
+    /// The most choices an alert may have for the sidebar to offer them. An actions menu adds its header
+    /// as a choice that only closes the alert, and a menu has at least two items, so with a custom header
+    /// it shows up as three or more choices; such alerts stay with macOS, which draws the real menu.
+    static let maxChoices = 2
     /// Texts that are not part of the content.
     static let ignoredTextIdentifiers: Set<String> = ["header", "date"]
     static let interactiveRoles: Set<String> = [
@@ -166,14 +173,15 @@ public enum NotificationBanners {
 
     /// The choices an alert offers as named actions, such as "Allow…", in NotificationCenter's order. A
     /// named action works wherever the alert's window is, so the sidebar can offer it while the alert is
-    /// hidden. Nil for banners, which leave on their own, for alerts without choices, and for alerts that
-    /// also hold a control other than a button for one of those choices or a plain action, such as a reply
-    /// field or an Options menu, which only works on screen.
+    /// hidden. Nil for banners, which leave on their own, for alerts without choices or with more than
+    /// `maxChoices`, which may include an actions menu's header, and for alerts that also hold a control
+    /// other than a button for one of those choices or a plain action, such as a reply field or an Options
+    /// menu, which only works on screen.
     public static func choices(of alert: any AccessibilityElement, labels: NotificationCenterLabels = .english) -> [String]? {
         guard kind(of: alert) == .alert else { return nil }
         let plainActions = plainActions(labels)
         let choices = alert.actionNames.map(actionName).filter { !plainActions.contains($0) }
-        guard !choices.isEmpty else { return nil }
+        guard !choices.isEmpty, choices.count <= maxChoices else { return nil }
         // Hovering an alert shows its choices as buttons too; those duplicate the named actions.
         let named = Set(choices)
         guard !containsControl(alert, plainActions: plainActions.union(named), actionButtons: named) else { return nil }

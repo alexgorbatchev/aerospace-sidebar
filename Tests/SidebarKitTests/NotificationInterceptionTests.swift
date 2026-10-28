@@ -260,6 +260,9 @@ struct NotificationBannersTests {
         #expect(NotificationBanners.choices(of: banner) == nil)
 
         #expect(NotificationBanners.choices(of: FakeElement.alert(choices: [])) == nil)
+        // An actions menu lists its header, which only closes the alert, beside the items: "When?" here.
+        #expect(NotificationBanners.choices(of: FakeElement.alert(choices: ["Tomorrow", "Later", "Now", "When?"])) == nil)
+        #expect(NotificationBanners.choices(of: FakeElement.alert(choices: ["Tomorrow", "Later", "Now"])) == nil)
 
         for control in [
             FakeElement([kAXRoleAttribute: kAXTextFieldRole]),
@@ -546,6 +549,22 @@ struct SystemNotificationInterceptorTests {
             listsAlert: { list.lists($0) },
             onPresentAlerts: { list.present.append($0) }
         ) { list.notifications.append($0) }
+    }
+
+    /// An alert with more choices than the sidebar offers, such as an actions menu, is left to macOS like
+    /// any interactive notification.
+    @Test func leavesAlertsWithManyChoicesToMacOS() {
+        let list = AlertList()
+        let interceptor = interceptor(for: list)
+        let alert = FakeElement.alert(id: "menu", choices: ["Tomorrow", "Later", "Now", "When?"])
+        let window = FakeElement.window(alert)
+
+        interceptor.sweep(windows: [window], application: nil)
+
+        #expect(window.moves.isEmpty)
+        #expect(alert.performed.isEmpty)
+        #expect(list.notifications.map(\.shownByMacOS) == [true])
+        #expect(list.notifications.map(\.nativeAlert) == [nil])
     }
 
     /// An alert whose choices are named actions is hidden without closing it, and listed with them.

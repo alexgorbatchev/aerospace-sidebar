@@ -4,8 +4,8 @@
 
 - **Reserved screen strip**: a panel on the right or left edge of the main display that tiled windows never cover, on every Space and over full-screen apps.
 - **macOS notifications, kept**: native banners are hidden and listed in the sidebar instead, so nothing disappears after five seconds.
-- **Alert buttons in the sidebar**: a persistent alert whose buttons are plain choices, such as macOS's "Privacy & Security" alert with Allow…, is hidden and listed with those buttons on its card. Pressing one acts on the alert; clicking the card does what clicking the alert does, and dismissing the card closes the alert.
-- **Other interactive notifications left alone**: banners with buttons, and notifications with reply fields or option menus, stay on screen as macOS shows them, and are also listed. Turn this off in Settings to list them without their buttons instead. Alerts without buttons are listed like any other notification.
+- **Alert buttons in the sidebar**: a persistent alert with one or two buttons is hidden and listed with them on its card, such as Allow… on macOS's "Privacy & Security" alert, Don’t Allow and Allow, or Reply. Pressing one acts on the alert, and Reply brings the alert back on screen with its text field. Clicking the card does what clicking the alert does, and dismissing the card closes the alert.
+- **Other interactive notifications left alone**: banners with buttons, alerts with three or more choices, and notifications showing a text field or another control, stay on screen as macOS shows them, and are also listed. With the sidebar on the right, macOS's notifications move left of it so it does not cover them. Turn this off in Settings to list them without their buttons instead. Alerts without buttons are listed like any other notification.
 - **Push from anywhere**: the `aerospace-sidebar` command and `aerospace-sidebar://` links add notifications.
 - **Click actions**: a notification can run a shell command or open a link when clicked.
 - **Severity**: `low`, `normal`, `high` and `critical` notifications sort and look different, with critical ones always on top.
@@ -145,7 +145,7 @@ width = 300                              # 150 to 1000 points; changing side or 
 
 [notifications]
 replace_system = true                    # hide macOS banners and list them in the sidebar
-actionable_left_to_macos = true          # leave notifications with buttons the sidebar cannot offer (Reply, Options menus, banners) to macOS
+actionable_left_to_macos = true          # leave notifications with buttons the sidebar cannot offer (banners with buttons, text fields) to macOS
 apps_left_to_macos = ["zoom.us"]         # app names whose notifications stay on screen
 
 [history]
