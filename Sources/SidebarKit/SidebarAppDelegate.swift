@@ -24,7 +24,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     private let identities: NotificationIdentities
     private var server: ControlServer?
     private var pruneTimer: Timer?
-    private let makeController: @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor () -> Void) -> SidebarPanelController
+    private let makeController: @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor (SettingsGroup) -> Void) -> SidebarPanelController
     private let makeMonitor: @MainActor (SidebarModel, SettingsStore, NotificationIdentities) -> NotificationCenterMonitor
     private let makeDatabaseMonitor: @MainActor (SidebarModel, NotificationIdentities) -> NotificationDatabaseMonitor
     private let makeServer: @MainActor (SidebarModel, AppIconFont) -> ControlServer
@@ -42,7 +42,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         makeModel: @MainActor (SidebarSettings) -> SidebarModel = { SidebarModel(store: FileNotificationStore(), history: $0.history) },
         icons: AppIconFont = .bundled(),
         identities: NotificationIdentities = NotificationIdentities(defaults: .standard),
-        makeController: @escaping @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor () -> Void) -> SidebarPanelController = {
+        makeController: @escaping @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor (SettingsGroup) -> Void) -> SidebarPanelController = {
             SidebarPanelController(model: $0, settings: $1, openSettings: $2)
         },
         makeMonitor: @escaping @MainActor (SidebarModel, SettingsStore, NotificationIdentities) -> NotificationCenterMonitor = {
@@ -73,7 +73,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
-        let controller = makeController(model, settings) { [weak self] in self?.showSettings() }
+        let controller = makeController(model, settings) { [weak self] in self?.showSettings($0) }
         controller.pin()
         self.controller = controller
 
@@ -124,11 +124,11 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         server?.stop()
     }
 
-    /// Opens the Settings window, creating it on first use.
-    public func showSettings() {
+    /// Opens the Settings window on `group`, creating it on first use.
+    public func showSettings(_ group: SettingsGroup = .general) {
         let window = settingsWindow ?? makeSettingsWindow(settings, aeroSpace)
         settingsWindow = window
-        window.show()
+        window.show(group)
     }
 
     /// Brings AeroSpace's reserved strip in line with the sidebar and moves native notifications out from

@@ -157,10 +157,12 @@ struct SidebarAppDelegateTests {
 
         delegate.showSettings()
         let first = try #require(delegate.settingsWindow)
-        delegate.showSettings()
+        #expect(first.navigation.selection == .general)
+        delegate.showSettings(.permissions)
 
         #expect(delegate.settingsWindow === first)
         #expect(first.window.isVisible)
+        #expect(first.navigation.selection == .permissions)
     }
 
     /// A notification still on screen when the sidebar relaunches is the one already listed: it is

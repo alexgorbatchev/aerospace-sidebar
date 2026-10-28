@@ -95,19 +95,18 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         tabs.transitionOptions = []
         for group in SettingsGroup.allCases {
             let pane = switch group {
+            case .general: pane(group, GeneralPane(configURL: store.file.url, reveal: reveal, quit: { terminate(nil) }))
+            case .appearance: pane(group, AppearancePane(editor: editor, chooseFont: chooseFont, close: close))
+            case .sidebar: pane(group, SidebarPane(editor: editor, aeroSpace: aeroSpace, reveal: reveal, close: close))
             case .permissions: pane(group, PermissionsPane(onboarding: onboarding))
-            case .aeroSpace: pane(group, AeroSpacePane(aeroSpace: aeroSpace, reveal: reveal))
-            case .sidebar: pane(group, SidebarPane(editor: editor, aeroSpace: aeroSpace, close: close))
             case .notifications: pane(group, NotificationsPane(editor: editor, close: close))
             case .history: pane(group, HistoryPane(editor: editor, close: close))
-            case .font: pane(group, FontPane(editor: editor, chooseFont: chooseFont, close: close))
-            case .general: pane(group, GeneralPane(configURL: store.file.url, reveal: reveal, quit: { terminate(nil) }))
             }
             // The tab view item takes its label from the title.
             pane.title = group.title
             tabs.addTabViewItem(NSTabViewItem(viewController: pane))
         }
-        navigation.onSelect = { [weak self] in self?.show($0) }
+        navigation.onSelect = { [weak self] in self?.select($0) }
 
         let sidebar = SettingsSidebar(navigation: navigation) { [weak self] height in
             self?.sidebarHeight = height
@@ -127,7 +126,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         // The window takes the split view's size, which is empty until the panes report theirs. `sizeWindow`
         // measures the title bar and sidebar around them, which takes a window larger than those.
         window.setContentSize(Self.measuringSize)
-        show(navigation.selection)
+        select(navigation.selection)
         window.isReleasedWhenClosed = false
         // Panels hide when their app deactivates by default; this app is never active.
         window.hidesOnDeactivate = false
@@ -166,12 +165,13 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    /// Opens on the first group with a fresh draft and status, beside the sidebar unless it is already open.
-    public func show() {
+    /// Opens on `group` with a fresh draft and status, centered on the sidebar's screen unless it is already
+    /// open.
+    public func show(_ group: SettingsGroup = .general) {
         editor.revert()
         onboarding.refresh()
         aeroSpace.refresh()
-        navigation.selection = .permissions
+        navigation.selection = group
         if !window.isVisible {
             centersOnNextSize = true
             sizeWindow()
@@ -207,7 +207,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     /// Shows `group`'s pane and names the window after it, for VoiceOver and the window list.
-    private func show(_ group: SettingsGroup) {
+    private func select(_ group: SettingsGroup) {
         tabs.selectedTabViewItemIndex = group.rawValue
         window.title = group.title
     }

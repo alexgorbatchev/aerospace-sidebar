@@ -38,7 +38,7 @@
 - The list is saved to `~/Library/Application Support/com.alexgorbatchev.aerospace-sidebar/notifications.json` on every change and holds at most 200 notifications by default; a stack counts as one.
 - The list draws its own thin scroll indicator in the margin on the sidebar's screen edge instead of the system scroll bar, so the cards keep their width when a mouse is attached. It appears while scrolling or when the pointer is over that margin, and can be dragged.
 - Settings live in `${XDG_CONFIG_HOME:-~/.config}/aerospace-sidebar/config.toml`. Edits to that file apply immediately; saving from the Settings window rewrites it and drops comments.
-- Each edit keeps the rest of your AeroSpace config and its comments, saves the previous version next to it as `aerospace.toml.bak`, checks the result with `aerospace reload-config --dry-run`, and puts the previous version back if AeroSpace rejects it. While AeroSpace is not running the edit is kept unchecked, and AeroSpace reads it when it starts. Settings › AeroSpace shows the config file and the result, **Update AeroSpace Config** runs the same edit on demand, and **Write Again** rewrites the block and reloads AeroSpace even when the config already matches.
+- Each edit keeps the rest of your AeroSpace config and its comments, saves the previous version next to it as `aerospace.toml.bak`, checks the result with `aerospace reload-config --dry-run`, and puts the previous version back if AeroSpace rejects it. While AeroSpace is not running the edit is kept unchecked, and AeroSpace reads it when it starts. Settings › Sidebar shows the AeroSpace config file and the result, **Update Config** runs the same edit on demand, and **Write Again** rewrites the block and reloads AeroSpace even when the config already matches.
 - Success messages go to stdout and errors to stderr. Exit codes: `0` success, `1` notification rejected or undeliverable, `64` invalid arguments, `74` output could not be written. With `AGENT=1`, output is compact: `OK: pushed`, or `ERR: <code>: <detail>`.
 
 # Installation
@@ -53,7 +53,7 @@ curl -sSL https://github.com/alexgorbatchev/aerospace-sidebar/releases/latest/do
 
 # Setup
 
-Open `~/Applications/AerospaceSidebar.app`, click the gear button at the top of the sidebar, choose the sidebar's side and width under **Sidebar** if the default (300 points on the right) does not suit you, and work through **Permissions** and **AeroSpace**. **Permissions** explains what each permission is for and has a **Remove** button that takes AerospaceSidebar off that list in System Settings. Each step can also be done by hand:
+Open `~/Applications/AerospaceSidebar.app`, click the gear button at the top of the sidebar, choose the sidebar's side and width under **Sidebar** if the default (300 points on the right) does not suit you, check that **Sidebar** shows the AeroSpace config as updated, and work through **Permissions**. **Permissions** explains what each permission is for and has a **Remove** button that takes AerospaceSidebar off that list in System Settings. Each step can also be done by hand:
 
 - [AeroSpace](https://nikitabobko.github.io/AeroSpace/guide) - Reserves the strip. The sidebar adds its gap block and a floating rule to an existing AeroSpace config at launch; it never creates the file. **Copy Settings** copies them for adding by hand, after which you run `aerospace reload-config`:
   ```toml
@@ -153,7 +153,7 @@ retention_hours = 24                     # 1 to 720
 max_count = 200                          # 10 to 2000
 
 [font]
-name = ""                                # font family (Settings › Font › Choose… picks one); empty uses the system font
+name = ""                                # font family (Settings › Appearance › Choose… picks one); empty uses the system font
 size = 13                                # 8 to 32; every text size in the sidebar and Settings scales with it
 ```
 

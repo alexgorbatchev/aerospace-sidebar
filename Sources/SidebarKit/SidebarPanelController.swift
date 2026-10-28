@@ -20,13 +20,13 @@ public final class SidebarPanelController: NSObject {
     /// - Parameters:
     ///   - model: State the sidebar renders.
     ///   - settings: Supplies the sidebar's side, width and font; side and width changes re-pin the panel.
-    ///   - openSettings: Shows the Settings window.
+    ///   - openSettings: Shows the Settings window on a group.
     public init(
         model: SidebarModel,
         settings: SettingsStore,
         targetVisibleFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenVisibleFrame,
         notificationCenter: NotificationCenter = .default,
-        openSettings: @escaping @MainActor () -> Void = {}
+        openSettings: @escaping @MainActor (SettingsGroup) -> Void = { _ in }
     ) {
         self.settings = settings
         self.targetVisibleFrame = targetVisibleFrame
@@ -63,7 +63,7 @@ public final class SidebarPanelController: NSObject {
     private static func makePanel(
         model: SidebarModel,
         settings: SettingsStore,
-        openSettings: @escaping @MainActor () -> Void
+        openSettings: @escaping @MainActor (SettingsGroup) -> Void
     ) -> NSPanel {
         // Borderless with no close button: combined with LSUIElement, AeroSpace classifies
         // the window as a popup and neither tiles it nor hides it on workspace switches.
@@ -94,7 +94,7 @@ public final class SidebarPanelController: NSObject {
 struct SidebarPanelContent: View {
     let model: SidebarModel
     let settings: SettingsStore
-    let openSettings: () -> Void
+    let openSettings: (SettingsGroup) -> Void
 
     var body: some View {
         SidebarView(model: model, side: settings.settings.sidebar.side, openSettings: openSettings)

@@ -14,7 +14,7 @@ struct SidebarViewTests {
         model = SidebarModel(performer: performer, store: InMemoryStore())
     }
 
-    func view(side: SidebarSettings.Sidebar.Side = .right, openSettings: @escaping () -> Void = {}) -> SidebarView {
+    func view(side: SidebarSettings.Sidebar.Side = .right, openSettings: @escaping (SettingsGroup) -> Void = { _ in }) -> SidebarView {
         SidebarView(model: model, side: side, openSettings: openSettings)
     }
 
@@ -291,21 +291,21 @@ struct SidebarViewTests {
 
     @Test func promptsForSetupWhenAccessibilityIsMissing() throws {
         model.interception = .needsAccessibility
-        var opened = 0
+        var opened: [SettingsGroup] = []
 
-        let sut = try view(openSettings: { opened += 1 }).inspect()
+        let sut = try view(openSettings: { opened.append($0) }).inspect()
         try sut.find(button: "Set Up…").tap()
 
         #expect(throws: Never.self) { try sut.find(text: "Grant Accessibility access to show macOS notifications here.") }
-        #expect(opened == 1)
+        #expect(opened == [.permissions])
     }
 
     @Test func settingsButtonOpensSettings() throws {
-        var opened = 0
+        var opened: [SettingsGroup] = []
 
-        try button("Settings", in: view(openSettings: { opened += 1 }).inspect()).tap()
+        try button("Settings", in: view(openSettings: { opened.append($0) }).inspect()).tap()
 
-        #expect(opened == 1)
+        #expect(opened == [.general])
     }
 
     /// The top buttons hug the sidebar's screen edge, Settings outermost, and open their labels away from it.

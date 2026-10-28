@@ -73,6 +73,8 @@ struct SettingsRow<Control: View, Accessory: View>: View {
     var body: some View {
         GridRow {
             Text(label + ":")
+                // The grid would otherwise squeeze the label to make room for a long control or hint.
+                .fixedSize()
                 .gridColumnAlignment(.trailing)
             control()
             accessory()
@@ -87,9 +89,15 @@ extension SettingsRow where Accessory == EmptyView {
 }
 
 /// Secondary text under a control, aligned with the control column; absent when empty.
+///
+/// A hint is one line, kept short enough to fit the pane. A cell spanning columns wraps at the width of
+/// the widest control above it, not at the pane's edge, and the grid only widens columns for single-column
+/// cells, so a wrapping hint breaks well short of the edge. Text that comes from elsewhere, such as status
+/// and error messages, `wraps` there instead of running off the pane.
 struct SettingsHint: View {
     let text: String?
     var color: Color = .secondary
+    var wraps = false
 
     @Environment(\.typography) private var typography
 
@@ -101,7 +109,7 @@ struct SettingsHint: View {
                 Text(text)
                     .font(typography.font(.subheadline))
                     .foregroundStyle(color)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .fixedSize(horizontal: !wraps, vertical: true)
                     .gridCellColumns(2)
             }
         }

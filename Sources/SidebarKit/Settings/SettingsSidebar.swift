@@ -1,34 +1,32 @@
 import Observation
 import SwiftUI
 
-/// The Settings window's groups, in the order the sidebar lists them. Permissions, AeroSpace and General
-/// act immediately; the others edit the draft and end with Cancel and Save.
-enum SettingsGroup: Int, CaseIterable, Identifiable {
-    case permissions, aeroSpace, sidebar, notifications, history, font, general
+/// The Settings window's groups, in the order the sidebar lists them. General and Permissions act
+/// immediately; the others edit the draft and end with Cancel and Save.
+public enum SettingsGroup: Int, CaseIterable, Identifiable, Sendable {
+    case general, appearance, sidebar, permissions, notifications, history
 
-    var id: Self { self }
+    public var id: Self { self }
 
     var title: String {
         switch self {
-        case .permissions: "Permissions"
-        case .aeroSpace: "AeroSpace"
+        case .general: "General"
+        case .appearance: "Appearance"
         case .sidebar: "Sidebar"
+        case .permissions: "Permissions"
         case .notifications: "Notifications"
         case .history: "History"
-        case .font: "Font"
-        case .general: "General"
         }
     }
 
     var symbol: String {
         switch self {
-        case .permissions: "hand.raised"
-        case .aeroSpace: "rectangle.split.3x1"
+        case .general: "gearshape"
+        case .appearance: "textformat"
         case .sidebar: "sidebar.right"
+        case .permissions: "hand.raised"
         case .notifications: "bell.badge"
         case .history: "clock.arrow.circlepath"
-        case .font: "textformat"
-        case .general: "gearshape"
         }
     }
 }
@@ -38,7 +36,7 @@ enum SettingsGroup: Int, CaseIterable, Identifiable {
 @MainActor
 @Observable
 final class SettingsNavigation {
-    var selection: SettingsGroup = .permissions {
+    var selection: SettingsGroup = .general {
         didSet { onSelect?(selection) }
     }
 

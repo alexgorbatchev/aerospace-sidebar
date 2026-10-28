@@ -89,7 +89,7 @@ extension SidebarPanelController {
         settings: SettingsStore,
         targetVisibleFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenVisibleFrame,
         notificationCenter: NotificationCenter = NotificationCenter(),
-        openSettings: @escaping @MainActor () -> Void = {}
+        openSettings: @escaping @MainActor (SettingsGroup) -> Void = { _ in }
     ) -> SidebarPanelController {
         let controller = SidebarPanelController(
             model: model, settings: settings, targetVisibleFrame: targetVisibleFrame,

@@ -12,13 +12,13 @@ struct PermissionsPane: View {
                     SetupStep(title: "Open Accessibility", isDone: onboarding.accessibilityGranted, action: onboarding.requestAccessibility)
                 }
             }
-            SettingsHint(text: "Required to take over notifications. macOS draws banners in its Notification Center process, and the Accessibility API is the only way another app can read and hide them. Without it, banners keep showing.")
+            SettingsHint(text: "Required to read and hide banners.")
             SettingsRow(label: "Full Disk Access") {
                 RemovableStep(remove: { Task { await onboarding.removeFullDiskAccess() } }) {
                     SetupStep(title: "Open Full Disk Access", isDone: onboarding.fullDiskAccessGranted, action: onboarding.requestFullDiskAccess)
                 }
             }
-            SettingsHint(text: "Optional. macOS records every notification in a database that only apps with Full Disk Access can open. The sidebar only reads it, to list notifications that showed no banner: during Focus, in quick bursts, or while the sidebar was not running.")
+            SettingsHint(text: "Optional. Lists notifications that showed no banner.")
             SettingsRow(label: "Open at login") {
                 RemovableStep(remove: removeLoginItem) {
                     switch onboarding.loginItem {
@@ -30,8 +30,8 @@ struct PermissionsPane: View {
                 }
             }
             SettingsHint(text: loginHint)
-            SettingsHint(text: "Remove takes AerospaceSidebar off that list in System Settings. After an update macOS no longer recognizes, remove it and grant it again.")
-            SettingsHint(text: onboarding.message)
+            SettingsHint(text: "After an update, Remove and grant it again.")
+            SettingsHint(text: onboarding.message, wraps: true)
         }
         // Permissions and login items change in System Settings while this window is open.
         .refreshingWhileShown(onboarding.refresh)
@@ -46,11 +46,10 @@ struct PermissionsPane: View {
     }
 
     private var loginHint: String {
-        let purpose = "Optional. Starts the sidebar when you log in, so it handles notifications from the start."
-        return switch onboarding.loginItem {
-        case .enabled, .disabled: purpose
-        case .requiresApproval: purpose + " Allow AerospaceSidebar in System Settings › General › Login Items."
-        case .unavailable: purpose + " Install the app in Applications to use it."
+        switch onboarding.loginItem {
+        case .enabled, .disabled: "Optional. Starts the sidebar when you log in."
+        case .requiresApproval: "Allow it in System Settings › General › Login Items."
+        case .unavailable: "Install the app in Applications to open it at login."
         }
     }
 }
@@ -75,9 +74,9 @@ struct RemovableStep<Step: View>: View {
     }
 }
 
-/// AeroSpace: whether its config reserves the sidebar's strip, with a one-click update.
-/// Its steps take effect immediately, so it has no Cancel or Save.
-struct AeroSpacePane: View {
+/// Whether the AeroSpace config reserves the sidebar's strip, with a one-click update. Its steps take
+/// effect immediately, on the saved side and width.
+struct AeroSpaceRows: View {
     let aeroSpace: AeroSpaceSync
     /// Shows a file in Finder.
     let reveal: (URL) -> Void
@@ -85,43 +84,39 @@ struct AeroSpacePane: View {
     @Environment(\.typography) private var typography
 
     var body: some View {
-        SettingsPage {
-            if let url = aeroSpace.configURL {
-                SettingsFileRow(label: "Config file", url: url, reveal: reveal)
-            }
-            // Extra buttons sit next to their step: in an accessory column, long hints spanning both
-            // columns would widen the step column and push them away from it.
-            SettingsRow(label: "Config") {
-                HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.columnSpacing) {
-                    SetupStep(
-                        title: "Update AeroSpace Config",
-                        isDone: aeroSpace.isConfigured,
-                        action: { Task { await aeroSpace.update() } }
-                    )
-                    .disabled(aeroSpace.isUpdating)
-                    // A config that already matches can still be written again, for example to reload
-                    // AeroSpace or to put a hand-edited block back in its usual form.
-                    if aeroSpace.isConfigured {
-                        Button("Write Again", font: typography.font(.body)) {
-                            Task { await aeroSpace.update(rewritingBlock: true) }
-                        }
-                        .disabled(aeroSpace.isUpdating)
-                    }
-                    Button("Copy Settings", font: typography.font(.body), action: aeroSpace.copySnippet)
-                }
-                // The grid would otherwise squeeze the step to fit, truncating its buttons.
-                .fixedSize()
-            }
-            SettingsHint(text: aeroSpaceHint)
-            if case .ready(let analysis, _) = aeroSpace.state {
-                ForEach(analysis.warnings, id: \.self) { warning in
-                    SettingsHint(text: warning, color: .orange)
-                }
-            }
-            SettingsHint(text: aeroSpace.message)
+        if let url = aeroSpace.configURL {
+            SettingsFileRow(label: "AeroSpace config", url: url, reveal: reveal)
         }
-        // The AeroSpace config may be edited by hand while this window is open.
-        .refreshingWhileShown(aeroSpace.refresh)
+        // Extra buttons sit next to their step: in an accessory column, long hints spanning both
+        // columns would widen the step column and push them away from it.
+        SettingsRow(label: "AeroSpace") {
+            HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.columnSpacing) {
+                SetupStep(
+                    title: "Update Config",
+                    isDone: aeroSpace.isConfigured,
+                    action: { Task { await aeroSpace.update() } }
+                )
+                .disabled(aeroSpace.isUpdating)
+                // A config that already matches can still be written again, for example to reload
+                // AeroSpace or to put a hand-edited block back in its usual form.
+                if aeroSpace.isConfigured {
+                    Button("Write Again", font: typography.font(.body)) {
+                        Task { await aeroSpace.update(rewritingBlock: true) }
+                    }
+                    .disabled(aeroSpace.isUpdating)
+                }
+                Button("Copy Settings", font: typography.font(.body), action: aeroSpace.copySnippet)
+            }
+            // The grid would otherwise squeeze the step to fit, truncating its buttons.
+            .fixedSize()
+        }
+        SettingsHint(text: aeroSpaceHint, wraps: true)
+        if case .ready(let analysis, _) = aeroSpace.state {
+            ForEach(analysis.warnings, id: \.self) { warning in
+                SettingsHint(text: warning, color: .orange, wraps: true)
+            }
+        }
+        SettingsHint(text: aeroSpace.message, wraps: true)
     }
 
     private var aeroSpaceHint: String {
@@ -172,7 +167,7 @@ struct GeneralPane: View {
                 Button("Quit Sidebar", font: typography.font(.body), action: quit)
                     .keyboardShortcut("q", modifiers: .command)
             }
-            SettingsHint(text: "Quitting hands notifications back to macOS until the sidebar starts again.")
+            SettingsHint(text: "Quitting hands notifications back to macOS.")
         }
     }
 }

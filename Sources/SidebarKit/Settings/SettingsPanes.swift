@@ -1,10 +1,12 @@
 import SwiftUI
 
-/// Sidebar: the side and width of the strip the sidebar occupies.
+/// Sidebar: the side and width of the strip the sidebar occupies, and whether AeroSpace reserves it.
 struct SidebarPane: View {
     @Bindable var editor: SettingsEditor
     /// Reports the AeroSpace update that saving a new side or width starts.
     let aeroSpace: AeroSpaceSync
+    /// Shows a file in Finder.
+    let reveal: (URL) -> Void
     let close: () -> Void
 
     var body: some View {
@@ -22,9 +24,11 @@ struct SidebarPane: View {
             SettingsRow(label: "Width") {
                 NumberField(title: "Width", value: $editor.draft.sidebar.width, stepRange: SidebarSettings.Sidebar.widthRange, unit: "points")
             }
-            SettingsHint(text: "The sidebar sits on the main display. Saving a new side or width updates the AeroSpace config so tiled windows leave the same strip free, and reloads AeroSpace.")
-            SettingsHint(text: aeroSpace.message)
+            SettingsHint(text: "On the main display. Saving also updates AeroSpace.")
+            AeroSpaceRows(aeroSpace: aeroSpace, reveal: reveal)
         }
+        // The AeroSpace config may be edited by hand while this window is open.
+        .refreshingWhileShown(aeroSpace.refresh)
     }
 }
 
@@ -38,21 +42,23 @@ struct NotificationsPane: View {
     var body: some View {
         SettingsPage(buttonBar: SettingsButtonBar(editor: editor, close: close)) {
             SettingsRow(label: "Banners") {
-                Toggle("Hide banners and list their notifications here", isOn: $editor.draft.notifications.replaceSystem)
+                Toggle("Hide banners and list them here", isOn: $editor.draft.notifications.replaceSystem)
                     .toggleStyle(.checkbox)
+                    .fixedSize()
             }
-            SettingsHint(text: "On, the sidebar takes over notifications from other apps: their banners disappear and the notifications are listed here. Needs the Accessibility permission. Off, banners show as usual, and the sidebar lists only notifications sent with the aerospace-sidebar command or URL.")
+            SettingsHint(text: "Needs Accessibility. Off, only pushed ones are listed.")
             SettingsRow(label: "With buttons") {
-                Toggle("Keep banners for notifications with buttons", isOn: $editor.draft.notifications.actionableLeftToMacOS)
+                Toggle("Keep banners with buttons", isOn: $editor.draft.notifications.actionableLeftToMacOS)
                     .toggleStyle(.checkbox)
+                    .fixedSize()
             }
-            SettingsHint(text: "Alerts whose buttons are plain choices, such as Allow…, are listed with those buttons either way. Other buttons, such as a reply field, an Options menu or a banner's buttons, only work on the banner itself; otherwise these notifications are listed without them, and clicking one opens its app.")
+            SettingsHint(text: "Off, cards keep only choices such as Allow…")
             SettingsRow(label: "Keep banners for") {
                 TextField("Keep banners for", text: $editor.appsLeftToMacOSText, prompt: Text("zoom.us, Calendar"))
                     .labelsHidden()
                     .frame(width: SettingsMetrics.fieldWidth * typography.scale)
             }
-            SettingsHint(text: "Comma-separated app names, as shown in their notifications. Their banners still show, and their notifications are also listed.")
+            SettingsHint(text: "Comma-separated app names, also listed here.")
         }
     }
 }
@@ -76,13 +82,13 @@ struct HistoryPane: View {
                     stepRange: SidebarSettings.History.maxCountRange, unit: "notifications"
                 )
             }
-            SettingsHint(text: "Notifications survive restarts until they are older than this or the list is full.")
+            SettingsHint(text: "Kept across restarts until too old or the list is full.")
         }
     }
 }
 
-/// Font: the family and size of all text in the sidebar and Settings.
-struct FontPane: View {
+/// Appearance: the font and size of all text in the sidebar and Settings.
+struct AppearancePane: View {
     @Bindable var editor: SettingsEditor
     /// Opens the font panel on the draft font.
     let chooseFont: () -> Void
@@ -92,8 +98,8 @@ struct FontPane: View {
 
     var body: some View {
         SettingsPage(buttonBar: SettingsButtonBar(editor: editor, close: close)) {
-            SettingsRow(label: "Family") {
-                TextField("Family", text: $editor.draft.font.name, prompt: Text("System font"))
+            SettingsRow(label: "Font") {
+                TextField("Font", text: $editor.draft.font.name, prompt: Text("System font"))
                     .labelsHidden()
                     .frame(width: SettingsMetrics.fieldWidth * typography.scale)
             } accessory: {
@@ -102,7 +108,7 @@ struct FontPane: View {
             SettingsRow(label: "Size") {
                 NumberField(title: "Size", value: $editor.draft.font.size, stepRange: SidebarSettings.Font.sizeRange, unit: "points")
             }
-            SettingsHint(text: "Leave empty for the system font. All text sizes scale with Size.")
+            SettingsHint(text: "Empty for the system font. All text scales with Size.")
         }
     }
 }

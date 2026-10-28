@@ -6,7 +6,8 @@ struct SidebarView: View {
     let model: SidebarModel
     /// The screen edge the sidebar is pinned to; the top buttons and the scroll indicator align to it.
     let side: SidebarSettings.Sidebar.Side
-    let openSettings: () -> Void
+    /// Shows the Settings window on a group.
+    let openSettings: (SettingsGroup) -> Void
 
     static let margin: CGFloat = 16
     /// The panel starts right under the menu bar, which already leaves room above the buttons.
@@ -29,7 +30,7 @@ struct SidebarView: View {
                         .font(typography.font(.callout))
                         .foregroundStyle(.secondary)
                     if model.interception == .needsAccessibility {
-                        Button("Set Up…", font: typography.font(.body), action: openSettings)
+                        Button("Set Up…", font: typography.font(.body)) { openSettings(.permissions) }
                     }
                 }
                 .padding(10)
@@ -103,7 +104,7 @@ struct SidebarView: View {
         let expandsToward: HorizontalEdge = side == .left ? .trailing : .leading
         let clearAll = ExpandingIconButton("Clear All", systemImage: "xmark", expandsToward: expandsToward, action: model.clear)
             .disabled(model.notifications.isEmpty)
-        let settings = ExpandingIconButton("Settings", systemImage: "gearshape", expandsToward: expandsToward, action: openSettings)
+        let settings = ExpandingIconButton("Settings", systemImage: "gearshape", expandsToward: expandsToward) { openSettings(.general) }
             .keyboardShortcut(",", modifiers: .command)
         return HStack(spacing: 4) {
             if side == .left {
