@@ -1,0 +1,13 @@
+[
+  {
+    "author": {
+      "name": "Alex Gorbatchev",
+      "email": "alex.gorbatchev@gmail.com"
+    },
+    "timestamp": 1793216922,
+    "op": "CreateTask",
+    "title": "clicking notifications from the browser",
+    "kind": "task",
+    "description": "clicking on web telegram notifications brings up the chrome window, but doesn't focus the right tab/view... is that limitation of browser notifications? if so close the ticket with comments, if not that should be fixed and verified across all other types"
+  }
+]
