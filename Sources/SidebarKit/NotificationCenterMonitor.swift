@@ -136,6 +136,13 @@ public final class NotificationCenterMonitor {
         interceptor.detach()
     }
 
+    /// Sweeps again after a change outside NotificationCenter that moves where its windows belong, such
+    /// as the sidebar changing side or width.
+    public func refresh() {
+        guard attachedPID != nil else { return }
+        notificationCenterChanged()
+    }
+
     /// Sweeps now and keeps sweeping until NotificationCenter settles.
     func notificationCenterChanged() {
         lastEvent = now()

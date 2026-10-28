@@ -53,6 +53,8 @@ struct SidebarAppDelegateTests {
                     interceptor: SystemNotificationInterceptor(
                         identities: identities,
                         leavesToMacOS: { settings.settings.notifications.leavesToMacOS($0) },
+                        // Stands in for the screen geometry: native notifications move left by the width.
+                        nativeOrigin: { CGPoint(x: -CGFloat(settings.settings.sidebar.width), y: 0) },
                         onNotification: { model.add($0) }
                     ),
                     workspaceCenter: NotificationCenter(),
@@ -127,6 +129,25 @@ struct SidebarAppDelegateTests {
 
         #expect(banner.performed.isEmpty)
         #expect(delegate.model.notifications.first?.shownByMacOS == true)
+    }
+
+    /// Native notifications follow the sidebar when its side or width changes, without waiting for
+    /// NotificationCenter to report anything.
+    @Test func changingTheSidebarMovesNativeNotifications() throws {
+        settings.update {
+            $0.notifications.appsLeftToMacOS = ["zoom.us"]
+            $0.sidebar = SidebarSettings.Sidebar(side: .right, width: 300)
+        }
+        let window = FakeElement.window(FakeElement.banner(app: "zoom.us", title: "Meeting"))
+        platform.windowsByPID[42] = [window]
+        let delegate = makeDelegate()
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
+        #expect(window.position == CGPoint(x: -300, y: 0))
+
+        settings.update { $0.sidebar.width = 400 }
+
+        #expect(window.position == CGPoint(x: -400, y: 0))
     }
 
     @Test func settingsButtonOpensOneSettingsWindow() throws {

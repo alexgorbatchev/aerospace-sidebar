@@ -21,8 +21,11 @@ import os
 /// hides its notifications immediately, so a window is hidden only when every notification in it is
 /// intercepted (vorssaint-utils); one that holds a notification left to macOS stays on-screen, and its
 /// intercepted banners stay visible until their close action works (MeetingMute). NotificationCenter
-/// discards a window once its notifications are closed. Windows left off-screen are moved back by
-/// `restore(_:)`.
+/// draws notifications at the right edge of its window, which covers the main display, and the sidebar
+/// sits above it; such a window is therefore moved to `nativeOrigin`, beside the sidebar instead of under
+/// it. NotificationCenter keeps a window where it was moved, and hit testing follows it, until it
+/// discards the window once its notifications are closed; the next window starts at the origin again.
+/// Windows moved off-screen or beside the sidebar are moved back by `restore(_:)`.
 @MainActor
 public final class SystemNotificationInterceptor {
     /// What the sidebar did to an alert it keeps hidden.
@@ -57,6 +60,7 @@ public final class SystemNotificationInterceptor {
     private let leavesActionableToMacOS: @MainActor () -> Bool
     private let listsAlert: @MainActor (String) -> Bool
     private let onPresentAlerts: @MainActor (Set<String>) -> Void
+    private let nativeOrigin: @MainActor () -> CGPoint
     private let now: () -> Date
     private let identities: NotificationIdentities
     private var recentContent: [(content: BannerContent, at: Date)] = []
@@ -83,6 +87,8 @@ public final class SystemNotificationInterceptor {
     ///   - listsAlert: Whether the sidebar still has a card for the alert with this identifier.
     ///   - onPresentAlerts: Receives the identifiers of the listed alerts that still exist, after each
     ///     sweep that changes them.
+    ///   - nativeOrigin: Where a window holding a notification left to macOS is placed, so that the
+    ///     sidebar does not cover it.
     public init(
         now: @escaping () -> Date = Date.init,
         identities: NotificationIdentities = NotificationIdentities(),
@@ -90,6 +96,7 @@ public final class SystemNotificationInterceptor {
         leavesActionableToMacOS: @escaping @MainActor () -> Bool = { true },
         listsAlert: @escaping @MainActor (String) -> Bool = { _ in false },
         onPresentAlerts: @escaping @MainActor (Set<String>) -> Void = { _ in },
+        nativeOrigin: @escaping @MainActor () -> CGPoint = { .zero },
         onNotification: @escaping @MainActor (SidebarNotification) -> Void
     ) {
         self.now = now
@@ -98,6 +105,7 @@ public final class SystemNotificationInterceptor {
         self.leavesActionableToMacOS = leavesActionableToMacOS
         self.listsAlert = listsAlert
         self.onPresentAlerts = onPresentAlerts
+        self.nativeOrigin = nativeOrigin
         self.onNotification = onNotification
     }
 
@@ -161,7 +169,7 @@ public final class SystemNotificationInterceptor {
 
     /// Expands stacks and closes the notifications in one window, reporting new ones. The window is moved
     /// off-screen unless it holds a notification left to macOS (an interactive one, while those stay
-    /// native, or one from an app left to macOS); then it stays on-screen and is moved back if it was hidden.
+    /// native, or one from an app left to macOS); then it is moved to `nativeOrigin`.
     @discardableResult
     func process(window: any AccessibilityElement) -> Outcome {
         let items = NotificationBanners.find(in: window)
@@ -203,7 +211,7 @@ public final class SystemNotificationInterceptor {
             }
         }
         if keepsNative {
-            restore([window])
+            present(window)
         } else {
             hide(window)
         }
@@ -267,12 +275,22 @@ public final class SystemNotificationInterceptor {
         Self.logger.info("Alert \(identifier, privacy: .public) left NotificationCenter \(reason, privacy: .public)")
     }
 
-    /// Moves NotificationCenter windows that an earlier hide left off-screen back to the origin.
+    /// Moves NotificationCenter windows that the sidebar moved, off-screen or beside the sidebar, back to
+    /// the origin: the main display's top-left corner, where NotificationCenter places its window.
     public func restore(_ windows: [any AccessibilityElement]) {
-        for window in windows where Self.isOffScreen(window) {
+        for window in windows {
+            guard let position = window.position, position != .zero else { continue }
             let moved = window.setPosition(.zero)
-            Self.logger.info("Restoring hidden window: \(moved ? "moved" : "refused", privacy: .public)")
+            Self.logger.info("Restoring moved window: \(moved ? "moved" : "refused", privacy: .public)")
         }
+    }
+
+    /// Moves a window holding a notification left to macOS to `nativeOrigin`, out from under the sidebar.
+    private func present(_ window: any AccessibilityElement) {
+        let origin = nativeOrigin()
+        guard let position = window.position, position != origin else { return }
+        let moved = window.setPosition(origin)
+        Self.logger.info("Moving window with native notifications to x \(origin.x, privacy: .public): \(moved ? "moved" : "refused", privacy: .public)")
     }
 
     /// Moves the window off-screen and checks that NotificationCenter kept the new position.

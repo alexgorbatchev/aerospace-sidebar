@@ -9,6 +9,11 @@ public final class SidebarPanelController: NSObject {
         NSScreen.screens.first?.visibleFrame
     }
 
+    /// Frame and visible frame of the primary screen.
+    public static let primaryScreenFrames: @MainActor () -> (frame: CGRect, visibleFrame: CGRect)? = {
+        NSScreen.screens.first.map { ($0.frame, $0.visibleFrame) }
+    }
+
     /// The panel's window level, above other apps' windows and the menu bar.
     public static let level: NSWindow.Level = .statusBar
 

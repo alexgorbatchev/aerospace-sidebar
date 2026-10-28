@@ -721,18 +721,54 @@ struct SystemNotificationInterceptorTests {
         #expect(list.present == [["a"], []])
     }
 
-    @Test func restoresOnlyOffScreenWindows() {
+    /// Windows moved off-screen or beside the sidebar go back to the origin; the others stay where they are.
+    @Test func restoresMovedWindows() {
         let interceptor = SystemNotificationInterceptor { _ in }
         let hidden = FakeElement(position: SystemNotificationInterceptor.offScreen)
         let hiddenVertically = FakeElement(position: CGPoint(x: 0, y: -2000))
-        let visible = FakeElement(position: CGPoint(x: 10, y: 10))
+        let beside = FakeElement(position: CGPoint(x: -300, y: 0))
+        let atOrigin = FakeElement(position: .zero)
         let unknown = FakeElement()
 
-        interceptor.restore([hidden, hiddenVertically, visible, unknown])
+        interceptor.restore([hidden, hiddenVertically, beside, atOrigin, unknown])
 
         #expect(hidden.position == .zero)
         #expect(hiddenVertically.position == .zero)
-        #expect(visible.moves.isEmpty)
+        #expect(beside.position == .zero)
+        #expect(atOrigin.moves.isEmpty)
         #expect(unknown.moves.isEmpty)
+    }
+
+    /// A window that holds a native notification moves to `nativeOrigin`, from the origin or from
+    /// off-screen, once; a window of intercepted notifications is hidden as before.
+    @Test func movesWindowsWithNativeNotificationsToTheirOrigin() {
+        let beside = CGPoint(x: -300, y: 0)
+        let interceptor = SystemNotificationInterceptor(leavesToMacOS: { $0 == "zoom.us" }, nativeOrigin: { beside }) { _ in }
+        let shown = FakeElement.window(FakeElement.banner(id: "z", app: "zoom.us", title: "Meeting"))
+        let wasHidden = FakeElement.window(
+            FakeElement.banner(id: "z2", app: "zoom.us", title: "Call"),
+            position: SystemNotificationInterceptor.offScreen
+        )
+        let intercepted = FakeElement.window(FakeElement.banner(id: "m", app: "Mail", title: "Lunch"))
+
+        interceptor.sweep(windows: [shown, wasHidden, intercepted], application: nil)
+        interceptor.sweep(windows: [shown, wasHidden, intercepted], application: nil)
+
+        #expect(shown.moves == [beside])
+        #expect(wasHidden.moves == [beside])
+        #expect(intercepted.moves == [SystemNotificationInterceptor.offScreen])
+    }
+
+    /// Opening the history panel, which shares the window, puts a window beside the sidebar back.
+    @Test func movesWindowsBackWhileThePanelIsOpen() {
+        let interceptor = SystemNotificationInterceptor(leavesToMacOS: { _ in true }, nativeOrigin: { CGPoint(x: -300, y: 0) }) { _ in }
+        let window = FakeElement.window(FakeElement.banner(id: "z", app: "zoom.us", title: "Meeting"))
+        interceptor.sweep(windows: [window], application: nil)
+
+        let application = FakeElement()
+        application.flags["AXExpanded"] = true
+        interceptor.sweep(windows: [window], application: application)
+
+        #expect(window.moves == [CGPoint(x: -300, y: 0), .zero])
     }
 }

@@ -85,7 +85,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         let databaseMonitor = makeDatabaseMonitor(model, identities)
         self.databaseMonitor = databaseMonitor
         settings.observe { [weak self, model] settings in
-            self?.syncAeroSpace(for: settings.sidebar)
+            self?.sidebarChanged(to: settings.sidebar)
             model.apply(history: settings.history)
             if settings.notifications.replaceSystem {
                 monitor.start()
@@ -131,10 +131,13 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         window.show()
     }
 
-    private func syncAeroSpace(for sidebar: SidebarSettings.Sidebar) {
+    /// Brings AeroSpace's reserved strip in line with the sidebar and moves native notifications out from
+    /// under it.
+    private func sidebarChanged(to sidebar: SidebarSettings.Sidebar) {
         guard sidebar != syncedSidebar else { return }
         syncedSidebar = sidebar
         Task { await aeroSpace.sync() }
+        monitor?.refresh()
     }
 
     /// Handles `aerospace-sidebar://` URLs; see `SidebarRequest` for the routes.
@@ -152,11 +155,14 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// - Parameter screenFrames: The primary screen, whose right edge the sidebar may cover; native
+    ///   notifications are moved left of the sidebar there.
     public static func makeMonitor(
         model: SidebarModel,
         settings: SettingsStore,
         identities: NotificationIdentities = NotificationIdentities(),
-        platform: any AccessibilityPlatform = SystemAccessibility()
+        platform: any AccessibilityPlatform = SystemAccessibility(),
+        screenFrames: @escaping @MainActor () -> (frame: CGRect, visibleFrame: CGRect)? = SidebarPanelController.primaryScreenFrames
     ) -> NotificationCenterMonitor {
         NotificationCenterMonitor(
             platform: platform,
@@ -166,6 +172,12 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
                 leavesActionableToMacOS: { settings.settings.notifications.actionableLeftToMacOS },
                 listsAlert: { model.lists(alert: $0) },
                 onPresentAlerts: { model.presentAlerts = $0 },
+                nativeOrigin: {
+                    guard let screen = screenFrames() else { return .zero }
+                    let covered = SidebarLayout(settings.settings.sidebar)
+                        .coverage(ofRightEdgeOf: screen.frame, visibleFrame: screen.visibleFrame)
+                    return CGPoint(x: -covered, y: 0)
+                },
                 onNotification: { model.add($0) }
             ),
             onStatus: { model.interception = $0 }

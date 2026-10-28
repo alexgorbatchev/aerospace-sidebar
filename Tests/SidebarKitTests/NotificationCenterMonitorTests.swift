@@ -160,6 +160,44 @@ struct NotificationCenterMonitorTests {
         #expect(mail.performed.count == 1)
     }
 
+    /// A window holding a native notification moves left of a right-side sidebar, so the sidebar does not
+    /// cover it, follows the sidebar's width, and returns to the origin when the sidebar moves to the left.
+    @Test func defaultMonitorKeepsNativeNotificationsBesideTheSidebar() throws {
+        let directory = try TemporaryDirectory()
+        let settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        settings.update { $0.sidebar = .init(side: .right, width: 300) }
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        let platform = FakePlatform()
+        let banner = FakeElement.banner(id: "s", app: "Calendar", title: "Standup")
+        banner.actions.append("Name:Snooze\nTarget:0x0\nSelector:(null)")
+        let window = FakeElement.window(banner)
+        platform.windowsByPID[42] = [window]
+        let screen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let monitor = SidebarAppDelegate.makeMonitor(
+            model: model,
+            settings: settings,
+            platform: platform,
+            screenFrames: { (screen, CGRect(x: 0, y: 0, width: 1920, height: 1050)) }
+        )
+
+        monitor.start()
+        defer { monitor.stop() }
+        #expect(window.position == CGPoint(x: -300, y: 0))
+
+        settings.update { $0.sidebar.width = 400 }
+        monitor.refresh()
+        #expect(window.position == CGPoint(x: -400, y: 0))
+
+        settings.update { $0.sidebar.side = .left }
+        monitor.refresh()
+        #expect(window.position == .zero)
+
+        monitor.stop()
+        window.position = CGPoint(x: -400, y: 0)
+        monitor.refresh()
+        #expect(window.moves == [CGPoint(x: -300, y: 0), CGPoint(x: -400, y: 0), .zero])
+    }
+
     /// Wired up as the app does it, an alert with choices gets a card that offers them; performing one
     /// acts on the alert, and dismissing the card closes the alert. Without NotificationCenter, nothing can.
     @Test func cardsActOnTheAlertsTheyStandFor() throws {
