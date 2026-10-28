@@ -49,6 +49,9 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
     /// start over from it.
     public let postedSeverity: NotificationSeverity?
     public let icon: Icon?
+    /// The bundle identifier of the app that posted it, whose icon the card shows; nil for pushed
+    /// notifications and those macOS posts itself.
+    public let bundleIdentifier: String?
     /// The icon id a push named that the font does not have; the card notes it under the text.
     public let invalidIcon: String?
     public let action: ClickAction?
@@ -70,6 +73,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         severity: NotificationSeverity = .normal,
         postedSeverity: NotificationSeverity? = nil,
         icon: Icon? = nil,
+        bundleIdentifier: String? = nil,
         invalidIcon: String? = nil,
         action: ClickAction? = nil,
         shownByMacOS: Bool = false,
@@ -85,6 +89,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         self.severity = severity
         self.postedSeverity = postedSeverity
         self.icon = icon
+        self.bundleIdentifier = bundleIdentifier
         self.invalidIcon = invalidIcon
         self.action = action
         self.shownByMacOS = shownByMacOS
@@ -116,11 +121,12 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
 }
 
 extension SidebarNotification {
-    /// Same sender, text, severity, icon, click action and presentation as shown; only identity, time and
+    /// Same sender and its app, text, severity, icon, click action and presentation as shown; only identity, time and
     /// count may differ. Two alerts are never the same content: each card answers its own alert. A stack
     /// keeps the severity its first card arrived with (`postedSeverity`).
     func hasSameContent(as other: SidebarNotification) -> Bool {
-        source == other.source && title == other.title && subtitle == other.subtitle && body == other.body
+        source == other.source && bundleIdentifier == other.bundleIdentifier && title == other.title
+            && subtitle == other.subtitle && body == other.body
             && severity == other.severity && icon == other.icon && invalidIcon == other.invalidIcon
             && action == other.action && shownByMacOS == other.shownByMacOS && nativeAlert == other.nativeAlert
     }
@@ -136,6 +142,7 @@ extension SidebarNotification {
             severity: severity,
             postedSeverity: postedSeverity,
             icon: icon,
+            bundleIdentifier: bundleIdentifier,
             invalidIcon: invalidIcon,
             action: action,
             shownByMacOS: shownByMacOS,
@@ -159,6 +166,7 @@ extension SidebarNotification {
             severity: severity,
             postedSeverity: severity == ownSeverity ? nil : ownSeverity,
             icon: icon,
+            bundleIdentifier: bundleIdentifier,
             invalidIcon: invalidIcon,
             action: action,
             shownByMacOS: shownByMacOS,

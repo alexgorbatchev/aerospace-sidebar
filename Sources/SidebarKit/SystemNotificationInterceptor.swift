@@ -57,6 +57,7 @@ public final class SystemNotificationInterceptor {
 
     private let onNotification: @MainActor (SidebarNotification) -> Void
     private let leavesToMacOS: @MainActor (String) -> Bool
+    private let bundleIdentifier: @MainActor (String) -> String?
     private let leavesActionableToMacOS: @MainActor () -> Bool
     private let listsAlert: @MainActor (String) -> Bool
     private let onPresentAlerts: @MainActor (Set<String>) -> Void
@@ -83,6 +84,7 @@ public final class SystemNotificationInterceptor {
     /// - Parameters:
     ///   - identities: Notifications already listed, shared with `NotificationDatabaseMonitor`.
     ///   - leavesToMacOS: Whether an app's notifications stay native, by app name.
+    ///   - bundleIdentifier: The bundle identifier of the app with a name, whose icon its notifications show.
     ///   - leavesActionableToMacOS: Whether notifications that need interaction stay native. Otherwise
     ///     they are hidden and listed like the others, without their buttons. Alerts whose choices the
     ///     sidebar offers are hidden either way.
@@ -95,6 +97,7 @@ public final class SystemNotificationInterceptor {
         now: @escaping () -> Date = Date.init,
         identities: NotificationIdentities = NotificationIdentities(),
         leavesToMacOS: @escaping @MainActor (String) -> Bool = { _ in false },
+        bundleIdentifier: @escaping @MainActor (String) -> String? = { _ in nil },
         leavesActionableToMacOS: @escaping @MainActor () -> Bool = { true },
         listsAlert: @escaping @MainActor (String) -> Bool = { _ in false },
         onPresentAlerts: @escaping @MainActor (Set<String>) -> Void = { _ in },
@@ -104,6 +107,7 @@ public final class SystemNotificationInterceptor {
         self.now = now
         self.identities = identities
         self.leavesToMacOS = leavesToMacOS
+        self.bundleIdentifier = bundleIdentifier
         self.leavesActionableToMacOS = leavesActionableToMacOS
         self.listsAlert = listsAlert
         self.onPresentAlerts = onPresentAlerts
@@ -344,6 +348,7 @@ public final class SystemNotificationInterceptor {
             title: content.title,
             subtitle: content.subtitle,
             body: content.body,
+            bundleIdentifier: content.appName.isEmpty ? nil : bundleIdentifier(content.appName),
             action: content.appName.isEmpty ? nil : .activateApp(name: content.appName),
             shownByMacOS: shownByMacOS,
             nativeAlert: nativeAlert,

@@ -142,6 +142,40 @@ struct SidebarViewTests {
         #expect(try icon.attributes().font() == .custom(AppIconFont.family, fixedSize: 10))
     }
 
+    /// A notification from an app shows the app's icon at the size of the caption beside it, leaving the
+    /// app's name to the source text.
+    @Test func drawsTheIconOfTheAppThatPosted() throws {
+        let appIcon = NSImage(size: NSSize(width: 64, height: 64))
+        model.add(SidebarNotification(source: "Slack", title: "Ping", bundleIdentifier: "com.tinyspeck.slackmacgap"))
+
+        let sut = try view()
+            .environment(\.appIcon) { $0 == "com.tinyspeck.slackmacgap" ? appIcon : nil }
+            .inspect()
+        let image = try sut.find(ViewType.Image.self) { try $0.actualImage().nsImage() === appIcon }
+
+        let size = 10 * NotificationCard.appIconScale
+        #expect(try image.fixedWidth() == size)
+        #expect(try image.fixedHeight() == size)
+        #expect(try image.accessibilityHidden())
+        #expect(throws: Never.self) { try sut.find(text: "Slack") }
+    }
+
+    /// An icon the notification names wins over its app's, and an app that is no longer installed shows none.
+    @Test func prefersTheNamedIconAndSkipsMissingApps() throws {
+        let appIcon = NSImage(size: NSSize(width: 64, height: 64))
+        model.add(SidebarNotification(
+            source: "Chrome", title: "Named", icon: AppIconFont.vendored.icon(for: "google_chrome"), bundleIdentifier: "com.google.Chrome"
+        ))
+        model.add(SidebarNotification(source: "Gone", title: "Removed", bundleIdentifier: "com.example.removed"))
+
+        let sut = try view()
+            .environment(\.appIcon) { $0 == "com.google.Chrome" ? appIcon : nil }
+            .inspect()
+
+        #expect(throws: Never.self) { try sut.find(viewWithAccessibilityLabel: "Google Chrome") }
+        #expect(sut.findAll(ViewType.Image.self) { try $0.actualImage().nsImage() === appIcon }.isEmpty)
+    }
+
     @Test func notesUnknownIconLikeOtherCardNotes() throws {
         model.add(SidebarNotification(source: "cli", title: "Typo", invalidIcon: "slak"))
 

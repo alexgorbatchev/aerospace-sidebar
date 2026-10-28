@@ -10,7 +10,7 @@
 - **Click actions**: a notification can run a shell command or open a link when clicked.
 - **Severity**: `low`, `normal`, `high` and `critical` notifications sort and look different, with critical ones always on top.
 - **Rules**: regular expressions on a notification's sender, title, subtitle or body raise or lower its severity, or hide it, such as every Slack message as `high`. Saving rules also applies them to the notifications already listed, which move, stack or go accordingly; removing a rule gives them back the severity they arrived with. Settings › Rules shows which recent notifications each rule matches, including ones you dismissed and ones a rule hid.
-- **App icons**: a pushed notification can name an app icon from [sketchybar-app-font](https://github.com/kvndrsslr/sketchybar-app-font), such as `slack` or `google_chrome`, shown before its sender.
+- **App icons**: a notification from an app shows that app's icon before its sender, as macOS does. A pushed notification can name an app icon from [sketchybar-app-font](https://github.com/kvndrsslr/sketchybar-app-font) instead, such as `slack` or `google_chrome`.
 - **Repeats stacked**: a notification identical to one already listed joins it as a single card with a count, instead of filling the list with copies.
 - **History**: the list survives quitting and relaunching; notifications are kept for 24 hours by default.
 - **Missed notifications**: with Full Disk Access, notifications that never showed a banner are listed too: those during Focus or Do Not Disturb, those macOS drops when several arrive at once, and those delivered while the sidebar was not running.

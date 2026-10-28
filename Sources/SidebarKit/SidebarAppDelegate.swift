@@ -197,6 +197,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
             interceptor: SystemNotificationInterceptor(
                 identities: identities,
                 leavesToMacOS: { settings.settings.notifications.leavesToMacOS($0) },
+                bundleIdentifier: { InstalledApps.shared.bundleIdentifier(named: $0) },
                 leavesActionableToMacOS: { settings.settings.notifications.actionableLeftToMacOS },
                 listsAlert: { model.lists(alert: $0) },
                 onPresentAlerts: { model.presentAlerts = $0 },

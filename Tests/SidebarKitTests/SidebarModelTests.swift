@@ -54,6 +54,7 @@ struct SidebarModelTests {
         SidebarNotification(source: "s", title: "t", body: "other"),
         SidebarNotification(source: "s", title: "t", body: "b", severity: .high),
         SidebarNotification(source: "s", title: "t", body: "b", icon: .init(id: "slack")),
+        SidebarNotification(source: "s", title: "t", body: "b", bundleIdentifier: "com.example.s"),
         SidebarNotification(source: "s", title: "t", body: "b", invalidIcon: "nope"),
         SidebarNotification(source: "s", title: "t", body: "b", action: .activateApp(name: "s")),
         SidebarNotification(source: "s", title: "t", body: "b", shownByMacOS: true),

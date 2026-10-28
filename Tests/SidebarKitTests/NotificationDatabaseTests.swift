@@ -179,6 +179,7 @@ struct NotificationDatabaseMonitorTests {
         #expect(harness.received.map(\.title) == ["During Focus", "From macOS"])
         #expect(harness.received.map(\.source) == ["Script Editor", SystemNotificationInterceptor.systemSource])
         #expect(harness.received.map(\.action) == [.activateApp(name: "Script Editor"), nil])
+        #expect(harness.received.map(\.bundleIdentifier) == ["com.apple.ScriptEditor2", nil])
         #expect(harness.received.first?.subtitle == "Sub")
         #expect(harness.received.first?.receivedAt == Date(timeIntervalSinceReferenceDate: 800_000_000))
     }
@@ -251,12 +252,6 @@ struct NotificationDatabaseMonitorTests {
         }
 
         #expect(harness.received.map(\.title) == ["Live"])
-    }
-
-    @Test func findsInstalledAppNames() {
-        #expect(NotificationDatabaseMonitor.installedAppName(bundleIdentifier: "com.apple.finder") == "Finder")
-        #expect(NotificationDatabaseMonitor.installedAppName(bundleIdentifier: "com.apple.ScriptEditor2") == "Script Editor")
-        #expect(NotificationDatabaseMonitor.installedAppName(bundleIdentifier: "com.example.not-installed") == nil)
     }
 }
 

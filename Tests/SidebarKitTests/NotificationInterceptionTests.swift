@@ -292,7 +292,10 @@ struct SystemNotificationInterceptorTests {
     @Test func hidesWindowClosesBannerAndReportsContent() throws {
         var received: [SidebarNotification] = []
         let date = Date(timeIntervalSince1970: 100)
-        let interceptor = SystemNotificationInterceptor(now: { date }) { received.append($0) }
+        let interceptor = SystemNotificationInterceptor(
+            now: { date },
+            bundleIdentifier: { $0 == "Mail" ? "com.apple.mail" : nil }
+        ) { received.append($0) }
         let banner = FakeElement.banner(app: "Mail", title: "Hi", body: "Lunch?")
         let window = FakeElement.window(banner)
 
@@ -307,6 +310,7 @@ struct SystemNotificationInterceptorTests {
         #expect(notification.body == "Lunch?")
         #expect(notification.severity == .normal)
         #expect(notification.action == .activateApp(name: "Mail"))
+        #expect(notification.bundleIdentifier == "com.apple.mail")
         #expect(notification.receivedAt == date)
     }
 

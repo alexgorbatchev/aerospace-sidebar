@@ -38,7 +38,7 @@ public final class NotificationDatabaseMonitor {
         identities: NotificationIdentities,
         defaults: UserDefaults = .standard,
         grace: TimeInterval = 1,
-        appName: @escaping @MainActor (String) -> String? = NotificationDatabaseMonitor.installedAppName,
+        appName: @escaping @MainActor (String) -> String? = InstalledApps.name,
         now: @escaping () -> Date = Date.init,
         onNotification: @escaping @MainActor (SidebarNotification) -> Void
     ) {
@@ -146,6 +146,7 @@ public final class NotificationDatabaseMonitor {
                 title: notification.title,
                 subtitle: notification.subtitle,
                 body: notification.body,
+                bundleIdentifier: name == nil ? nil : notification.bundleIdentifier,
                 action: name.map { .activateApp(name: $0) },
                 receivedAt: notification.deliveredAt
             ))
@@ -174,17 +175,5 @@ public final class NotificationDatabaseMonitor {
         guard error != lastError else { return }
         lastError = error
         Self.logger.error("\(error.description, privacy: .public)")
-    }
-
-    /// The name of the installed app with `bundleIdentifier`, as NotificationCenter shows it.
-    public static func installedAppName(bundleIdentifier: String) -> String? {
-        if let name = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).first?.localizedName {
-            return name
-        }
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else { return nil }
-        let bundle = Bundle(url: url)
-        return bundle?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
-            ?? bundle?.object(forInfoDictionaryKey: kCFBundleNameKey as String) as? String
-            ?? url.deletingPathExtension().lastPathComponent
     }
 }

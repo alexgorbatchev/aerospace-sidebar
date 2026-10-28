@@ -193,9 +193,13 @@ struct NotificationCard: View {
     static let hoverScale: CGFloat = 1.02
     /// How far the dismiss button sticks out past the card's top-trailing corner.
     static let dismissOverhang: CGFloat = 5
+    /// App icons are drawn this much larger than the caption text beside them: their artwork fills 824
+    /// of the icon's 1024 points (Apple's macOS app icon grid), the rest is a transparent margin.
+    static let appIconScale: CGFloat = 1024.0 / 824.0
 
     @Environment(\.typography) private var typography
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.appIcon) private var appIcon
     /// The dismiss button overhangs the card, so the pointer can rest on it outside the card's hover area.
     @State private var isDismissHovered = false
 
@@ -240,6 +244,13 @@ struct NotificationCard: View {
                         Text(icon.glyph)
                             .font(.custom(AppIconFont.family, fixedSize: typography.size(.caption1)))
                             .accessibilityLabel(icon.accessibilityLabel)
+                    } else if let appIcon = notification.bundleIdentifier.flatMap(appIcon) {
+                        let size = typography.size(.caption1) * Self.appIconScale
+                        Image(nsImage: appIcon)
+                            .resizable()
+                            .frame(width: size, height: size)
+                            // The source beside it names the app.
+                            .accessibilityHidden(true)
                     }
                     if let symbol = severitySymbol {
                         Image(systemName: symbol)

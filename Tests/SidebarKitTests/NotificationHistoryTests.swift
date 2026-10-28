@@ -108,7 +108,8 @@ struct NotificationHistoryTests {
         let notifications = [
             SidebarNotification(source: "cli", title: "t", subtitle: "s", body: "b", severity: .critical, postedSeverity: .low,
                                 action: .run(command: "ls", workingDirectory: "/"), receivedAt: start),
-            SidebarNotification(source: "Mail", title: "m", action: .activateApp(name: "Mail"), shownByMacOS: true, receivedAt: start),
+            SidebarNotification(source: "Mail", title: "m", bundleIdentifier: "com.apple.mail", action: .activateApp(name: "Mail"),
+                                shownByMacOS: true, receivedAt: start),
             SidebarNotification(source: "URL", title: "u", action: .open(URL(string: "https://a.example")!), receivedAt: start, occurrences: 4),
             SidebarNotification(source: "macOS", title: "a", nativeAlert: .init(identifier: "A-1", choices: ["Allow…"]), receivedAt: start),
         ]
