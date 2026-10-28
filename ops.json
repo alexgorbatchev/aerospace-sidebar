@@ -4,10 +4,8 @@
       "name": "Alex Gorbatchev",
       "email": "alex.gorbatchev@gmail.com"
     },
-    "timestamp": 1793216922,
-    "op": "CreateTask",
-    "title": "clicking notifications from the browser",
-    "kind": "task",
-    "description": "clicking on web telegram notifications brings up the chrome window, but doesn't focus the right tab/view... is that limitation of browser notifications? if so close the ticket with comments, if not that should be fixed and verified across all other types"
+    "timestamp": 1793217268,
+    "op": "AddComment",
+    "text": "Findings: not a browser limitation. Chromium browsers (the browser here is Vivaldi) focus the tab when they get the notification response from macOS, which runs the site's service-worker notificationclick. macOS sends that response only when the notification itself is clicked in NotificationCenter. A sidebar card for an intercepted or database-listed notification runs activateApp, which only activates the app. Probes (macOS 26): AXPress/Show on a hidden, unclosed alert delivers the click to the posting app. All Vivaldi and Slack notifications in the last 7 days had no banner: the database monitor listed them ('showed no banner'), so they exist only in NC history. History entries carry the same UUID AXIdentifier (kind Banner, grouped in BannerStacks) and are reachable only while the NC panel is open. The panel opens via AXPress on ControlCenter's com.apple.menuextra.clock (expanded in 0.06 s) and closes the same way. Separately, the interceptor closes plain alerts (no choices) immediately, which deletes them and their click. Pending: decide on the approach (hand over plain alerts and banners vs. pressing history entries through the panel)."
   }
 ]
