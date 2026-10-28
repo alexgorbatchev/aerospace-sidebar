@@ -56,17 +56,10 @@ struct SaberBorder<Border: InsettableShape>: View {
     @State private var head: CGFloat = 0
 
     var body: some View {
-        let outline = shape.inset(by: SaberBeam.lineWidth / 2)
         ZStack {
             shape.strokeBorder(color.opacity(reduceMotion ? SaberBeam.stillOutlineOpacity : SaberBeam.outlineOpacity), lineWidth: SaberBeam.lineWidth)
             if !reduceMotion {
-                // Each layer is a longer, faint stretch ending at the head; together they brighten toward it.
-                ForEach(1...SaberBeam.tailLayers, id: \.self) { layer in
-                    let trail = SaberTrail(outline: outline, entry: entry, head: head, length: SaberBeam.length * CGFloat(layer) / CGFloat(SaberBeam.tailLayers))
-                    trail.stroke(color.opacity(SaberBeam.layerOpacity), style: StrokeStyle(lineWidth: SaberBeam.lineWidth, lineCap: .round))
-                    trail.stroke(color.opacity(SaberBeam.layerOpacity * SaberBeam.glowOpacity), lineWidth: SaberBeam.glowWidth)
-                        .blur(radius: SaberBeam.glowWidth)
-                }
+                SaberBlade(shape: shape, color: color, entry: entry, head: head)
             }
         }
         .clipShape(shape)
@@ -80,6 +73,25 @@ struct SaberBorder<Border: InsettableShape>: View {
                 // Back to the start without running backwards, ready for the next hover.
                 withTransaction(Transaction(animation: nil)) { head = 0 }
             }
+        }
+    }
+}
+
+/// The beam at one point of its lap.
+struct SaberBlade<Border: InsettableShape>: View {
+    let shape: Border
+    let color: Color
+    let entry: CGPoint?
+    let head: CGFloat
+
+    var body: some View {
+        let outline = shape.inset(by: SaberBeam.coreWidth / 2)
+        // Each layer is a longer, faint stretch ending at the head; together they brighten toward it.
+        ForEach(1...SaberBeam.tailLayers, id: \.self) { layer in
+            let trail = SaberTrail(outline: outline, entry: entry, head: head, length: SaberBeam.length * CGFloat(layer) / CGFloat(SaberBeam.tailLayers))
+            trail.stroke(color.opacity(SaberBeam.layerOpacity * SaberBeam.glowOpacity), lineWidth: SaberBeam.glowWidth)
+                .blur(radius: SaberBeam.glowWidth / 2)
+            trail.stroke(SaberBeam.core(color).opacity(SaberBeam.layerOpacity), style: StrokeStyle(lineWidth: SaberBeam.coreWidth, lineCap: .round))
         }
     }
 }
@@ -155,9 +167,17 @@ enum SaberBeam {
     static let end: CGFloat = 1 + length
     static let tailLayers = 4
     static let layerOpacity: Double = 1 / Double(tailLayers)
+    /// The outline's width.
     static let lineWidth: CGFloat = 1
-    static let glowWidth: CGFloat = 3
-    static let glowOpacity: Double = 0.6
+    static let coreWidth: CGFloat = 1.5
+    static let glowWidth: CGFloat = 6
+    static let glowOpacity: Double = 1
+
+    /// Like a saber blade, the beam has a pale core inside a glow of its color. A core in the color itself
+    /// would vanish into the matching stroke of a high or critical card.
+    static func core(_ color: Color) -> Color {
+        color.mix(with: .white, by: 0.75)
+    }
     /// The whole edge glows faintly while active, and more where no beam runs.
     static let outlineOpacity: Double = 0.2
     static let stillOutlineOpacity: Double = 0.5
