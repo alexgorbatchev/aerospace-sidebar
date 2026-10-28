@@ -269,24 +269,22 @@ struct NotificationCard: View {
                 if !notification.body.isEmpty {
                     Text(notification.body).font(typography.font(.callout)).lineLimit(8)
                 }
-                if let invalidIcon = notification.invalidIcon {
-                    Text("Invalid icon: \(invalidIcon)")
-                        .font(typography.font(.caption2))
-                        .foregroundStyle(.secondary)
-                }
-                if notification.shownByMacOS {
-                    Text("Shown by macOS for its buttons")
+                ForEach(notes, id: \.self) { note in
+                    Text(note)
                         .font(typography.font(.caption2))
                         .foregroundStyle(.secondary)
                 }
                 if let presentAlert {
-                    // Buttons inside the card's button take their own clicks.
+                    // Buttons inside the card's button take their own clicks. VoiceOver cannot reach them
+                    // there: it sees the card as one button, and pressing a nested button through
+                    // accessibility runs the card's action. It gets the choices as the card's actions.
                     HStack(spacing: 6) {
                         ForEach(presentAlert.choices, id: \.self) { choice in
                             Button(choice, font: typography.font(.callout)) { choose(choice) }
                         }
                     }
                     .padding(.top, 2)
+                    .accessibilityHidden(true)
                 }
             }
             .padding(10)
@@ -304,9 +302,49 @@ struct NotificationCard: View {
             .saberBorder(RoundedRectangle(cornerRadius: Self.cornerRadius), color: saberColor, isActive: isHovered)
             .opacity(notification.severity == .low ? 0.6 : 1)
             .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+            // The card's label and actions describe it; each text would otherwise become an action.
+            .accessibilityElement(children: .ignore)
         }
         .buttonStyle(PressableButtonStyle())
         .help(presentAlert == nil ? notification.clickDescription : "Click to open, as clicking the macOS alert would")
+        .accessibilityLabel(accessibilitySummary)
+        .accessibilityActions {
+            if let presentAlert {
+                ForEach(presentAlert.choices, id: \.self) { choice in
+                    Button(choice) { choose(choice) }
+                }
+            }
+            // The dismiss button shows only under the pointer.
+            Button("Dismiss", action: dismiss)
+        }
+    }
+
+    /// Caption lines under the card's text.
+    var notes: [String] {
+        [
+            notification.invalidIcon.map { "Invalid icon: \($0)" },
+            notification.shownByMacOS ? "Shown by macOS for its buttons" : nil,
+        ].compactMap { $0 }
+    }
+
+    /// What VoiceOver reads for the card: everything it shows, in reading order. The card is one button,
+    /// which otherwise leaves its texts as unnamed custom actions.
+    var accessibilitySummary: Text {
+        var parts: [Text] = []
+        if let icon = notification.icon {
+            parts.append(Text(icon.accessibilityLabel))
+        }
+        if severitySymbol != nil {
+            parts.append(Text(notification.severity.rawValue))
+        }
+        parts.append(Text(notification.source.isEmpty ? "Notification" : notification.source))
+        parts.append(Text(notification.receivedAt, style: .time))
+        if notification.occurrences > 1 {
+            parts.append(Text("Received \(notification.occurrences) times"))
+        }
+        parts += [notification.title, notification.subtitle, notification.body].filter { !$0.isEmpty }.map { Text($0) }
+        parts += notes.map { Text($0) }
+        return parts.dropFirst().reduce(parts[0]) { $0 + Text(", ") + $1 }
     }
 
     private var accent: Color? {

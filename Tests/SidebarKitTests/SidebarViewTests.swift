@@ -139,11 +139,44 @@ struct SidebarViewTests {
         #expect(throws: (any Error).self) { try view().inspect().find(button: "Allow…") }
 
         model.presentAlerts = ["a"]
-        let sut = try view().inspect()
-        #expect(try sut.find(button: "Later").labelView().text().attributes().font() == Typography(SidebarSettings.Font()).font(.callout))
-        try sut.find(button: "Allow…").tap()
+        // The card's label holds the buttons the pointer clicks; its accessibility actions repeat them.
+        let label = try view().inspect().find(NotificationCard.self).find(ViewType.Button.self).labelView()
+        #expect(try label.find(button: "Later").labelView().text().attributes().font() == Typography(SidebarSettings.Font()).font(.callout))
+        try label.find(button: "Allow…").tap()
 
         #expect(alerts.performed == ["Allow… a"])
+        #expect(performer.actions.isEmpty)
+        #expect(model.notifications.isEmpty)
+    }
+
+    /// VoiceOver sees a card as one button: its label reads what the card shows, and its actions offer the
+    /// alert's choices and Dismiss, whose buttons VoiceOver cannot press inside the card.
+    @Test func voiceOverReadsCardsAndReachesTheirButtons() throws {
+        let alerts = RecordingAlerts()
+        model.alerts = alerts
+        model.add(SidebarNotification(source: "macOS", title: "Privacy & Security", body: "Allow it?", nativeAlert: .init(identifier: "a", choices: ["Allow…", "Later"])))
+        for _ in 0..<2 {
+            model.add(SidebarNotification(source: "Calendar", title: "Standup", severity: .high, shownByMacOS: true))
+        }
+        model.presentAlerts = ["a"]
+        let privacy = try #require(model.notifications.first { $0.title == "Privacy & Security" })
+        let standup = try #require(model.notifications.first { $0.title == "Standup" })
+
+        let privacyCard = try card(privacy, hovered: false).inspect().find(ViewType.Button.self)
+        let standupCard = try card(standup, hovered: false).inspect().find(ViewType.Button.self)
+
+        let privacyLabel = try privacyCard.accessibilityLabel().string()
+        #expect(privacyLabel.hasPrefix("macOS, "))
+        #expect(privacyLabel.hasSuffix(", Privacy & Security, Allow it?"))
+        let standupLabel = try standupCard.accessibilityLabel().string()
+        #expect(standupLabel.hasPrefix("high, Calendar, "))
+        #expect(standupLabel.hasSuffix(", Received 2 times, Standup, Shown by macOS for its buttons"))
+        #expect(throws: (any Error).self) { try standupCard.accessibilityActions().find(button: "Allow…") }
+
+        try privacyCard.accessibilityActions().find(button: "Later").tap()
+        try standupCard.accessibilityActions().find(button: "Dismiss").tap()
+
+        #expect(alerts.performed == ["Later a"])
         #expect(performer.actions.isEmpty)
         #expect(model.notifications.isEmpty)
     }
