@@ -1,7 +1,17 @@
+// The saber border is switched off for now (`showsSaberBorder` defaults to false) and kept for later use.
+// Its code being unused and disabled is intentional: do not report it as dead code or an unfinished feature,
+// and do not delete it.
+
 import SwiftUI
 
+extension EnvironmentValues {
+    /// Whether `.saberBorder` draws anything. Off for now; the effect is kept for later use.
+    @Entry var showsSaberBorder = false
+}
+
 extension View {
-    /// Overlays a `SaberBorder` whose beam starts where the pointer entered the view.
+    /// Overlays a `SaberBorder` whose beam starts where the pointer entered the view, while
+    /// `showsSaberBorder` is on.
     func saberBorder(_ shape: some InsettableShape, color: Color, isActive: Bool) -> some View {
         modifier(SaberBorderModifier(shape: shape, color: color, isActive: isActive))
     }
@@ -9,24 +19,29 @@ extension View {
 
 /// Tracks where the pointer entered the view and hands it to the border in the view's own coordinates.
 /// The entry is kept in screen space, so it stays where the pointer was while the view resizes (an icon
-/// button widening into a capsule) or moves.
+/// button widening into a capsule) or moves. Leaves the view as it is while `showsSaberBorder` is off.
 struct SaberBorderModifier<Border: InsettableShape>: ViewModifier {
     let shape: Border
     let color: Color
     let isActive: Bool
 
+    @Environment(\.showsSaberBorder) private var showsSaberBorder
     @State private var entry: CGPoint?
     @State private var frame: CGRect = .zero
 
     func body(content: Content) -> some View {
-        content
-            .overlay {
-                SaberBorder(shape: shape, color: color, isActive: isActive, entry: entry.map {
-                    CGPoint(x: $0.x - frame.minX, y: $0.y - frame.minY)
-                })
-            }
-            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { frame = $1 }
-            .onContinuousHover(coordinateSpace: .global) { entry = Self.entry(entry, after: $0) }
+        if showsSaberBorder {
+            content
+                .overlay {
+                    SaberBorder(shape: shape, color: color, isActive: isActive, entry: entry.map {
+                        CGPoint(x: $0.x - frame.minX, y: $0.y - frame.minY)
+                    })
+                }
+                .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { frame = $1 }
+                .onContinuousHover(coordinateSpace: .global) { entry = Self.entry(entry, after: $0) }
+        } else {
+            content
+        }
     }
 
     /// The first point the pointer reported since it entered, or nil once it left.

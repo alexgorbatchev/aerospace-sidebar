@@ -369,26 +369,44 @@ struct SidebarViewTests {
         }
     }
 
+    /// The saber border is switched off for now, but cards and icon buttons keep asking for it.
     @Test(arguments: [(NotificationSeverity.normal, Color.accentColor), (.high, .orange), (.critical, .red)])
-    func cardsTraceTheirBorderOnlyWhileHovered(severity: NotificationSeverity, color: Color) throws {
+    func cardsAskForTheirBorderOnlyWhileHovered(severity: NotificationSeverity, color: Color) throws {
         model.add(SidebarNotification(source: "s", title: "t", severity: severity))
 
         for hovered in [false, true] {
-            let saber = try card(model.notifications[0], hovered: hovered).inspect()
-                .find(SaberBorder<RoundedRectangle>.self)
-            #expect(try saber.actualView().isActive == hovered)
-            #expect(try saber.actualView().color == color)
-            #expect(try saber.zStack().opacity() == (hovered ? 1 : 0))
+            let sut = try card(model.notifications[0], hovered: hovered).inspect()
+            let saber = try sut.find(where: { (try? $0.modifier(SaberBorderModifier<RoundedRectangle>.self)) != nil })
+                .modifier(SaberBorderModifier<RoundedRectangle>.self).actualView()
+            #expect(saber.isActive == hovered)
+            #expect(saber.color == color)
+            #expect(throws: (any Error).self) { try sut.find(SaberBorder<RoundedRectangle>.self) }
         }
     }
 
-    @Test func iconButtonsTraceTheirBorderWhilePressed() throws {
+    @Test func iconButtonsAskForTheirBorderWhilePressed() throws {
         let style = ExpandingIconButtonStyle(expandsToward: .leading)
 
         for pressed in [false, true] {
-            let saber = try style.inspect(isPressed: pressed).find(SaberBorder<Capsule>.self).actualView()
+            let sut = try style.inspect(isPressed: pressed)
+            let saber = try sut.find(where: { (try? $0.modifier(SaberBorderModifier<Capsule>.self)) != nil })
+                .modifier(SaberBorderModifier<Capsule>.self).actualView()
             #expect(saber.isActive == pressed)
             #expect(saber.color == .accentColor)
+            #expect(throws: (any Error).self) { try sut.find(SaberBorder<Capsule>.self) }
+        }
+    }
+
+    /// Switched on, the border shows its glow only while active.
+    @Test func saberBorderShowsWhileActiveOnceSwitchedOn() throws {
+        for active in [false, true] {
+            let sut = try Color.clear
+                .saberBorder(Capsule(), color: .red, isActive: active)
+                .environment(\.showsSaberBorder, true)
+                .inspect()
+            let saber = try sut.find(SaberBorder<Capsule>.self)
+            #expect(try saber.actualView().isActive == active)
+            #expect(try saber.zStack().opacity() == (active ? 1 : 0))
         }
     }
 
