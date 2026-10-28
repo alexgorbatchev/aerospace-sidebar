@@ -59,6 +59,32 @@ struct SidebarViewTests {
         #expect(model.notifications.isEmpty)
     }
 
+    /// Option-click dismisses a card without its action, so a click that opens something says so.
+    @Test func optionClickDismissesWithoutAction() throws {
+        model.add(SidebarNotification(source: "cli", title: "Keep quiet", action: .open(URL(string: "https://a.example")!)))
+        let sut = card(model.notifications[0], hovered: false)
+
+        let style = try #require(try sut.inspect().find(ViewType.Button.self).buttonStyle() as? PressableButtonStyle)
+        let alternateAction = try #require(style.alternateAction)
+        alternateAction()
+
+        #expect(sut.helpText == "Click to open https://a.example\nOption-click to dismiss")
+        #expect(performer.actions.isEmpty)
+        #expect(model.notifications.isEmpty)
+    }
+
+    @Test func helpMentionsOptionClickOnlyWhenAClickDoesMore() throws {
+        model.add(SidebarNotification(source: "cli", title: "Plain"))
+        model.add(SidebarNotification(source: "macOS", title: "Privacy", nativeAlert: .init(identifier: "a", choices: ["Allow…"])))
+        model.presentAlerts = ["a"]
+
+        let plain = try #require(model.notifications.first { $0.title == "Plain" })
+        let alert = try #require(model.notifications.first { $0.title == "Privacy" })
+
+        #expect(card(plain, hovered: false).helpText == "Click to dismiss")
+        #expect(card(alert, hovered: false).helpText == "Click to open, as clicking the macOS alert would\nOption-click to dismiss")
+    }
+
     @Test func dismissButtonShowsOnlyWhileTheCardIsHovered() throws {
         model.add(SidebarNotification(source: "cli", title: "Keep quiet"))
 

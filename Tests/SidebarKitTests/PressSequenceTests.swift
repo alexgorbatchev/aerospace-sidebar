@@ -11,7 +11,7 @@ struct PressSequenceTests {
         #expect(sut.press() == .pressIn)
         #expect(sut.pressFinished() == .none)
         #expect(sut.phase == .held)
-        #expect(sut.release(inside: true) == .release(triggers: true))
+        #expect(sut.release(.primary) == .release(.primary))
         sut.releaseFinished()
         #expect(sut.phase == .idle)
     }
@@ -21,25 +21,37 @@ struct PressSequenceTests {
 
         #expect(sut.press() == .pressIn)
         // The mouse goes up while the press-in is still animating.
-        #expect(sut.release(inside: true) == .none)
+        #expect(sut.release(.primary) == .none)
         #expect(sut.phase == .pressing)
-        #expect(sut.pressFinished() == .release(triggers: true))
+        #expect(sut.pressFinished() == .release(.primary))
         #expect(sut.phase == .releasing)
     }
 
     @Test func releaseWithoutAReportedPressPlaysTheWholePress() {
         var sut = PressSequence()
 
-        #expect(sut.release(inside: true) == .pressIn)
-        #expect(sut.pressFinished() == .release(triggers: true))
+        #expect(sut.release(.primary) == .pressIn)
+        #expect(sut.pressFinished() == .release(.primary))
     }
 
     @Test func releasingOutsideAnimatesBackWithoutTriggering() {
         var sut = PressSequence()
         _ = sut.press()
 
-        #expect(sut.release(inside: false) == .none)
-        #expect(sut.pressFinished() == .release(triggers: false))
+        #expect(sut.release(.outside) == .none)
+        #expect(sut.pressFinished() == .release(.outside))
+    }
+
+    @Test func optionClickReleasesWithTheAlternateAction() {
+        var sut = PressSequence()
+
+        #expect(sut.press() == .pressIn)
+        #expect(sut.release(.alternate) == .none)
+        #expect(sut.pressFinished() == .release(.alternate))
+        sut.releaseFinished()
+        #expect(sut.press() == .pressIn)
+        _ = sut.pressFinished()
+        #expect(sut.release(.alternate) == .release(.alternate))
     }
 
     @Test func repeatedEventsDuringAnAnimationAreIgnored() {
@@ -51,9 +63,9 @@ struct PressSequenceTests {
         _ = sut.pressFinished()
         #expect(sut.press() == .none)
         #expect(sut.pressFinished() == .none)
-        #expect(sut.release(inside: true) == .release(triggers: true))
+        #expect(sut.release(.primary) == .release(.primary))
         #expect(sut.press() == .none)
-        #expect(sut.release(inside: true) == .none)
+        #expect(sut.release(.primary) == .none)
         sut.releaseFinished()
         #expect(sut.press() == .pressIn)
     }
@@ -65,9 +77,10 @@ struct PressSequenceTests {
 struct PressableButtonTests {
     let window = TestPanel(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.borderless], backing: .buffered, defer: false)
 
-    func host(action: @escaping () -> Void) {
+    /// - Parameter modifierFlags: The modifier keys the button sees held down.
+    func host(modifierFlags: NSEvent.ModifierFlags = [], alternateAction: (() -> Void)? = nil, action: @escaping () -> Void) {
         let button = Button(action: action) { Color.gray.frame(width: 200, height: 100) }
-            .buttonStyle(PressableButtonStyle())
+            .buttonStyle(PressableButtonStyle(alternateAction: alternateAction, modifierFlags: { modifierFlags }))
         window.contentView = NSHostingView(rootView: button)
         window.orderFrontRegardless()
         window.contentView?.layoutSubtreeIfNeeded()
@@ -97,6 +110,28 @@ struct PressableButtonTests {
 
         try click(down: NSPoint(x: 100, y: 50), up: NSPoint(x: 100, y: 50))
         #expect(triggers == 0)
+        try await wait { triggers > 0 }
+
+        #expect(triggers == 1)
+    }
+
+    @Test func optionClickTriggersTheAlternateAction() async throws {
+        var triggers = 0
+        var alternates = 0
+        host(modifierFlags: .option, alternateAction: { alternates += 1 }, action: { triggers += 1 })
+
+        try click(down: NSPoint(x: 100, y: 50), up: NSPoint(x: 100, y: 50))
+        try await wait { alternates > 0 }
+
+        #expect(alternates == 1)
+        #expect(triggers == 0)
+    }
+
+    @Test func optionClickWithoutAnAlternateActionTriggersTheAction() async throws {
+        var triggers = 0
+        host(modifierFlags: .option) { triggers += 1 }
+
+        try click(down: NSPoint(x: 100, y: 50), up: NSPoint(x: 100, y: 50))
         try await wait { triggers > 0 }
 
         #expect(triggers == 1)

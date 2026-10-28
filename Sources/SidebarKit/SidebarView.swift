@@ -305,8 +305,9 @@ struct NotificationCard: View {
             // The card's label and actions describe it; each text would otherwise become an action.
             .accessibilityElement(children: .ignore)
         }
-        .buttonStyle(PressableButtonStyle())
-        .help(presentAlert == nil ? notification.clickDescription : "Click to open, as clicking the macOS alert would")
+        // Option-click dismisses the card without acting, like its dismiss button.
+        .buttonStyle(PressableButtonStyle(alternateAction: dismiss))
+        .help(helpText)
         .accessibilityLabel(accessibilitySummary)
         .accessibilityActions {
             if let presentAlert {
@@ -317,6 +318,15 @@ struct NotificationCard: View {
             // The dismiss button shows only under the pointer.
             Button("Dismiss", action: dismiss)
         }
+    }
+
+    /// What a click does, and that Option-click only dismisses, unless a click does nothing else.
+    var helpText: String {
+        if presentAlert != nil {
+            return "Click to open, as clicking the macOS alert would\nOption-click to dismiss"
+        }
+        guard notification.action != nil else { return notification.clickDescription }
+        return notification.clickDescription + "\nOption-click to dismiss"
     }
 
     /// Caption lines under the card's text.

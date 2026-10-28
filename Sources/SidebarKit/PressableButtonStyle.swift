@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The order of a press animation: the press-in always finishes before the release starts, however
@@ -14,17 +15,27 @@ struct PressSequence: Equatable {
         case releasing
     }
 
+    /// Where and how the mouse went up.
+    enum Release: Equatable {
+        /// Outside the button, which cancels the click.
+        case outside
+        /// Inside the button: run its action.
+        case primary
+        /// Inside the button with Option held: run its alternate action.
+        case alternate
+    }
+
     /// What the view does next.
     enum Step: Equatable {
         case none
         case pressIn
-        /// Animate back out, running the action at the same time when `triggers`.
-        case release(triggers: Bool)
+        /// Animate back out, running the action that `release` asks for at the same time.
+        case release(Release)
     }
 
     private(set) var phase = Phase.idle
-    /// A release that arrived while pressing in: whether it ended inside the button.
-    private var pendingRelease: Bool?
+    /// A release that arrived while pressing in.
+    private var pendingRelease: Release?
 
     /// The mouse went down on the button.
     mutating func press() -> Step {
@@ -33,20 +44,20 @@ struct PressSequence: Equatable {
         return .pressIn
     }
 
-    /// The mouse went up, `inside` the button or not. A release without a press, as for a click too
-    /// quick to report the press, plays the whole press first.
-    mutating func release(inside: Bool) -> Step {
+    /// The mouse went up. A release without a press, as for a click too quick to report the press, plays
+    /// the whole press first.
+    mutating func release(_ release: Release) -> Step {
         switch phase {
         case .idle:
             phase = .pressing
-            pendingRelease = inside
+            pendingRelease = release
             return .pressIn
         case .pressing:
-            pendingRelease = inside
+            pendingRelease = release
             return .none
         case .held:
             phase = .releasing
-            return .release(triggers: inside)
+            return .release(release)
         case .releasing:
             return .none
         }
@@ -55,13 +66,13 @@ struct PressSequence: Equatable {
     /// The press-in animation finished.
     mutating func pressFinished() -> Step {
         guard phase == .pressing else { return .none }
-        guard let inside = pendingRelease else {
+        guard let release = pendingRelease else {
             phase = .held
             return .none
         }
         pendingRelease = nil
         phase = .releasing
-        return .release(triggers: inside)
+        return .release(release)
     }
 
     /// The release animation finished.
@@ -71,15 +82,22 @@ struct PressSequence: Equatable {
 }
 
 /// Scales the button down while pressed and back up on release, running its action as the release
-/// starts. The press always plays in full first; with Reduce Motion the button does not scale.
+/// starts. The press always plays in full first; with Reduce Motion the button does not scale. An
+/// Option-click runs `alternateAction` instead, when there is one.
 struct PressableButtonStyle: PrimitiveButtonStyle {
+    var alternateAction: (() -> Void)?
+    /// The modifier keys held down right now; tests pass their own.
+    var modifierFlags: () -> NSEvent.ModifierFlags = { NSEvent.modifierFlags }
+
     func makeBody(configuration: Configuration) -> some View {
-        PressableButton(configuration: configuration)
+        PressableButton(configuration: configuration, alternateAction: alternateAction, modifierFlags: modifierFlags)
     }
 }
 
 struct PressableButton: View {
     let configuration: PrimitiveButtonStyleConfiguration
+    let alternateAction: (() -> Void)?
+    let modifierFlags: () -> NSEvent.ModifierFlags
 
     static let pressedScale: CGFloat = 0.97
     static let pressIn = Animation.easeOut(duration: 0.1)
@@ -97,10 +115,16 @@ struct PressableButton: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { _ in perform(sequence.press()) }
-                    .onEnded { perform(sequence.release(inside: CGRect(origin: .zero, size: size).contains($0.location))) }
+                    .onEnded { perform(sequence.release(release(at: $0.location))) }
             )
             .accessibilityAddTraits(.isButton)
             .accessibilityAction(.default) { configuration.trigger() }
+    }
+
+    /// Where the mouse went up, and whether Option is held as it does.
+    private func release(at location: CGPoint) -> PressSequence.Release {
+        guard CGRect(origin: .zero, size: size).contains(location) else { return .outside }
+        return modifierFlags().contains(.option) ? .alternate : .primary
     }
 
     private func perform(_ step: PressSequence.Step) {
@@ -113,13 +137,17 @@ struct PressableButton: View {
             } completion: {
                 perform(sequence.pressFinished())
             }
-        case .release(let triggers):
+        case .release(let release):
             withAnimation(reduceMotion ? nil : Self.release, completionCriteria: .logicallyComplete) {
                 isPressedIn = false
             } completion: {
                 sequence.releaseFinished()
             }
-            if triggers { configuration.trigger() }
+            switch release {
+            case .outside: break
+            case .primary: configuration.trigger()
+            case .alternate: (alternateAction ?? configuration.trigger)()
+            }
         }
     }
 }
