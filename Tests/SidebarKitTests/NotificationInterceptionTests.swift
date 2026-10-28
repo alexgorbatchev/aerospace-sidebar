@@ -729,6 +729,26 @@ struct SystemNotificationInterceptorTests {
         #expect(other.performed.isEmpty)
     }
 
+    /// NotificationCenter reports failure for Reply although the alert opens its text field at once; a
+    /// changed alert counts as performed, an unchanged one as refused.
+    @Test func countsAChangedAlertAsPerformedDespiteAReportedFailure() {
+        let interceptor = SystemNotificationInterceptor { _ in }
+        let alert = FakeElement.alert(id: "a", choices: ["Reply"])
+        alert.actionSucceeds = false
+        let windows = [FakeElement.window(alert)]
+
+        #expect(!interceptor.perform(.choice("Reply"), onAlert: "a", in: windows))
+
+        alert.onPerform = { alert in
+            alert.actions = alert.actions.map { $0.replacingOccurrences(of: "Name:Show Details", with: "Name:Hide Details") }
+            alert.childElements.append(FakeElement([kAXRoleAttribute: kAXTextAreaRole]))
+        }
+        #expect(interceptor.perform(.choice("Reply"), onAlert: "a", in: windows))
+
+        alert.onPerform = { $0.actions = [] }
+        #expect(interceptor.perform(.choice("Reply"), onAlert: "a", in: windows))
+    }
+
     @Test func detachingLeavesNoAlertToActOn() {
         let list = AlertList()
         let interceptor = interceptor(for: list)

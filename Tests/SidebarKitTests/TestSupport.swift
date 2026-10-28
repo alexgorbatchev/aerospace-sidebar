@@ -12,6 +12,8 @@ final class FakeElement: AccessibilityElement {
     var childElements: [FakeElement]
     var actions: [String]
     var actionSucceeds = true
+    /// Runs when an action is performed, before its result returns, like Reply opening a text field.
+    var onPerform: ((FakeElement) -> Void)?
     var performed: [String] = []
     var position: CGPoint?
     var moves: [CGPoint] = []
@@ -37,6 +39,7 @@ final class FakeElement: AccessibilityElement {
 
     func perform(_ action: String) -> Bool {
         performed.append(action)
+        onPerform?(self)
         return actionSucceeds
     }
 

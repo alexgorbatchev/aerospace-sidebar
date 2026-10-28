@@ -75,6 +75,8 @@ public final class SystemNotificationInterceptor {
     private var sweptAlerts: Set<String> = []
     private var closingAlerts: Set<String> = []
     private var presentAlerts: Set<String> = []
+    /// Every notification identifier the current sweep found, handed over or not.
+    private var sweptIdentifiers: Set<String> = []
     /// NotificationCenter's words in its current language; set when attaching to it.
     public var labels = NotificationCenterLabels.english
 
@@ -124,12 +126,14 @@ public final class SystemNotificationInterceptor {
         }
         sweptAlerts = []
         closingAlerts = []
+        sweptIdentifiers = []
         let outcome: Outcome = windows.map(process(window:)).contains(.pending) ? .pending : .settled
-        // An alert missing from a sweep is gone. Should a sweep miss one that is still there, it is left to
-        // macOS like any other interactive notification the sidebar did not list with its choices.
+        // An alert missing from a sweep is gone, or no longer offers its choices (Reply opened its text
+        // field) and is left to macOS. Should a sweep miss one that is still there, it is left to macOS like
+        // any other interactive notification the sidebar did not list with its choices.
         let remaining = handedOverAlerts.intersection(sweptAlerts.union(closingAlerts))
         for identifier in handedOverAlerts.subtracting(remaining) {
-            logDeparture(of: identifier)
+            logDeparture(of: identifier, returnedToMacOS: sweptIdentifiers.contains(identifier))
         }
         handedOverAlerts = remaining
         publishPresentAlerts(sweptAlerts)
@@ -141,8 +145,10 @@ public final class SystemNotificationInterceptor {
         publishPresentAlerts([])
     }
 
-    /// Performs `action` on the alert with `identifier` in `windows`; false when it is not there or does
-    /// not offer the choice.
+    /// Performs `action` on the alert with `identifier` in `windows`; false when it is not there, does
+    /// not offer the choice, or neither reports success nor changes. NotificationCenter reports failure
+    /// for Reply although it opens the alert's text field before the call returns, which changes the
+    /// alert's actions (Show Details becomes Hide Details); an alert that is gone reports none.
     @discardableResult
     public func perform(_ action: AlertAction, onAlert identifier: String, in windows: [any AccessibilityElement]) -> Bool {
         let alert = windows.lazy.flatMap { NotificationBanners.find(in: $0) }.first { $0.string(kAXIdentifierAttribute) == identifier }
@@ -153,12 +159,15 @@ public final class SystemNotificationInterceptor {
         }
         guard let rawAction else { return false }
         alertSteps[identifier] = (.performed(NotificationBanners.actionName(rawAction)), now())
-        let performed = alert.perform(rawAction)
+        let actionsBefore = alert.actionNames
+        let succeeded = alert.perform(rawAction)
+        let changed = !succeeded && alert.actionNames != actionsBefore
+        let result = succeeded ? "done" : changed ? "reported failure, but the alert changed" : "refused"
         Self.logger.info("""
             Performing \(NotificationBanners.actionName(rawAction), privacy: .public) on alert \(identifier, privacy: .public): \
-            \(performed ? "done" : "refused", privacy: .public)
+            \(result, privacy: .public)
             """)
-        return performed
+        return succeeded || changed
     }
 
     private func publishPresentAlerts(_ alerts: Set<String>) {
@@ -181,6 +190,7 @@ public final class SystemNotificationInterceptor {
             guard let kind = NotificationBanners.kind(of: item) else { continue }
             let content = NotificationBanners.content(of: item, labels: labels)
             let identifier = item.string(kAXIdentifierAttribute)
+            if let identifier { sweptIdentifiers.insert(identifier) }
             let leftToMacOS = leavesToMacOS(content.appName)
             if kind == .stack, !leftToMacOS {
                 expand(item, identifier: identifier)
@@ -262,9 +272,10 @@ public final class SystemNotificationInterceptor {
         return .settled
     }
 
-    /// Records how a handed-over alert left NotificationCenter: after a choice performed from its card, after
-    /// the sidebar closed it, or with no help from the sidebar (another device, the history panel).
-    private func logDeparture(of identifier: String) {
+    /// Records how a handed-over alert left NotificationCenter, or returned to macOS because it no longer
+    /// offers its choices: after a choice performed from its card, after the sidebar closed it, or with no
+    /// help from the sidebar (another device, the history panel).
+    private func logDeparture(of identifier: String, returnedToMacOS: Bool) {
         let last = alertSteps.removeValue(forKey: identifier)
         let elapsed = last.map { String(format: "%.1f s", now().timeIntervalSince($0.at)) } ?? ""
         let reason = switch last?.step {
@@ -272,7 +283,8 @@ public final class SystemNotificationInterceptor {
         case .closing?: "\(elapsed) after the sidebar closed it"
         case nil: "without an action from the sidebar"
         }
-        Self.logger.info("Alert \(identifier, privacy: .public) left NotificationCenter \(reason, privacy: .public)")
+        let departure = returnedToMacOS ? "returned to macOS" : "left NotificationCenter"
+        Self.logger.info("Alert \(identifier, privacy: .public) \(departure, privacy: .public) \(reason, privacy: .public)")
     }
 
     /// Moves NotificationCenter windows that the sidebar moved, off-screen or beside the sidebar, back to
