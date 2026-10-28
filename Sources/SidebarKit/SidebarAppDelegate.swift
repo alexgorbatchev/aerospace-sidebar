@@ -73,6 +73,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApplication.shared.mainMenu = Self.makeMainMenu()
         let controller = makeController(model, settings) { [weak self] in self?.showSettings($0) }
         controller.pin()
         self.controller = controller
@@ -139,6 +140,25 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         syncedSidebar = sidebar
         Task { await aeroSpace.sync() }
         monitor?.refresh()
+    }
+
+    /// The menu bar an `LSUIElement` app never shows. Key equivalents such as ⌘C and ⌘V reach text fields
+    /// only through the main menu's Edit items, so without one Settings' fields ignore them. It holds no
+    /// Quit item: ⌘Q quits only from Settings › General.
+    static func makeMainMenu() -> NSMenu {
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let menu = NSMenu()
+        // The first item is the application menu, whichever title it has.
+        menu.addItem(withTitle: "", action: nil, keyEquivalent: "").submenu = NSMenu()
+        menu.addItem(withTitle: "Edit", action: nil, keyEquivalent: "").submenu = edit
+        return menu
     }
 
     /// Handles `aerospace-sidebar://` URLs; see `SidebarRequest` for the routes.

@@ -71,6 +71,22 @@ struct SidebarAppDelegateTests {
         )
     }
 
+    /// Text fields get ⌘Z, ⇧⌘Z, ⌘X, ⌘C, ⌘V and ⌘A only from main menu items, which an `LSUIElement` app
+    /// has none of until it builds them; ⌘Q stays with Settings › General.
+    @Test func launchingInstallsTheEditMenusKeyEquivalents() throws {
+        let delegate = makeDelegate()
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
+
+        let items = try #require(NSApplication.shared.mainMenu).items.flatMap { $0.submenu?.items ?? [] }
+        let actions = Dictionary(items.filter { !$0.keyEquivalent.isEmpty }.map { ($0.keyEquivalent, $0.action) }) { first, _ in first }
+        #expect(actions == [
+            "z": Selector(("undo:")), "Z": Selector(("redo:")), "x": #selector(NSText.cut(_:)),
+            "c": #selector(NSText.copy(_:)), "v": #selector(NSText.paste(_:)), "a": #selector(NSText.selectAll(_:)),
+        ])
+        #expect(items.allSatisfy { $0.target == nil && $0.keyEquivalentModifierMask == .command })
+    }
+
     @Test func launchingPinsSidebarStartsInterceptionAndControlSocket() async throws {
         let path = ControlServerTests.socketPath()
         platform.windowsByPID[42] = [FakeElement.window(FakeElement.banner(app: "Mail"))]
