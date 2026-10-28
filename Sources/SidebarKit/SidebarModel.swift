@@ -411,6 +411,12 @@ public final class SidebarModel {
         dismiss(id)
     }
 
+    /// Opens a link from a notification's text. The card stays: the link is part of what it says, not
+    /// the notification's action.
+    public func openLink(_ url: URL) {
+        performer.perform(.open(url))
+    }
+
     /// Performs one of the alert's choices, then dismisses the card. The card stays when the alert is
     /// gone or refuses the choice.
     public func choose(_ choice: String, for id: SidebarNotification.ID) {

@@ -52,6 +52,7 @@ struct SidebarView: View {
                             hover: { hoveredID = Self.hoveredID(hoveredID, card: notification.id, hovering: $0) },
                             activate: { model.activate(notification.id) },
                             choose: { model.choose($0, for: notification.id) },
+                            openLink: { model.openLink($0) },
                             dismiss: { model.dismiss(notification.id) }
                         )
                         .transition(cardTransition)
@@ -182,6 +183,8 @@ struct NotificationCard: View {
     let hover: (Bool) -> Void
     let activate: () -> Void
     let choose: (String) -> Void
+    /// Opens a link in the notification's body.
+    let openLink: (URL) -> Void
     let dismiss: () -> Void
 
     static let cornerRadius: CGFloat = 10
@@ -193,6 +196,8 @@ struct NotificationCard: View {
     static let hoverScale: CGFloat = 1.02
     /// How far the dismiss button sticks out past the card's top-trailing corner.
     static let dismissOverhang: CGFloat = 5
+    /// The underline under links in the body, which keep the text's color.
+    static let linkUnderline = Color.primary.opacity(0.35)
     /// Space between the card's lines of text.
     static let lineSpacing: CGFloat = 4
     /// Space between the icon and the text beside it.
@@ -253,6 +258,11 @@ struct NotificationCard: View {
                     VStack(alignment: .leading, spacing: Self.lineSpacing) { content }
                 }
             }
+            // A link click opens the link only; the card's own action needs a click elsewhere on it.
+            .environment(\.openURL, OpenURLAction { url in
+                openLink(url)
+                return .handled
+            })
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(background, in: RoundedRectangle(cornerRadius: Self.cornerRadius))
@@ -280,6 +290,10 @@ struct NotificationCard: View {
                 ForEach(presentAlert.choices, id: \.self) { choice in
                     Button(choice) { choose(choice) }
                 }
+            }
+            // Links in the text are not separate elements inside the card's button.
+            ForEach(bodyLinks, id: \.self) { url in
+                Button("Open \(url.host() ?? url.absoluteString)") { openLink(url) }
             }
             // The dismiss button shows only under the pointer.
             Button("Dismiss", action: dismiss)
@@ -312,7 +326,8 @@ struct NotificationCard: View {
     @ViewBuilder private var content: some View {
         header
         ForEach(lines) { line in
-            Text(line.text).font(line.font).lineLimit(line.lineLimit)
+            // Links keep the text's color; only a faint underline marks them.
+            Text(line.text).font(line.font).lineLimit(line.lineLimit).tint(.primary)
         }
         ForEach(notes, id: \.self) { note in
             Text(note)
@@ -363,7 +378,7 @@ struct NotificationCard: View {
     /// One of the card's texts under the header.
     struct Line: Identifiable {
         let id: String
-        let text: String
+        let text: AttributedString
         let font: Font
         let lineLimit: Int?
     }
@@ -371,11 +386,19 @@ struct NotificationCard: View {
     /// The title, subtitle and body the notification has, in that order.
     var lines: [Line] {
         [
-            Line(id: "title", text: notification.title, font: typography.font(.body).bold(), lineLimit: nil),
-            Line(id: "subtitle", text: notification.subtitle, font: typography.font(.callout), lineLimit: nil),
-            Line(id: "body", text: notification.body, font: typography.font(.callout), lineLimit: 8),
-        ].filter { !$0.text.isEmpty }
+            Line(id: "title", text: AttributedString(notification.title), font: typography.font(.body).bold(), lineLimit: nil),
+            Line(id: "subtitle", text: AttributedString(notification.subtitle), font: typography.font(.callout), lineLimit: nil),
+            Line(
+                id: "body",
+                text: NotificationLinks.linked(notification.body, underline: Self.linkUnderline),
+                font: typography.font(.callout),
+                lineLimit: 8
+            ),
+        ].filter { !$0.text.characters.isEmpty }
     }
+
+    /// The web links in the notification's body.
+    var bodyLinks: [URL] { NotificationLinks.links(in: notification.body).map(\.url) }
 
     /// What a click does, and that Option-click only dismisses, unless a click does nothing else.
     var helpText: String {

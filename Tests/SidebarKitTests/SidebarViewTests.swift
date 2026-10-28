@@ -46,6 +46,7 @@ struct SidebarViewTests {
             hover: { _ in },
             activate: { model.activate(notification.id) },
             choose: { model.choose($0, for: notification.id) },
+            openLink: { model.openLink($0) },
             dismiss: { model.dismiss(notification.id) }
         )
     }
@@ -173,6 +174,21 @@ struct SidebarViewTests {
         #expect(sut.findAll(ViewType.Image.self) { try $0.actualImage().nsImage() === appIcon }.isEmpty)
     }
 
+    /// Links in the body are links in the card's text; VoiceOver, which sees the card as one button, gets
+    /// each as an action. Opening one keeps the card.
+    @Test func opensLinksInTheBodyWithoutDismissing() throws {
+        model.add(SidebarNotification(source: "cli", title: "Build failed", body: "Log: https://ci.example.com/runs/42"))
+        let notification = try #require(model.notifications.first)
+
+        let sut = try card(notification, hovered: false).inspect()
+        let body = try sut.find(text: "Log: https://ci.example.com/runs/42")
+        try sut.find(ViewType.Button.self).accessibilityActions().find(button: "Open ci.example.com").tap()
+
+        #expect(try body.attributes().font() == Typography(SidebarSettings.Font()).font(.callout))
+        #expect(performer.actions == [.open(URL(string: "https://ci.example.com/runs/42")!)])
+        #expect(model.notifications.map(\.id) == [notification.id])
+    }
+
     @Test func notesUnknownIconLikeOtherCardNotes() throws {
         model.add(SidebarNotification(source: "cli", title: "Typo", invalidIcon: "slak"))
 
@@ -277,6 +293,7 @@ struct SidebarViewTests {
                 hover: { _ in },
                 activate: {},
                 choose: { _ in },
+                openLink: { _ in },
                 dismiss: {}
             ).inspect()
         }
