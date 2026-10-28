@@ -126,6 +126,8 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         // window list, is not drawn.
         window.titleVisibility = .hidden
         window.titlebarSeparatorStyle = .none
+        // The split view still draws a title bar background with a separator line over the panes.
+        window.titlebarAppearsTransparent = true
         window.contentViewController = split
         // The window takes the split view's size, which is empty until the panes report theirs. `sizeWindow`
         // measures the title bar and sidebar around them, which takes a window larger than those.

@@ -20,6 +20,13 @@ enum SettingsMetrics {
     static let numberFieldWidth: CGFloat = 80
     /// Height of the list of rules.
     static let ruleListHeight: CGFloat = 120
+    /// Side of a list's add and remove buttons, in multiples of the font size.
+    static let listButtonSize: CGFloat = 1.8
+    /// Corner radius of a list's border, like a text field's.
+    static let listCornerRadius: CGFloat = 6
+    /// Space inside a group box, the same on every side.
+    static let groupPadding: CGFloat = 12
+    static let groupCornerRadius: CGFloat = 10
     /// Gap between a number field and its stepper arrows.
     static let stepperSpacing: CGFloat = 2
     static let buttonBarSpacing: CGFloat = 12
@@ -66,14 +73,16 @@ extension EnvironmentValues {
     @Entry var reportPaneSize: @MainActor (CGSize) -> Void = { _ in }
 }
 
-/// `Label:` | control | optional accessory.
+/// `Label:` | control | optional accessory. Cells line up on their first text baseline, unless
+/// `alignment` says otherwise for a control without text of its own, such as an AppKit view.
 struct SettingsRow<Control: View, Accessory: View>: View {
     let label: String
+    var alignment: VerticalAlignment?
     @ViewBuilder let control: () -> Control
     @ViewBuilder let accessory: () -> Accessory
 
     var body: some View {
-        GridRow {
+        GridRow(alignment: alignment) {
             Text(label + ":")
                 // The grid would otherwise squeeze the label to make room for a long control or hint.
                 .fixedSize()
@@ -85,8 +94,8 @@ struct SettingsRow<Control: View, Accessory: View>: View {
 }
 
 extension SettingsRow where Accessory == EmptyView {
-    init(label: String, @ViewBuilder control: @escaping () -> Control) {
-        self.init(label: label, control: control, accessory: { EmptyView() })
+    init(label: String, alignment: VerticalAlignment? = nil, @ViewBuilder control: @escaping () -> Control) {
+        self.init(label: label, alignment: alignment, control: control, accessory: { EmptyView() })
     }
 }
 
@@ -100,6 +109,11 @@ struct SettingsHint: View {
     let text: String?
     var color: Color = .secondary
     var wraps = false
+    /// Wraps at this width rather than one the grid picks, which may be wider than the controls above.
+    var width: CGFloat?
+    /// Columns it spans: the control's and the accessory's. A grid without accessories needs 1, or the
+    /// hint adds an empty column, and the gap before it, to the grid.
+    var columns = 2
 
     @Environment(\.typography) private var typography
 
@@ -112,9 +126,21 @@ struct SettingsHint: View {
                     .font(typography.font(.subheadline))
                     .foregroundStyle(color)
                     .fixedSize(horizontal: !wraps, vertical: true)
-                    .gridCellColumns(2)
+                    .frame(width: width, alignment: .leading)
+                    .gridCellColumns(columns)
             }
         }
+    }
+}
+
+/// A group box whose padding is `SettingsMetrics.groupPadding` on every side, so content sized from it
+/// fills it exactly; the system style's insets are its own and undocumented.
+struct SettingsGroupBoxStyle: GroupBoxStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.content
+            .padding(SettingsMetrics.groupPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quinary, in: RoundedRectangle(cornerRadius: SettingsMetrics.groupCornerRadius))
     }
 }
 

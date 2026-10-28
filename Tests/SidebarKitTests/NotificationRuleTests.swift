@@ -184,10 +184,24 @@ struct RulesPaneTests {
         let sut = try pane(selection: 1).inspect()
 
         try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Body" }).setInput("joined")
-        try sut.find(ViewType.Picker.self).select(value: Rule.Action.hide)
+        pane(selection: 1).action.wrappedValue = .hide
 
         #expect(editor.draft.rules == [Rule(source: "a"), Rule(source: "b", body: "joined", action: .hide)])
         #expect(try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Source" }).input() == "b")
+    }
+
+    /// One pop-up picks the action: hiding, apart from the severities below it.
+    @Test func picksTheActionFromOnePopUp() {
+        #expect(RulesPane.actionOptions.map(\.label) == ["Hide it", "List as low", "List as normal", "List as high", "List as critical"])
+        #expect(RulesPane.actionOptions.map(\.value) == Rule.Action.allCases)
+        #expect(RulesPane.actionOptions.map(\.startsGroup) == [false, true, false, false, false])
+
+        editor.draft.rules = [Rule(source: "a")]
+        #expect(pane(selection: 0).action.wrappedValue == Rule().action)
+        pane(selection: 0).action.wrappedValue = .severity(.low)
+        #expect(editor.draft.rules[0].action == .severity(.low))
+        pane().action.wrappedValue = .hide
+        #expect(editor.draft.rules == [Rule(source: "a", action: .severity(.low))])
     }
 
     /// Cancel empties the list under a selection while a field still has focus; the field then commits its
@@ -200,6 +214,17 @@ struct RulesPaneTests {
 
         #expect(editor.draft.rules.isEmpty)
         #expect(sut.pattern(.source).wrappedValue == "")
+    }
+
+    /// The list and the editor say what to do when there is nothing to show.
+    @Test func explainsAnEmptyListAndAMissingSelection() throws {
+        #expect(throws: Never.self) { try pane().inspect().find(text: "No rules. Add one with +.") }
+        #expect(throws: Never.self) { try pane().inspect().find(text: "Add a rule to edit it here.") }
+
+        editor.draft.rules = [Rule(source: "a")]
+        #expect(throws: (any Error).self) { try pane().inspect().find(text: "No rules. Add one with +.") }
+        #expect(throws: Never.self) { try pane().inspect().find(text: "Select a rule to edit it.") }
+        #expect(throws: (any Error).self) { try pane(selection: 0).inspect().find(text: "Select a rule to edit it.") }
     }
 
     @Test func showsWhatTheSelectedRuleMatches() {
