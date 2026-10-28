@@ -65,7 +65,7 @@ struct SidebarAppDelegateTests {
             makeServer: { SidebarAppDelegate.makeServer(model: $0, icons: $1, path: socketPath) },
             makeAeroSpaceSync: makeAeroSpaceSync,
             makeSettingsWindow: { store, aeroSpace, model in
-                SettingsWindowController.forTesting(store: store, aeroSpace: aeroSpace, listed: { model.notifications })
+                SettingsWindowController.forTesting(store: store, aeroSpace: aeroSpace, history: { model.received })
             },
             urlSender: { sender }
         )
@@ -323,7 +323,7 @@ struct SidebarAppDelegateTests {
             store: settings,
             onboarding: SidebarAppDelegate.makeOnboarding(),
             aeroSpace: SidebarAppDelegate.makeAeroSpaceSync(settings: settings),
-            listed: { model.notifications }
+            history: { model.received }
         )
 
         #expect(!monitor.isRunning)

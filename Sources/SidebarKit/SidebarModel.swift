@@ -228,6 +228,9 @@ public protocol NotificationStore {
 public final class SidebarModel {
     /// Most severe first, newest first within a severity.
     public private(set) var notifications: [SidebarNotification] = []
+    /// Every notification as it arrived, before any rule, newest first, also after its card was dismissed or a
+    /// rule hid it: what Settings › Rules tests rules against. Repeats stack, and the history limits apply.
+    public private(set) var received: [SidebarNotification] = []
     public var interception: InterceptionStatus = .starting
     /// Identifiers of the hidden macOS alerts that still exist; only their cards offer choices.
     public var presentAlerts: Set<String> = []
@@ -236,6 +239,8 @@ public final class SidebarModel {
 
     @ObservationIgnored private let performer: any NotificationActionPerforming
     @ObservationIgnored private let store: any NotificationStore
+    /// Where `received` is kept; without one it lasts until the app quits.
+    @ObservationIgnored private let receivedStore: (any NotificationStore)?
     @ObservationIgnored private let now: () -> Date
     /// How long and how many notifications are kept.
     @ObservationIgnored public private(set) var history: SidebarSettings.History
@@ -247,12 +252,14 @@ public final class SidebarModel {
     public init(
         performer: any NotificationActionPerforming = WorkspaceActionPerformer(),
         store: any NotificationStore,
+        receivedStore: (any NotificationStore)? = nil,
         history: SidebarSettings.History = SidebarSettings.History(),
         rules: [SidebarSettings.Rule] = [],
         now: @escaping () -> Date = Date.init
     ) {
         self.performer = performer
         self.store = store
+        self.receivedStore = receivedStore
         self.history = history
         self.rules = NotificationRules(rules)
         self.now = now
@@ -260,6 +267,10 @@ public final class SidebarModel {
         notifications = Array(store.load()
             .filter { $0.receivedAt >= cutoff }
             .sorted { ($0.severity, $0.receivedAt) > ($1.severity, $1.receivedAt) }
+            .prefix(history.maxCount))
+        received = Array((receivedStore?.load() ?? [])
+            .filter { $0.receivedAt >= cutoff }
+            .sorted { $0.receivedAt > $1.receivedAt }
             .prefix(history.maxCount))
         listedAlerts = Self.alertIdentifiers(in: notifications)
     }
@@ -271,6 +282,10 @@ public final class SidebarModel {
         if notifications.count > history.maxCount {
             notifications.removeLast(notifications.count - history.maxCount)
             didChange()
+        }
+        if received.count > history.maxCount {
+            received.removeLast(received.count - history.maxCount)
+            receivedStore?.save(received)
         }
     }
 
@@ -294,8 +309,22 @@ public final class SidebarModel {
     /// instead: the entry counts both and moves up as the newest. Beyond `history.maxCount`, the least
     /// severe and oldest entries are dropped.
     public func add(_ notification: SidebarNotification) {
+        record(notification)
         guard insert(notification) else { return }
         didChange()
+    }
+
+    /// Adds an arriving notification to `received`, as the newest, stacked onto a copy with the same content.
+    private func record(_ notification: SidebarNotification) {
+        var notification = notification
+        if let existing = received.firstIndex(where: { $0.hasSameContent(as: notification) }) {
+            notification = received.remove(at: existing).stacking(notification)
+        }
+        received.insert(notification, at: 0)
+        if received.count > history.maxCount {
+            received.removeLast(received.count - history.maxCount)
+        }
+        receivedStore?.save(received)
     }
 
     /// `add(_:)` without saving; false when a rule hides the notification.
@@ -325,9 +354,13 @@ public final class SidebarModel {
         didChange()
     }
 
-    /// Drops notifications older than `history.retention`.
+    /// Drops notifications older than `history.retention`, listed and received alike.
     public func pruneExpired() {
         let cutoff = now().addingTimeInterval(-history.retention)
+        if received.contains(where: { $0.receivedAt < cutoff }) {
+            received.removeAll { $0.receivedAt < cutoff }
+            receivedStore?.save(received)
+        }
         guard notifications.contains(where: { $0.receivedAt < cutoff }) else { return }
         notifications.removeAll { $0.receivedAt < cutoff }
         didChange()

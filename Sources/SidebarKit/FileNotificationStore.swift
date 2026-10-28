@@ -12,11 +12,14 @@ public struct FileNotificationStore: NotificationStore {
         self.url = url
     }
 
-    /// `~/Library/Application Support/com.alexgorbatchev.aerospace-sidebar/notifications.json`
-    public nonisolated static var defaultURL: URL {
-        URL.applicationSupportDirectory
-            .appendingPathComponent("com.alexgorbatchev.aerospace-sidebar", isDirectory: true)
-            .appendingPathComponent("notifications.json")
+    /// `~/Library/Application Support/com.alexgorbatchev.aerospace-sidebar/notifications.json`: the list.
+    public nonisolated static var defaultURL: URL { directory.appendingPathComponent("notifications.json") }
+
+    /// `received.json` beside it: every notification as it arrived (`SidebarModel.received`).
+    public nonisolated static var receivedURL: URL { directory.appendingPathComponent("received.json") }
+
+    private nonisolated static var directory: URL {
+        URL.applicationSupportDirectory.appendingPathComponent("com.alexgorbatchev.aerospace-sidebar", isDirectory: true)
     }
 
     /// Returns no notifications when the file is missing or unreadable; the latter is logged.

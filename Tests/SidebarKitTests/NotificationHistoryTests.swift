@@ -7,6 +7,54 @@ import Testing
 struct NotificationHistoryTests {
     let start = Date(timeIntervalSince1970: 1_000_000)
 
+    /// Every arrival is received as it came, before rules, newest first with repeats stacked, and stays
+    /// after its card is dismissed or cleared, or when a rule hides it.
+    @Test func receivesEveryNotificationAsItArrived() {
+        let received = InMemoryStore()
+        let model = SidebarModel(
+            performer: RecordingPerformer(), store: InMemoryStore(), receivedStore: received,
+            rules: [SidebarSettings.Rule(source: "Slack", action: .hide), SidebarSettings.Rule(source: "ci", action: .severity(.critical))],
+            now: { start }
+        )
+
+        model.add(SidebarNotification(source: "ci", title: "Build", receivedAt: start))
+        model.add(SidebarNotification(source: "Slack", title: "Hi", receivedAt: start + 1))
+        model.add(SidebarNotification(source: "Mail", title: "Lunch", receivedAt: start + 2))
+        model.add(SidebarNotification(source: "ci", title: "Build", receivedAt: start + 3))
+        model.dismiss(model.notifications.first { $0.title == "Lunch" }!.id)
+        model.clear()
+
+        #expect(model.notifications.isEmpty)
+        #expect(model.received.map(\.title) == ["Build", "Lunch", "Hi"])
+        #expect(model.received.map(\.occurrences) == [2, 1, 1])
+        #expect(model.received.map(\.severity) == [.normal, .normal, .normal])
+        #expect(received.stored == model.received)
+    }
+
+    /// The history limits apply to what was received too, when it loads, as time passes and when they change.
+    @Test func receivedNotificationsFollowTheHistoryLimits() {
+        var now = start
+        let received = InMemoryStore([
+            SidebarNotification(source: "s", title: "old", receivedAt: start - 25 * 3600),
+            SidebarNotification(source: "s", title: "kept", receivedAt: start - 3600),
+            SidebarNotification(source: "s", title: "newer", receivedAt: start - 60),
+        ])
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), receivedStore: received, now: { now })
+        #expect(model.received.map(\.title) == ["newer", "kept"])
+
+        now = start + 23.5 * 3600
+        model.pruneExpired()
+        #expect(model.received.map(\.title) == ["newer"])
+        #expect(received.stored.map(\.title) == ["newer"])
+
+        model.add(SidebarNotification(source: "s", title: "latest", receivedAt: now))
+        model.apply(history: SidebarSettings.History(retentionHours: 24, maxCount: 1))
+        #expect(model.received.map(\.title) == ["latest"])
+        #expect(received.stored.map(\.title) == ["latest"])
+        model.add(SidebarNotification(source: "s", title: "last", receivedAt: now + 1))
+        #expect(model.received.map(\.title) == ["last"])
+    }
+
     @Test func restoresUnexpiredNotificationsInDisplayOrder() {
         let store = InMemoryStore([
             SidebarNotification(source: "s", title: "old-normal", receivedAt: start.addingTimeInterval(-3600)),

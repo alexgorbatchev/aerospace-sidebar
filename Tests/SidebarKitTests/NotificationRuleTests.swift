@@ -173,7 +173,7 @@ struct RulesPaneTests {
     let directory: TemporaryDirectory
     let store: SettingsStore
     let editor: SettingsEditor
-    let listed = [
+    let history = [
         SidebarNotification(source: "Slack", title: "Alice", body: "lunch?"),
         SidebarNotification(source: "Slack", title: "", body: "Bob joined"),
         SidebarNotification(source: "Mail", title: "Invoice"),
@@ -187,7 +187,7 @@ struct RulesPaneTests {
     }
 
     func pane(selection: Int? = nil) -> RulesPane {
-        RulesPane(editor: editor, listed: { listed }, close: {}, selection: selection)
+        RulesPane(editor: editor, history: { history }, close: {}, selection: selection)
     }
 
     @Test func addsRemovesAndReordersRules() throws {
@@ -273,11 +273,11 @@ struct RulesPaneTests {
         editor.draft.rules = [Rule(source: "slack"), Rule(title: "nothing"), Rule(title: "(")]
 
         #expect(pane().matches == "Select a rule to see its matches.")
-        #expect(pane(selection: 0).matches == "Matches 2 of 4 listed notifications:\nSlack: Alice\nSlack: Bob joined")
-        #expect(pane(selection: 1).matches == "Matches 0 of 4 listed notifications.")
+        #expect(pane(selection: 0).matches == "Matches 2 of the last 4 notifications:\nSlack: Alice\nSlack: Bob joined")
+        #expect(pane(selection: 1).matches == "Matches 0 of the last 4 notifications.")
         #expect(pane(selection: 2).matches.hasPrefix("This rule has an invalid title pattern: "))
         editor.draft.rules = [Rule(title: "slack")]
-        #expect(pane(selection: 0).matches == "Matches 1 of 4 listed notifications:\nNotification: Slack outage")
+        #expect(pane(selection: 0).matches == "Matches 1 of the last 4 notifications:\nNotification: Slack outage")
     }
 
     @Test func summarizesRulesInTheList() throws {

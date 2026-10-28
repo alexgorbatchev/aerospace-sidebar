@@ -39,7 +39,14 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
             home: FileManager.default.homeDirectoryForCurrentUser,
             environment: ProcessInfo.processInfo.environment
         )),
-        makeModel: @MainActor (SidebarSettings) -> SidebarModel = { SidebarModel(store: FileNotificationStore(), history: $0.history, rules: $0.rules) },
+        makeModel: @MainActor (SidebarSettings) -> SidebarModel = {
+            SidebarModel(
+                store: FileNotificationStore(),
+                receivedStore: FileNotificationStore(url: FileNotificationStore.receivedURL),
+                history: $0.history,
+                rules: $0.rules
+            )
+        },
         icons: AppIconFont = .bundled(),
         identities: NotificationIdentities = NotificationIdentities(defaults: .standard),
         makeController: @escaping @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor (SettingsGroup) -> Void) -> SidebarPanelController = {
@@ -54,7 +61,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         makeServer: @escaping @MainActor (SidebarModel, AppIconFont) -> ControlServer = { SidebarAppDelegate.makeServer(model: $0, icons: $1) },
         makeAeroSpaceSync: @MainActor (SettingsStore) -> AeroSpaceSync = SidebarAppDelegate.makeAeroSpaceSync,
         makeSettingsWindow: @escaping @MainActor (SettingsStore, AeroSpaceSync, SidebarModel) -> SettingsWindowController = { store, aeroSpace, model in
-            SettingsWindowController(store: store, onboarding: SidebarAppDelegate.makeOnboarding(), aeroSpace: aeroSpace) { model.notifications }
+            SettingsWindowController(store: store, onboarding: SidebarAppDelegate.makeOnboarding(), aeroSpace: aeroSpace) { model.received }
         },
         urlSender: @escaping @MainActor () -> String? = SidebarAppDelegate.currentAppleEventSender
     ) {

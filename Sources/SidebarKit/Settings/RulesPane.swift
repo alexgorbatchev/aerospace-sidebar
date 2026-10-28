@@ -2,11 +2,11 @@ import SidebarProtocol
 import SwiftUI
 
 /// Rules: change the severity of incoming notifications, or hide them, by matching their texts. Each
-/// rule shows which listed notifications it matches.
+/// rule shows which recent notifications it matches, including ones whose cards are gone.
 struct RulesPane: View {
     @Bindable var editor: SettingsEditor
-    /// The notifications in the sidebar, to show what a rule matches.
-    let listed: () -> [SidebarNotification]
+    /// Every notification received lately, newest first, whether its card is still listed or not.
+    let history: () -> [SidebarNotification]
     let close: () -> Void
 
     /// The selected rule's position in `editor.draft.rules`.
@@ -211,16 +211,16 @@ struct RulesPane: View {
         }
     }
 
-    /// What the selected rule matches among the listed notifications, or why it cannot match.
+    /// What the selected rule matches among the notifications received lately, or why it cannot match.
     var matches: String {
         guard let rule = selectedRule else { return "Select a rule to see its matches." }
         if let problem = rule.problem {
             return "This rule \(problem)."
         }
         let rules = NotificationRules([rule])
-        let listed = listed()
-        let matched = listed.filter { rules.firstMatch(for: $0) != nil }
-        let count = "Matches \(matched.count) of \(listed.count) listed notifications"
+        let history = history()
+        let matched = history.filter { rules.firstMatch(for: $0) != nil }
+        let count = "Matches \(matched.count) of the last \(history.count) notifications"
         let examples = matched.prefix(Self.matchLines - 1).map { notification in
             let text = [notification.title, notification.subtitle, notification.body].first { !$0.isEmpty } ?? ""
             return "\(notification.source.isEmpty ? "Notification" : notification.source): \(text)"

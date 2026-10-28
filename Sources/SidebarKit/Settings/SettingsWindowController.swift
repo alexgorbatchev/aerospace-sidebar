@@ -42,20 +42,21 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     private static let measuringSize = NSSize(width: 800, height: 600)
 
     /// - Parameters:
-    ///   - listed: The notifications in the sidebar, which Settings › Rules matches rules against.
+    ///   - history: Every notification received lately (`SidebarModel.received`), which Settings › Rules tests
+    ///     rules against.
     ///   - reveal: Shows a file in Finder.
     ///   - terminate: Called with `nil` when the user quits from Settings.
     public convenience init(
         store: SettingsStore,
         onboarding: OnboardingModel,
         aeroSpace: AeroSpaceSync,
-        listed: @escaping @MainActor () -> [SidebarNotification],
+        history: @escaping @MainActor () -> [SidebarNotification],
         reveal: @escaping (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
         terminate: @escaping @MainActor (Any?) -> Void = NSApplication.shared.terminate
     ) {
         self.init(
             store: store, onboarding: onboarding, aeroSpace: aeroSpace, fontChooser: FontChooser(),
-            workspaceCenter: NSWorkspace.shared.notificationCenter, listed: listed, reveal: reveal, terminate: terminate
+            workspaceCenter: NSWorkspace.shared.notificationCenter, history: history, reveal: reveal, terminate: terminate
         )
     }
 
@@ -69,7 +70,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         workspaceCenter: NotificationCenter,
         sidebarScreenFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenVisibleFrame,
         panelType: NSPanel.Type = NSPanel.self,
-        listed: @escaping @MainActor () -> [SidebarNotification] = { [] },
+        history: @escaping @MainActor () -> [SidebarNotification] = { [] },
         reveal: @escaping (URL) -> Void,
         terminate: @escaping @MainActor (Any?) -> Void = NSApplication.shared.terminate
     ) {
@@ -103,7 +104,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
             case .sidebar: pane(group, SidebarPane(editor: editor, aeroSpace: aeroSpace, reveal: reveal, close: close))
             case .permissions: pane(group, PermissionsPane(onboarding: onboarding))
             case .notifications: pane(group, NotificationsPane(editor: editor, close: close))
-            case .rules: pane(group, RulesPane(editor: editor, listed: listed, close: close))
+            case .rules: pane(group, RulesPane(editor: editor, history: history, close: close))
             case .history: pane(group, HistoryPane(editor: editor, close: close))
             }
             // The tab view item takes its label from the title.
