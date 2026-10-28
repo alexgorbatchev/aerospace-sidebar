@@ -96,15 +96,57 @@ struct NotificationRuleTests {
         #expect(store.stored.map(\.title) == ["Hi", "Build"])
     }
 
-    /// New rules apply to notifications that arrive later; listed ones stay as they are.
-    @Test func newRulesApplyFromNowOn() {
+    /// Changed rules restack the listed cards: each starts over from the severity it arrived with, moves
+    /// to where its new severity puts it, and goes when the rules hide it; they apply to later ones too.
+    @Test func changedRulesRestackListedNotifications() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let store = InMemoryStore()
+        let alerts = RecordingAlerts()
+        let model = SidebarModel(performer: RecordingPerformer(), store: store)
+        model.alerts = alerts
+        model.add(SidebarNotification(source: "ci", title: "Build", severity: .high, receivedAt: start))
+        model.add(SidebarNotification(source: "Slack", title: "Hi", receivedAt: start + 1))
+        model.add(SidebarNotification(source: "macOS", title: "Allow?", nativeAlert: .init(identifier: "a", choices: ["Allow"]), receivedAt: start + 2))
+
+        model.apply(rules: [Rule(source: "Slack", action: .severity(.critical)), Rule(source: "macOS", action: .hide)])
+        #expect(model.notifications.map(\.title) == ["Hi", "Build"])
+        #expect(model.notifications.map(\.severity) == [.critical, .high])
+        #expect(model.notifications.map(\.postedSeverity) == [.normal, nil])
+        #expect(store.stored == model.notifications)
+        #expect(alerts.releases == 1)
+
+        model.add(SidebarNotification(source: "Slack", title: "Later", receivedAt: start + 3))
+        #expect(model.notifications.map(\.title) == ["Later", "Hi", "Build"])
+
+        let saves = store.saves
+        model.apply(rules: [Rule(source: "Slack", action: .severity(.critical)), Rule(source: "macOS", action: .hide)])
+        #expect(store.saves == saves)
+
+        model.apply(rules: [])
+        #expect(model.notifications.map(\.title) == ["Build", "Later", "Hi"])
+        #expect(model.notifications.map(\.severity) == [.high, .normal, .normal])
+        #expect(model.notifications.allSatisfy { $0.postedSeverity == nil })
+    }
+
+    /// Copies posted at different severities are different cards until a rule gives them one severity;
+    /// then they stack under the older card, which keeps the severity it arrived with.
+    @Test func changedRulesStackCardsThatNowMatch() {
+        let start = Date(timeIntervalSince1970: 1_000)
         let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
-        model.add(SidebarNotification(source: "Slack", title: "Before"))
+        model.add(SidebarNotification(source: "ci", title: "Deploy", severity: .low, receivedAt: start))
+        let first = model.notifications[0].id
+        model.add(SidebarNotification(source: "ci", title: "Deploy", receivedAt: start + 1))
+        #expect(model.notifications.count == 2)
 
-        model.apply(rules: [Rule(source: "Slack", action: .hide)])
-        model.add(SidebarNotification(source: "Slack", title: "After"))
+        model.apply(rules: [Rule(title: "Deploy", action: .severity(.high))])
+        #expect(model.notifications.map(\.id) == [first])
+        #expect(model.notifications.map(\.occurrences) == [2])
+        #expect(model.notifications.map(\.receivedAt) == [start + 1])
+        #expect(model.notifications.map(\.severity) == [.high])
 
-        #expect(model.notifications.map(\.title) == ["Before"])
+        model.apply(rules: [])
+        #expect(model.notifications.map(\.severity) == [.low])
+        #expect(model.notifications.map(\.occurrences) == [2])
     }
 
     @Test func savingRefusesUnusableRules() throws {

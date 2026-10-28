@@ -45,6 +45,9 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
     public let subtitle: String
     public let body: String
     public let severity: NotificationSeverity
+    /// The severity it arrived with, when a rule changed it; nil when `severity` is its own. Changed rules
+    /// start over from it.
+    public let postedSeverity: NotificationSeverity?
     public let icon: Icon?
     /// The icon id a push named that the font does not have; the card notes it under the text.
     public let invalidIcon: String?
@@ -65,6 +68,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         subtitle: String = "",
         body: String = "",
         severity: NotificationSeverity = .normal,
+        postedSeverity: NotificationSeverity? = nil,
         icon: Icon? = nil,
         invalidIcon: String? = nil,
         action: ClickAction? = nil,
@@ -79,6 +83,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         self.subtitle = subtitle
         self.body = body
         self.severity = severity
+        self.postedSeverity = postedSeverity
         self.icon = icon
         self.invalidIcon = invalidIcon
         self.action = action
@@ -111,8 +116,9 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
 }
 
 extension SidebarNotification {
-    /// Same sender, text, severity, icon, click action and presentation; only identity, time and count may
-    /// differ. Two alerts are never the same content: each card answers its own alert.
+    /// Same sender, text, severity, icon, click action and presentation as shown; only identity, time and
+    /// count may differ. Two alerts are never the same content: each card answers its own alert. A stack
+    /// keeps the severity its first card arrived with (`postedSeverity`).
     func hasSameContent(as other: SidebarNotification) -> Bool {
         source == other.source && title == other.title && subtitle == other.subtitle && body == other.body
             && severity == other.severity && icon == other.icon && invalidIcon == other.invalidIcon
@@ -128,6 +134,7 @@ extension SidebarNotification {
             subtitle: subtitle,
             body: body,
             severity: severity,
+            postedSeverity: postedSeverity,
             icon: icon,
             invalidIcon: invalidIcon,
             action: action,
@@ -138,7 +145,10 @@ extension SidebarNotification {
         )
     }
 
-    /// This entry with another severity, as a rule sets it.
+    /// The severity it arrived with, before any rule.
+    var ownSeverity: NotificationSeverity { postedSeverity ?? severity }
+
+    /// This entry with the severity a rule sets, remembering its own; with its own severity, as it arrived.
     func with(severity: NotificationSeverity) -> SidebarNotification {
         SidebarNotification(
             id: id,
@@ -147,6 +157,7 @@ extension SidebarNotification {
             subtitle: subtitle,
             body: body,
             severity: severity,
+            postedSeverity: severity == ownSeverity ? nil : ownSeverity,
             icon: icon,
             invalidIcon: invalidIcon,
             action: action,
@@ -263,9 +274,19 @@ public final class SidebarModel {
         }
     }
 
-    /// Applies new rules to notifications that arrive from now on; listed ones keep how earlier rules left them.
+    /// Applies new rules to arriving notifications and to the listed ones, which start over from the
+    /// severity they arrived with: a card the rules now hide goes, the others move to their new severity
+    /// and stack with cards that now have the same content, as if they had just arrived.
     public func apply(rules: [SidebarSettings.Rule]) {
         self.rules = NotificationRules(rules)
+        let listed = notifications
+        notifications = []
+        for notification in listed.sorted(by: { $0.receivedAt < $1.receivedAt }) {
+            insert(notification.with(severity: notification.ownSeverity))
+        }
+        if notifications != listed {
+            didChange()
+        }
     }
 
     /// Inserts the notification by severity, then recency, after the first matching rule has changed its
@@ -273,7 +294,14 @@ public final class SidebarModel {
     /// instead: the entry counts both and moves up as the newest. Beyond `history.maxCount`, the least
     /// severe and oldest entries are dropped.
     public func add(_ notification: SidebarNotification) {
-        guard var notification = rules.apply(to: notification) else { return }
+        guard insert(notification) else { return }
+        didChange()
+    }
+
+    /// `add(_:)` without saving; false when a rule hides the notification.
+    @discardableResult
+    private func insert(_ notification: SidebarNotification) -> Bool {
+        guard var notification = rules.apply(to: notification) else { return false }
         if let existing = notifications.firstIndex(where: { $0.hasSameContent(as: notification) }) {
             notification = notifications.remove(at: existing).stacking(notification)
         }
@@ -284,7 +312,7 @@ public final class SidebarModel {
         if notifications.count > history.maxCount {
             notifications.removeLast(notifications.count - history.maxCount)
         }
-        didChange()
+        return true
     }
 
     public func dismiss(_ id: SidebarNotification.ID) {

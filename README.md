@@ -9,7 +9,7 @@
 - **Push from anywhere**: the `aerospace-sidebar` command and `aerospace-sidebar://` links add notifications.
 - **Click actions**: a notification can run a shell command or open a link when clicked.
 - **Severity**: `low`, `normal`, `high` and `critical` notifications sort and look different, with critical ones always on top.
-- **Rules**: regular expressions on a notification's sender, title, subtitle or body raise or lower its severity, or hide it, such as every Slack message as `high`. Settings › Rules shows which listed notifications each rule matches.
+- **Rules**: regular expressions on a notification's sender, title, subtitle or body raise or lower its severity, or hide it, such as every Slack message as `high`. Saving rules also applies them to the notifications already listed, which move, stack or go accordingly; removing a rule gives them back the severity they arrived with. Settings › Rules shows which listed notifications each rule matches.
 - **App icons**: a pushed notification can name an app icon from [sketchybar-app-font](https://github.com/kvndrsslr/sketchybar-app-font), such as `slack` or `google_chrome`, shown before its sender.
 - **Repeats stacked**: a notification identical to one already listed joins it as a single card with a count, instead of filling the list with copies.
 - **History**: the list survives quitting and relaunching; notifications are kept for 24 hours by default.
@@ -157,7 +157,7 @@ max_count = 200                          # 10 to 2000
 name = ""                                # font family (Settings › Appearance › Choose… picks one); empty uses the system font
 size = 13                                # 8 to 32; every text size in the sidebar and Settings scales with it
 
-[[rules]]                                # any number; the first rule that matches a new notification applies
+[[rules]]                                # any number; the first rule that matches a notification applies, also to listed ones
 source = "^Slack$"                       # source, title, subtitle, body: case-insensitive regular expressions
                                          # found anywhere in that text; omitted ones match anything, one is required
 action = "high"                          # "hide" drops the notification; "low", "normal", "high" or "critical" sets its severity
