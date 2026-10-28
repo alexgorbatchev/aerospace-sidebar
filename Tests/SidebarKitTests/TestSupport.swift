@@ -263,16 +263,27 @@ extension AeroSpaceSetup {
     }
 }
 
-/// Permissions whose state a test sets; `authorize` records the pane instead of opening System Settings.
+/// Permissions whose state a test sets; `authorize` and `reset` record the pane instead of opening System
+/// Settings or running `tccutil`, and `reset` revokes it.
 @MainActor
 final class FakePermissions: PermissionGuiding {
     var states: [PermissionFlowPane: PermissionAuthorizationState] = [:]
     var authorized: [PermissionFlowPane] = []
+    var resets: [PermissionFlowPane] = []
+    var resetResult = CommandResult(status: 0, output: "")
 
     func state(of pane: PermissionFlowPane) -> PermissionAuthorizationState { states[pane] ?? .notGranted }
 
     func authorize(_ pane: PermissionFlowPane) {
         authorized.append(pane)
+    }
+
+    func reset(_ pane: PermissionFlowPane) async -> CommandResult {
+        resets.append(pane)
+        if resetResult.status == 0 {
+            states[pane] = nil
+        }
+        return resetResult
     }
 }
 

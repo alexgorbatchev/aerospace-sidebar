@@ -9,6 +9,9 @@ public final class SidebarPanelController: NSObject {
         NSScreen.screens.first?.visibleFrame
     }
 
+    /// The panel's window level, above other apps' windows and the menu bar.
+    public static let level: NSWindow.Level = .statusBar
+
     public let panel: NSPanel
     private let settings: SettingsStore
     private let targetVisibleFrame: @MainActor () -> CGRect?
@@ -70,7 +73,7 @@ public final class SidebarPanelController: NSObject {
             backing: .buffered,
             defer: false
         )
-        panel.level = .statusBar
+        panel.level = Self.level
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         panel.hidesOnDeactivate = false
         panel.isMovable = false

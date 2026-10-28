@@ -165,74 +165,155 @@ struct SettingsPaneTests {
         aeroSpace = .fake(store: store, home: directory.url)
     }
 
-    func setup(reveal: @escaping (URL) -> Void = { _ in }) -> SetupPane {
-        SetupPane(onboarding: onboarding, aeroSpace: aeroSpace, reveal: reveal)
+    func permissionsPane() -> PermissionsPane {
+        PermissionsPane(onboarding: onboarding)
     }
 
-    func general(configURL: URL? = nil, close: @escaping () -> Void = {}) -> GeneralPane {
-        GeneralPane(editor: editor, aeroSpace: aeroSpace, configURL: configURL ?? store.file.url, reveal: { _ in }, chooseFont: {}, quit: {}, close: close)
+    func aeroSpacePane(reveal: @escaping (URL) -> Void = { _ in }) -> AeroSpacePane {
+        AeroSpacePane(aeroSpace: aeroSpace, reveal: reveal)
     }
 
-    @Test func setupOffersActionsForMissingSteps() throws {
+    func general(configURL: URL? = nil, reveal: @escaping (URL) -> Void = { _ in }, quit: @escaping () -> Void = {}) -> GeneralPane {
+        GeneralPane(configURL: configURL ?? store.file.url, reveal: reveal, quit: quit)
+    }
+
+    func history(close: @escaping () -> Void = {}) -> HistoryPane {
+        HistoryPane(editor: editor, close: close)
+    }
+
+    /// Every permission is on one page with why the sidebar needs it; a granted one shows a checkmark only.
+    @Test func permissionsOfferStepsUntilGranted() throws {
         onboarding.refresh()
-        aeroSpace.refresh()
-        let sut = try setup().inspect()
-        #expect(throws: Never.self) { try sut.find(text: "AerospaceSidebar does not open at login.") }
-        #expect(try sut.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Not done" }).count == 4)
-        #expect(throws: Never.self) { try sut.find(text: "Optional. Add AerospaceSidebar to list notifications that showed no banner: during Focus, in quick bursts, or while the sidebar was not running.") }
+        let sut = try permissionsPane().inspect()
+        #expect(try sut.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Not done" }).count == 3)
+        #expect(throws: Never.self) { try sut.find(textWhere: { text, _ in text.hasPrefix("Required to take over notifications.") }) }
+        #expect(throws: Never.self) { try sut.find(textWhere: { text, _ in text.hasPrefix("Optional. macOS records every notification") }) }
+        #expect(throws: Never.self) { try sut.find(textWhere: { text, _ in text.hasPrefix("Optional. Starts the sidebar when you log in") }) }
 
         try sut.find(button: "Open Full Disk Access").tap()
         try sut.find(button: "Open Accessibility").tap()
-        try sut.find(button: "Add to Login Items").tap()
-        try sut.find(button: "Copy Settings").tap()
-
         #expect(permissions.authorized == [.fullDiskAccess, .accessibility])
-        #expect(loginItems.status == .enabled)
-        #expect(throws: Never.self) { try sut.find(text: "No AeroSpace config found.") }
-        #expect(throws: Never.self) { try sut.find(button: "Update AeroSpace Config") }
-        // Setup steps act immediately; only General has a draft to save.
-        #expect(throws: (any Error).self) { try sut.find(button: "Save") }
-        #expect(throws: (any Error).self) { try sut.find(button: "Cancel") }
-    }
 
-    @Test func finishedStepsShowCheckmarks() throws {
-        loginItems.status = .enabled
         permissions.states = [.accessibility: .granted, .fullDiskAccess: .granted]
-        try directory.write("[gaps]\nouter.right = [{ monitor.main = 305 }, 5]\n\n\(AeroSpaceConfigEditor.floatRule)\n", to: ".aerospace.toml")
+        loginItems.status = .enabled
         onboarding.refresh()
-        aeroSpace.refresh()
-        let sut = try setup().inspect()
-
-        for done in ["Accessibility granted", "Full Disk Access granted", "Opens at login", "AeroSpace configured"] {
-            #expect(throws: Never.self) { try sut.find(text: done) }
+        let granted = try permissionsPane().inspect()
+        #expect(try granted.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Done" }).count == 3)
+        // The checkmark says it; no text repeats it.
+        for done in ["Accessibility granted", "Full Disk Access granted", "Opens at login"] {
+            #expect(throws: (any Error).self) { try granted.find(text: done) }
         }
-        #expect(throws: Never.self) { try sut.find(text: "Lists notifications that showed no banner: during Focus, in quick bursts, or while the sidebar was not running.") }
-        #expect(try sut.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Done" }).count == 4)
-        #expect(throws: (any Error).self) { try sut.find(button: "Open Accessibility") }
-        #expect(throws: Never.self) { try sut.find(text: ".aerospace.toml reserves 300 points on the right for the sidebar.") }
-        try sut.find(button: "Remove").tap()
-        #expect(loginItems.status == .disabled)
+        #expect(throws: (any Error).self) { try granted.find(button: "Open Accessibility") }
+        #expect(try granted.findAll(ViewType.Button.self, where: { try $0.labelView().text().string() == "Remove" }).count == 3)
     }
 
-    @Test func setupShowsApprovalWarningsAndUnreadableStates() throws {
-        loginItems.status = .requiresApproval
-        try directory.write("[mode.main.binding]\nalt-f = 'fullscreen --no-outer-gaps'\n", to: ".aerospace.toml")
+    /// Remove takes the app off each permission's list in System Settings and reports the result.
+    @Test func permissionsCanBeRemoved() async throws {
+        permissions.states = [.accessibility: .granted, .fullDiskAccess: .granted]
         onboarding.refresh()
-        aeroSpace.refresh()
-        let sut = try setup().inspect()
+        let removes = try permissionsPane().inspect().findAll(ViewType.Button.self, where: { try $0.labelView().text().string() == "Remove" })
 
-        try sut.find(button: "Open Login Items").tap()
+        try removes[0].tap()
+        for _ in 0..<100 where onboarding.accessibilityGranted {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(permissions.resets == [.accessibility])
+        #expect(!onboarding.accessibilityGranted)
+        #expect(onboarding.message == "Removed AerospaceSidebar from Accessibility.")
+
+        permissions.resetResult = CommandResult(status: 70, output: "tccutil: Failed to reset SystemPolicyAllFiles\n")
+        await onboarding.removeFullDiskAccess()
+        #expect(permissions.resets == [.accessibility, .fullDiskAccess])
+        #expect(onboarding.fullDiskAccessGranted)
+        #expect(onboarding.message == "Cannot remove AerospaceSidebar from Full Disk Access: tccutil: Failed to reset SystemPolicyAllFiles")
+    }
+
+    @Test func permissionsManageLoginItem() throws {
+        onboarding.refresh()
+        let disabled = try permissionsPane().inspect()
+        #expect(try disabled.findAll(ViewType.Button.self, where: { try $0.labelView().text().string() == "Remove" }).count == 2)
+        try disabled.find(button: "Add to Login Items").tap()
+        #expect(loginItems.status == .enabled)
+
+        let enabled = try permissionsPane().inspect()
+        try enabled.findAll(ViewType.Button.self, where: { try $0.labelView().text().string() == "Remove" })[2].tap()
+        #expect(loginItems.status == .disabled)
+
+        loginItems.status = .requiresApproval
+        onboarding.refresh()
+        let approval = try permissionsPane().inspect()
+        try approval.find(button: "Open Login Items").tap()
         #expect(loginItems.openedSettings == 1)
+        #expect(throws: Never.self) { try approval.find(textWhere: { text, _ in text.hasSuffix("Allow AerospaceSidebar in System Settings › General › Login Items.") }) }
+
+        loginItems.status = .unavailable
+        onboarding.refresh()
+        #expect(throws: Never.self) { try permissionsPane().inspect().find(textWhere: { text, _ in text.hasSuffix("Install the app in Applications to use it.") }) }
+    }
+
+    /// Permissions, AeroSpace and General act immediately; the draft panes end with Cancel and Save.
+    @Test func onlyDraftPanesHaveSaveAndCancel() throws {
+        let immediate: [any View] = [permissionsPane(), aeroSpacePane(), general()]
+        let draft: [any View] = [
+            SidebarPane(editor: editor, aeroSpace: aeroSpace, close: {}), NotificationsPane(editor: editor, close: {}),
+            history(), FontPane(editor: editor, chooseFont: {}, close: {}),
+        ]
+        for pane in immediate {
+            let sut = try AnyView(pane).inspect()
+            #expect(throws: (any Error).self) { try sut.find(button: "Save") }
+            #expect(throws: (any Error).self) { try sut.find(button: "Cancel") }
+        }
+        for pane in draft {
+            let sut = try AnyView(pane).inspect()
+            #expect(throws: Never.self) { try sut.find(button: "Save") }
+            #expect(throws: Never.self) { try sut.find(button: "Cancel") }
+        }
+    }
+
+    @Test func aeroSpaceOffersUpdateUntilConfigured() throws {
+        aeroSpace.refresh()
+        let missing = try aeroSpacePane().inspect()
+        #expect(throws: Never.self) { try missing.find(text: "No AeroSpace config found.") }
+        #expect(throws: Never.self) { try missing.find(button: "Update AeroSpace Config") }
+        #expect(try missing.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Not done" }).count == 1)
+        #expect(throws: (any Error).self) { try missing.find(button: "Write Again") }
+        try missing.find(button: "Copy Settings").tap()
+
+        try directory.write("[gaps]\nouter.right = [{ monitor.main = 305 }, 5]\n\n\(AeroSpaceConfigEditor.floatRule)\n", to: ".aerospace.toml")
+        aeroSpace.refresh()
+        let configured = try aeroSpacePane().inspect()
+        #expect(throws: (any Error).self) { try configured.find(text: "AeroSpace configured") }
+        #expect(throws: Never.self) { try configured.find(text: ".aerospace.toml reserves 300 points on the right for the sidebar.") }
+        #expect(try configured.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Done" }).count == 1)
+        #expect(throws: Never.self) { try configured.find(button: "Write Again") }
+    }
+
+    /// A config that already matches can be written again, which reloads AeroSpace.
+    @Test func aeroSpaceWritesConfiguredConfigAgain() async throws {
+        try directory.write("[gaps]\nouter.right = [{ monitor.main = 305 }, 5]\n\n\(AeroSpaceConfigEditor.floatRule)\n", to: ".aerospace.toml")
+        aeroSpace.refresh()
+
+        try aeroSpacePane().inspect().find(button: "Write Again").tap()
+        for _ in 0..<100 where aeroSpace.message == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(aeroSpace.message?.hasPrefix("Updated and reloaded AeroSpace.") == true)
+        #expect(try String(contentsOf: directory.url.appendingPathComponent(".aerospace.toml"), encoding: .utf8).contains(AeroSpaceConfigEditor.blockStart))
+    }
+
+    @Test func aeroSpaceShowsWarningsAndUnreadableConfig() throws {
+        try directory.write("[mode.main.binding]\nalt-f = 'fullscreen --no-outer-gaps'\n", to: ".aerospace.toml")
+        aeroSpace.refresh()
+        let sut = try aeroSpacePane().inspect()
+
         #expect(throws: Never.self) { try sut.find(text: ".aerospace.toml reserves no sidebar strip on the right and lacks the floating rule.") }
         #expect(throws: Never.self) { try sut.find(textWhere: { text, _ in text.contains("--no-outer-gaps") }) }
 
         try directory.write("", to: ".config/aerospace/aerospace.toml")
-        loginItems.status = .unavailable
-        onboarding.refresh()
         aeroSpace.refresh()
-        let refreshed = try setup().inspect()
+        let refreshed = try aeroSpacePane().inspect()
         #expect(throws: Never.self) { try refreshed.find(textWhere: { text, _ in text.hasPrefix("Cannot read the AeroSpace config") }) }
-        #expect(throws: Never.self) { try refreshed.find(text: "Install the app in Applications to open it at login.") }
     }
 
     @Test(arguments: [
@@ -249,29 +330,31 @@ struct SettingsPaneTests {
             warnings: []
         )
 
-        #expect(SetupPane.describe(analysis, file: "a.toml") == hint)
+        #expect(AeroSpacePane.describe(analysis, file: "a.toml") == hint)
     }
 
-    @Test func setupShowsTheAeroSpaceConfigInFinder() throws {
+    @Test func aeroSpaceShowsItsConfigInFinder() throws {
         var revealed: [URL] = []
-        #expect(throws: (any Error).self) { try setup().inspect().find(text: "Config file:") }
+        #expect(throws: (any Error).self) { try aeroSpacePane().inspect().find(text: "Config file:") }
 
         try directory.write("", to: ".aerospace.toml")
         aeroSpace.refresh()
-        let sut = try setup(reveal: { revealed.append($0) }).inspect()
+        let sut = try aeroSpacePane(reveal: { revealed.append($0) }).inspect()
         try sut.find(button: "Show in Finder").tap()
 
         #expect(revealed == [directory.url.appendingPathComponent(".aerospace.toml")])
         #expect(throws: Never.self) { try sut.find(text: directory.url.appendingPathComponent(".aerospace.toml").path) }
+        // The file comes first, above the step that edits it.
+        let labels = try sut.findAll(ViewType.Text.self).map { try $0.string() }
+        #expect(try #require(labels.firstIndex(of: "Config file:")) < #require(labels.firstIndex(of: "Config:")))
     }
 
-    @Test func setupChecksAeroSpaceAgainstSavedSidebar() throws {
+    @Test func aeroSpaceIsCheckedAgainstSavedSidebar() throws {
         try directory.write("[gaps]\nouter.right = [{ monitor.main = 305 }, 5]\n\n\(AeroSpaceConfigEditor.floatRule)\n", to: ".aerospace.toml")
         store.update { $0.sidebar.side = .left }
-        onboarding.refresh()
         aeroSpace.refresh()
 
-        let sut = try setup().inspect()
+        let sut = try aeroSpacePane().inspect()
 
         #expect(throws: Never.self) { try sut.find(button: "Update AeroSpace Config") }
         #expect(throws: Never.self) { try sut.find(text: ".aerospace.toml reserves no sidebar strip on the left and also reserves 300 points on the right.") }
@@ -279,10 +362,9 @@ struct SettingsPaneTests {
 
     @Test func updateButtonEditsAeroSpaceConfig() async throws {
         try directory.write("[gaps]\nouter.right = 5\n", to: ".config/aerospace/aerospace.toml")
-        onboarding.refresh()
         aeroSpace.refresh()
 
-        try setup().inspect().find(button: "Update AeroSpace Config").tap()
+        try aeroSpacePane().inspect().find(button: "Update AeroSpace Config").tap()
         for _ in 0..<100 where aeroSpace.message == nil {
             try await Task.sleep(for: .milliseconds(10))
         }
@@ -290,69 +372,84 @@ struct SettingsPaneTests {
         #expect(aeroSpace.message?.hasPrefix("Updated and reloaded AeroSpace.") == true)
     }
 
-    @Test func generalPaneEditsDraftAndSaves() throws {
-        var closed = 0
+    @Test func generalShowsSettingsFileAndQuits() throws {
         var revealed: [URL] = []
-        var chooses = 0
-        let sut = try GeneralPane(editor: editor, aeroSpace: aeroSpace, configURL: store.file.url, reveal: { revealed.append($0) }, chooseFont: { chooses += 1 }, quit: {}, close: { closed += 1 }).inspect()
+        var quits = 0
+        let sut = try general(reveal: { revealed.append($0) }, quit: { quits += 1 }).inspect()
 
-        try sut.find(ViewType.Picker.self).select(value: SidebarSettings.Sidebar.Side.left)
-        try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Width" }).setInput("420")
-        try sut.find(ViewType.Toggle.self).tap()
-        try sut.find(ViewType.Toggle.self, where: { try $0.labelView().text().string() == "Leave notifications with buttons to macOS" }).tap()
-        try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Apps left to macOS" }).setInput("zoom.us, Calendar")
-        try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Family" }).setInput("Menlo")
-        try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Size" }).setInput("15")
         try sut.find(button: "Show in Finder").tap()
-        try sut.find(button: "Choose…").tap()
+        try sut.find(button: "Quit Sidebar").tap()
+
+        #expect(revealed == [store.file.url])
+        #expect(quits == 1)
+        #expect(throws: Never.self) { try sut.find(text: store.file.url.path) }
+    }
+
+    /// The draft panes edit one draft, so Save in any of them saves every pane's edits.
+    @Test func draftPanesShareOneDraft() throws {
+        var closed = 0
+        var chooses = 0
+        let sidebar = try SidebarPane(editor: editor, aeroSpace: aeroSpace, close: { closed += 1 }).inspect()
+        let notifications = try NotificationsPane(editor: editor, close: { closed += 1 }).inspect()
+        let font = try FontPane(editor: editor, chooseFont: { chooses += 1 }, close: { closed += 1 }).inspect()
+
+        try sidebar.find(ViewType.Picker.self).select(value: SidebarSettings.Sidebar.Side.left)
+        try sidebar.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Width" }).setInput("420")
+        try notifications.find(ViewType.Toggle.self).tap()
+        try notifications.find(ViewType.Toggle.self, where: { try $0.labelView().text().string() == "Keep banners for notifications with buttons" }).tap()
+        try notifications.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Keep banners for" }).setInput("zoom.us, Calendar")
+        try font.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Family" }).setInput("Menlo")
+        try font.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Size" }).setInput("15")
+        try font.find(button: "Choose…").tap()
         #expect(chooses == 1)
         #expect(store.settings == SidebarSettings())
 
-        try sut.find(button: "Save").tap()
+        try history().inspect().find(button: "Save").tap()
+        try sidebar.find(button: "Save").tap()
 
         #expect(store.settings.sidebar == .init(side: .left, width: 420))
         #expect(store.settings.notifications == .init(replaceSystem: false, actionableLeftToMacOS: false, appsLeftToMacOS: ["zoom.us", "Calendar"]))
         #expect(store.settings.font == SidebarSettings.Font(name: "Menlo", size: 15))
-        #expect(revealed == [store.file.url])
         #expect(closed == 1)
-        #expect(throws: Never.self) { try sut.find(text: store.file.url.path) }
     }
 
     @Test func panesUseFontSettings() throws {
         loginItems.status = .enabled
         onboarding.refresh()
-        aeroSpace.refresh()
         let typography = Typography(SidebarSettings.Font(name: "Menlo", size: 18))
-        let general = try GeneralPane(editor: editor, aeroSpace: aeroSpace, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, quit: {}, close: {})
-            .environment(\.typography, typography).inspect()
-        let setupPane = try setup().environment(\.typography, typography).inspect()
-        #expect(throws: Never.self) { try general.find(text: "Family:") }
+        let font = try FontPane(editor: editor, chooseFont: {}, close: {}).environment(\.typography, typography).inspect()
+        let general = try general().environment(\.typography, typography).inspect()
+        let permissionsPane = try permissionsPane().environment(\.typography, typography).inspect()
+        let aeroSpace = try aeroSpacePane().environment(\.typography, typography).inspect()
 
-        #expect(try general.find(text: "Font").attributes().font() == typography.font(.headline))
+        #expect(throws: Never.self) { try font.find(text: "Family:") }
         #expect(try general.find(text: store.file.url.path).attributes().font() == typography.font(.subheadline))
-        for title in ["Save", "Cancel", "Show in Finder", "Choose…", "Quit Sidebar"] {
+        #expect(try permissionsPane.find(textWhere: { text, _ in text.hasPrefix("Required to take over") }).attributes().font() == typography.font(.subheadline))
+        for title in ["Save", "Cancel", "Choose…"] {
+            #expect(try font.find(button: title).labelView().text().attributes().font() == typography.font(.body))
+        }
+        for title in ["Show in Finder", "Quit Sidebar"] {
             #expect(try general.find(button: title).labelView().text().attributes().font() == typography.font(.body))
         }
-        for title in ["Open Accessibility", "Remove", "Copy Settings"] {
-            #expect(try setupPane.find(button: title).labelView().text().attributes().font() == typography.font(.body))
+        for title in ["Open Accessibility", "Remove"] {
+            #expect(try permissionsPane.find(button: title).labelView().text().attributes().font() == typography.font(.body))
         }
+        #expect(try aeroSpace.find(button: "Copy Settings").labelView().text().attributes().font() == typography.font(.body))
     }
 
-    @Test func quitButtonQuits() throws {
-        var quits = 0
+    /// The Banners setting says what turning it off changes.
+    @Test func notificationsExplainTakingOverBanners() throws {
+        let sut = try NotificationsPane(editor: editor, close: {}).inspect()
 
-        try GeneralPane(editor: editor, aeroSpace: aeroSpace, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, quit: { quits += 1 }, close: {}).inspect()
-            .find(button: "Quit Sidebar").tap()
-
-        #expect(quits == 1)
+        #expect(throws: Never.self) { try sut.find(text: "Banners:") }
+        #expect(throws: Never.self) { try sut.find(textWhere: { text, _ in text.hasPrefix("On, the sidebar takes over notifications from other apps") }) }
     }
 
     @Test func cancelRevertsAndCloses() throws {
         var closed = 0
         editor.draft.history.maxCount = 900
 
-        try GeneralPane(editor: editor, aeroSpace: aeroSpace, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, quit: {}, close: { closed += 1 }).inspect()
-            .find(button: "Cancel").tap()
+        try history(close: { closed += 1 }).inspect().find(button: "Cancel").tap()
 
         #expect(editor.draft == store.settings)
         #expect(closed == 1)
@@ -361,7 +458,7 @@ struct SettingsPaneTests {
     @Test func invalidSaveStaysOpenAndShowsStatus() throws {
         var closed = 0
         editor.draft.history.retentionHours = 0
-        let sut = try general(close: { closed += 1 }).inspect()
+        let sut = try history(close: { closed += 1 }).inspect()
 
         try sut.find(button: "Save").tap()
 
@@ -376,7 +473,10 @@ struct SettingsPaneTests {
     }
 
     @Test func everyNumberFieldHasArrows() throws {
-        #expect(try general().inspect().findAll(ViewType.Stepper.self).count == 4)
+        let panes: [any View] = [SidebarPane(editor: editor, aeroSpace: aeroSpace, close: {}), history(), FontPane(editor: editor, chooseFont: {}, close: {})]
+        let steppers = try panes.map { try AnyView($0).inspect().findAll(ViewType.Stepper.self).count }
+
+        #expect(steppers == [1, 2, 1])
     }
 
     @Test func numberFieldShowsUnit() throws {
@@ -388,14 +488,12 @@ struct SettingsPaneTests {
 
     @Test func fontSizeArrowsStepWithinRange() throws {
         _ = NSApplication.shared
-        let host = NSHostingView(rootView: GeneralPane(editor: editor, aeroSpace: aeroSpace, configURL: store.file.url, reveal: { _ in }, chooseFont: {}, quit: {}, close: {}))
+        let host = NSHostingView(rootView: FontPane(editor: editor, chooseFont: {}, close: {}))
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: host.fittingSize), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
         host.layoutSubtreeIfNeeded()
-        // AppKit's steppers carry no label; Size is the pane's last number field, so its arrows are lowest.
-        let stepper = try #require(Self.subviews(of: host).compactMap { $0 as? NSStepper }.max { a, b in
-            a.convert(a.bounds, to: host).minY < b.convert(b.bounds, to: host).minY
-        })
+        // Size is the pane's only number field.
+        let stepper = try #require(Self.subviews(of: host).compactMap { $0 as? NSStepper }.first)
 
         Self.click(stepper, up: true)
         #expect(editor.draft.font.size == 14)
@@ -420,7 +518,7 @@ struct SettingsPaneTests {
         stepper.sendAction(stepper.action, to: stepper.target)
     }
 
-    private static func subviews(of view: NSView) -> [NSView] {
+    static func subviews(of view: NSView) -> [NSView] {
         view.subviews + view.subviews.flatMap(subviews(of:))
     }
 }
@@ -428,25 +526,29 @@ struct SettingsPaneTests {
 @MainActor
 @Suite(.leavesDesktopAlone)
 struct SettingsWindowControllerTests {
-    @Test func opensOnSetupTabInFrontWithoutActivatingTheApp() throws {
+    @Test func opensOnFirstGroupInFrontWithoutActivatingTheApp() throws {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
         let controller = SettingsWindowController.forTesting(store: store, aeroSpace: .fake(store: store, home: directory.url))
-        controller.tabs.selectedTabViewItemIndex = 1
+        controller.navigation.selection = .general
         controller.editor.draft.history.maxCount = 999
 
         controller.show()
 
         #expect(controller.window.isVisible)
+        #expect(controller.navigation.selection == .permissions)
         #expect(controller.tabs.selectedTabViewItemIndex == 0)
-        #expect(controller.tabs.tabViewItems.map(\.label) == ["Setup", "General"])
+        // The selected group names the pane; the title is only for VoiceOver and the window list.
+        #expect(controller.window.title == "Permissions")
+        #expect(controller.window.titleVisibility == .hidden)
+        #expect(controller.tabs.tabViewItems.map(\.label) == ["Permissions", "AeroSpace", "Sidebar", "Notifications", "History", "Font", "General"])
         #expect(controller.window.styleMask.contains(.nonactivatingPanel))
         #expect(!controller.window.styleMask.contains(.resizable))
         #expect(!controller.window.hidesOnDeactivate)
-        #expect(controller.window.isFloatingPanel)
-        #expect(controller.window.level == .floating)
-        #expect(controller.window.contentRect(forFrameRect: controller.window.frame).width == SettingsMetrics.paneWidth)
+        // Above the sidebar, which would otherwise cover the part over its strip.
+        #expect(controller.window.level > SidebarPanelController.level)
+        #expect(controller.tabs.view.frame.width == SettingsMetrics.paneWidth)
         #expect(controller.editor.draft == store.settings)
 
         controller.editor.draft.history.maxCount = 999
@@ -461,16 +563,47 @@ struct SettingsWindowControllerTests {
         var terminateCalls = 0
         let controller = SettingsWindowController.forTesting(store: store, aeroSpace: .fake(store: store, home: directory.url), terminate: { _ in terminateCalls += 1 })
         let general = try #require(
-            controller.tabs.tabViewItems[1].viewController as? NSHostingController<ModifiedContent<GeneralPane, TypographyModifier>>
+            controller.tabs.tabViewItems[SettingsGroup.general.rawValue].viewController as? NSHostingController<SettingsPaneHost<GeneralPane>>
         )
 
-        try general.rootView.content.inspect().find(button: "Quit Sidebar").tap()
+        try general.rootView.pane.inspect().find(button: "Quit Sidebar").tap()
 
         #expect(terminateCalls == 1)
     }
 
-    /// Settings floats above other apps, but steps behind System Settings so the permission lists and
-    /// their switches stay visible.
+    /// Settings opens centered on the sidebar's screen, wherever it was left; while it is open, opening it
+    /// again leaves it where it is.
+    @Test func opensCenteredOnTheSidebarScreen() throws {
+        _ = NSApplication.shared
+        let screen = CGRect(x: 0, y: 40, width: 1600, height: 1000)
+        let directory = try TemporaryDirectory()
+        let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        let controller = SettingsWindowController.forTesting(store: store, aeroSpace: .fake(store: store, home: directory.url), sidebarScreenFrame: { screen })
+        defer { controller.window.close() }
+
+        controller.show()
+        #expect(abs(controller.window.frame.midX - screen.midX) <= 1)
+        #expect(abs(controller.window.frame.midY - screen.midY) <= 1)
+
+        let moved = NSPoint(x: screen.minX + 10, y: screen.minY + 10)
+        controller.window.setFrameOrigin(moved)
+        controller.show()
+        #expect(controller.window.frame.origin == moved)
+
+        // Moved, the window keeps its top edge as it grows.
+        let top = controller.window.frame.maxY
+        store.update { $0.font.size = 20 }
+        #expect(controller.window.frame.minX == moved.x)
+        #expect(controller.window.frame.maxY == top)
+
+        controller.window.close()
+        controller.show()
+        #expect(abs(controller.window.frame.midX - screen.midX) <= 1)
+        #expect(abs(controller.window.frame.midY - screen.midY) <= 1)
+    }
+
+    /// Settings floats above other apps and the sidebar, but steps behind System Settings so the permission
+    /// lists and their switches stay visible.
     @Test func stepsBehindSystemSettings() throws {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
@@ -478,17 +611,17 @@ struct SettingsWindowControllerTests {
         let workspaceCenter = NotificationCenter()
         let controller = SettingsWindowController.forTesting(store: store, aeroSpace: .fake(store: store, home: directory.url), workspaceCenter: workspaceCenter)
         controller.follow(frontmostApp: SettingsWindowController.systemSettingsBundleID)
-        #expect(!controller.window.isFloatingPanel)
+        #expect(controller.window.level == .normal)
         controller.show()
         defer { controller.window.orderOut(nil) }
 
         workspaceCenter.post(name: NSWorkspace.didActivateApplicationNotification, object: nil,
                              userInfo: [NSWorkspace.applicationUserInfoKey: NSRunningApplication.current])
-        #expect(controller.window.isFloatingPanel)
+        #expect(controller.window.level == SettingsWindowController.level)
         #expect(controller.window.isVisible)
 
         controller.follow(frontmostApp: SettingsWindowController.systemSettingsBundleID)
-        #expect(!controller.window.isFloatingPanel)
+        #expect(controller.window.level == .normal)
         #expect(controller.window.isVisible)
     }
 
@@ -511,43 +644,84 @@ struct SettingsWindowControllerTests {
         #expect(NSFontManager.shared.target == nil)
     }
 
-    @Test func eachTabSizesTheWindowToItsOwnContent() throws {
+    /// The window fits the largest pane, so picking another group in the sidebar keeps its size.
+    @Test func everyGroupShowsInOneWindowSize() throws {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
         let controller = SettingsWindowController.forTesting(store: store, aeroSpace: .fake(store: store, home: directory.url))
         controller.show()
-        let setup = controller.window.frame
+        defer { controller.window.close() }
+        let frame = controller.window.frame
 
-        controller.tabs.selectedTabViewItemIndex = 1
-        let general = controller.window.frame
-        controller.tabs.selectedTabViewItemIndex = 0
+        for group in SettingsGroup.allCases {
+            controller.navigation.selection = group
+            let pane = try #require(controller.tabs.tabViewItems[group.rawValue].viewController)
 
-        #expect(general.height > setup.height)
-        #expect(general.maxY == setup.maxY)
-        #expect(controller.window.frame == setup)
-        controller.window.close()
+            #expect(controller.tabs.selectedTabViewItemIndex == group.rawValue)
+            #expect(controller.window.title == group.title)
+            #expect(controller.window.frame == frame)
+            #expect(pane.view.frame.height >= pane.view.fittingSize.height.rounded(.down))
+            // Panes sit below the toolbar, so the toolbar is not counted in their size.
+            #expect(pane.view.convert(pane.view.bounds, to: nil).maxY <= controller.window.contentLayoutRect.maxY)
+        }
     }
 
-    @Test func windowFollowsSetupContentThatChangesWhileOpen() async throws {
+    /// The group list is a sidebar `List`: selecting a row shows its group, and an empty selection, as
+    /// after a click below the rows, keeps the shown group.
+    @Test func sidebarSelectsGroups() throws {
+        _ = NSApplication.shared
+        let navigation = SettingsNavigation()
+        var shown: [SettingsGroup] = []
+        navigation.onSelect = { shown.append($0) }
+        let host = NSHostingView(rootView: SettingsSidebar(navigation: navigation, onHeightChange: { _ in }))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        let table = try #require(SettingsPaneTests.subviews(of: host).compactMap { $0 as? NSTableView }.first)
+        #expect(table.numberOfRows == SettingsGroup.allCases.count)
+
+        table.selectRowIndexes([SettingsGroup.history.rawValue], byExtendingSelection: false)
+        table.deselectAll(nil)
+        host.layoutSubtreeIfNeeded()
+
+        #expect(navigation.selection == .history)
+        #expect(shown == [.history])
+    }
+
+    /// Group rows use the configured font, with an icon column sized from it.
+    @Test func sidebarRowsUseFontSettings() throws {
+        let typography = Typography(SidebarSettings.Font())
+        let row = try SettingsSidebarLabelStyle().inspect().view(SettingsSidebarRow.self).hStack()
+
+        #expect(try row.font() == typography.font(.body))
+        #expect(try row.styleConfigurationIcon(0).fixedWidth() == typography.size * SettingsMetrics.sidebarIconWidth)
+    }
+
+    /// A pane whose content grows past the largest pane grows the window, which stays centered beside the
+    /// sidebar until it is moved.
+    @Test func windowFollowsPaneContentThatChangesWhileOpen() async throws {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
-        let aeroSpace = AeroSpaceSync.fake(store: store, home: directory.url)
-        let controller = SettingsWindowController.forTesting(store: store, aeroSpace: aeroSpace)
+        let loginItems = FakeLoginItems()
+        let onboarding = OnboardingModel(permissions: FakePermissions(), loginItems: loginItems)
+        let controller = SettingsWindowController.forTesting(store: store, onboarding: onboarding, aeroSpace: .fake(store: store, home: directory.url))
         controller.show()
+        defer { controller.window.close() }
         let before = controller.window.frame
 
-        // A config with problems adds warning lines to the Setup pane.
-        try directory.write("[mode.main.binding]\nalt-f = 'fullscreen --no-outer-gaps'\n", to: ".aerospace.toml")
-        aeroSpace.refresh()
+        // A long error under the login item makes Permissions the largest pane.
+        let reason = Array(repeating: "The login item service refused the request.", count: 20).joined(separator: " ")
+        loginItems.error = NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: reason])
+        onboarding.addLoginItem()
         for _ in 0..<100 where controller.window.frame.height == before.height {
             try await Task.sleep(for: .milliseconds(10))
         }
 
         #expect(controller.window.frame.height > before.height)
-        #expect(controller.window.frame.maxY == before.maxY)
-        controller.window.close()
+        #expect(abs(controller.window.frame.midY - before.midY) <= 1)
+        #expect(controller.window.frame.width == before.width)
     }
 
     @Test func previewResizesWindowAndCancelRestoresIt() throws {
@@ -577,7 +751,7 @@ struct SettingsWindowControllerTests {
 
         #expect(controller.window.frame.height > before.height)
         let width = SettingsMetrics.paneWidth * Typography(SidebarSettings.Font(size: 26)).scale
-        #expect(abs(controller.window.contentRect(forFrameRect: controller.window.frame).width - width) <= 1)
+        #expect(abs(controller.tabs.view.frame.width - width) <= 1)
         #expect(controller.window.frame.maxY == before.maxY)
         #expect(controller.window.frame.minX == before.minX)
     }

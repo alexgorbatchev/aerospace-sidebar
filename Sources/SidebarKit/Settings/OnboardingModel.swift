@@ -2,8 +2,8 @@ import Foundation
 import Observation
 import PermissionFlow
 
-/// State and actions for the macOS steps of Settings › Setup: Accessibility, Full Disk Access and launch
-/// at login. `AeroSpaceSync` covers the AeroSpace step.
+/// State and actions for Settings › Permissions: Accessibility, Full Disk Access and launch at login.
+/// `AeroSpaceSync` covers the AeroSpace step.
 @MainActor
 @Observable
 public final class OnboardingModel {
@@ -11,7 +11,7 @@ public final class OnboardingModel {
     /// Whether the notification database can be read, which takes Full Disk Access.
     public private(set) var fullDiskAccessGranted = false
     public private(set) var loginItem = LoginItemStatus.unavailable
-    /// Result of the last login item action.
+    /// Result of the last action that removed a permission or changed the login item.
     public private(set) var message: String?
 
     @ObservationIgnored private let permissions: any PermissionGuiding
@@ -39,6 +39,25 @@ public final class OnboardingModel {
     /// comes from `NotificationCenterMonitor` at launch.
     public func requestAccessibility() {
         permissions.authorize(.accessibility)
+        refresh()
+    }
+
+    /// Takes AerospaceSidebar off the Accessibility list, for example after an update macOS no longer
+    /// recognizes.
+    public func removeAccessibility() async {
+        await remove(.accessibility, name: "Accessibility")
+    }
+
+    /// Takes AerospaceSidebar off the Full Disk Access list.
+    public func removeFullDiskAccess() async {
+        await remove(.fullDiskAccess, name: "Full Disk Access")
+    }
+
+    private func remove(_ pane: PermissionFlowPane, name: String) async {
+        let result = await permissions.reset(pane)
+        message = result.status == 0
+            ? "Removed AerospaceSidebar from \(name)."
+            : "Cannot remove AerospaceSidebar from \(name): \(result.output.trimmingCharacters(in: .whitespacesAndNewlines))"
         refresh()
     }
 

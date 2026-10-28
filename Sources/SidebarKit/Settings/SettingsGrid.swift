@@ -1,15 +1,19 @@
 import SwiftUI
 
 /// Layout shared by the Settings panes: a grid with right-aligned `Label:` cells, a control column
-/// and an accessory column, bold section headers and small secondary hints under controls. Widths
-/// that hold text are for the default font size and scale with `Typography.scale`.
+/// and an accessory column, and small secondary hints under controls. Widths that hold text are for
+/// the default font size and scale with `Typography.scale`.
 enum SettingsMetrics {
     /// Hints wrap within this width instead of widening the window.
-    static let paneWidth: CGFloat = 620
+    static let paneWidth: CGFloat = 560
+    /// Width of the list of groups beside the panes.
+    static let sidebarWidth: CGFloat = 180
+    /// Width of a group row's icon column and the gap after it, in multiples of the font size.
+    static let sidebarIconWidth: CGFloat = 1.6
+    static let sidebarIconSpacing: CGFloat = 0.5
     static let paneMargin: CGFloat = 20
     static let rowSpacing: CGFloat = 8
     static let columnSpacing: CGFloat = 8
-    static let sectionTopPadding: CGFloat = 12
     /// Text fields have a fixed width: a flexible one leaves the grid's column widths open, and the
     /// grid then measures rows at one width and draws them at another, unevening the spacing.
     static let fieldWidth: CGFloat = 320
@@ -20,35 +24,44 @@ enum SettingsMetrics {
     static let statusMaximumLines = 3
 }
 
-struct SettingsGrid<Content: View>: View {
+/// One group's pane: the grid at the pane width, above the Cancel/Save bar when the group edits the draft.
+/// Every pane fills the window, which is as large as the largest pane, so each reports the size it needs
+/// through `reportPaneSize`.
+struct SettingsPage<Content: View>: View {
+    var buttonBar: SettingsButtonBar?
     @ViewBuilder let content: () -> Content
 
+    @Environment(\.typography) private var typography
+    @Environment(\.reportPaneSize) private var reportPaneSize
+    @State private var gridHeight: CGFloat = 0
+    @State private var buttonBarHeight: CGFloat = 0
+
     var body: some View {
-        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: SettingsMetrics.columnSpacing, verticalSpacing: SettingsMetrics.rowSpacing) {
-            content()
+        let width = SettingsMetrics.paneWidth * typography.scale
+        VStack(spacing: 0) {
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: SettingsMetrics.columnSpacing, verticalSpacing: SettingsMetrics.rowSpacing) {
+                content()
+            }
+            // Offered more height than its rows measured, a grid spreads the extra between them; keep it below.
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(SettingsMetrics.paneMargin)
+            .onGeometryChange(for: CGFloat.self, of: \.size.height) { gridHeight = $0 }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            if let buttonBar {
+                buttonBar
+                    .onGeometryChange(for: CGFloat.self, of: \.size.height) { buttonBarHeight = $0 }
+            }
         }
-        // Offered more height than its rows measured, a grid spreads the extra between them; keep it below.
-        .fixedSize(horizontal: false, vertical: true)
-        .padding(SettingsMetrics.paneMargin)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(width: width)
+        .onChange(of: CGSize(width: width, height: gridHeight + buttonBarHeight), initial: true) { _, size in
+            reportPaneSize(size)
+        }
     }
 }
 
-/// A bold header spanning the grid; every header but the first gets extra space above it.
-struct SettingsSectionHeader: View {
-    let title: String
-    var isFirst = false
-
-    @Environment(\.typography) private var typography
-
-    var body: some View {
-        GridRow {
-            Text(title)
-                .font(typography.font(.headline))
-                .gridCellColumns(3)
-        }
-        .padding(.top, isFirst ? 0 : SettingsMetrics.sectionTopPadding)
-    }
+extension EnvironmentValues {
+    /// Receives the size a Settings pane needs to show all of its content.
+    @Entry var reportPaneSize: @MainActor (CGSize) -> Void = { _ in }
 }
 
 /// `Label:` | control | optional accessory.
@@ -95,10 +108,9 @@ struct SettingsHint: View {
     }
 }
 
-/// A Setup step: a green checkmark and what is done, or an empty circle and the button that does it.
+/// A setup step: a green checkmark once done, else an empty circle and the button that does it.
 struct SetupStep: View {
     let title: String
-    let doneTitle: String
     let isDone: Bool
     let action: () -> Void
 
@@ -109,9 +121,7 @@ struct SetupStep: View {
             Image(systemName: isDone ? "checkmark.circle.fill" : "circle")
                 .foregroundStyle(isDone ? .green : .secondary)
                 .accessibilityLabel(isDone ? "Done" : "Not done")
-            if isDone {
-                Text(doneTitle)
-            } else {
+            if !isDone {
                 Button(title, font: typography.font(.body), action: action)
             }
         }

@@ -22,7 +22,7 @@ import Foundation
 /// ```
 public struct SidebarSettings: Codable, Equatable, Sendable {
     /// The strip the sidebar occupies on the main display. AeroSpace must reserve the same strip with a
-    /// `monitor.main` outer gap on `side`; Settings › Setup writes it.
+    /// `monitor.main` outer gap on `side`; Settings › AeroSpace writes it.
     public struct Sidebar: Codable, Equatable, Sendable {
         public enum Side: String, Codable, CaseIterable, Sendable {
             case left, right

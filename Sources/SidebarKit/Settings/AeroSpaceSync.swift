@@ -65,8 +65,8 @@ public final class AeroSpaceSync {
 
     /// Updates the config when it no longer reserves the saved sidebar or lacks the float rule, such as
     /// after the sidebar's side or width changed or a generator rewrote the config. A missing or
-    /// unreadable config is left to Setup. A change that arrives during an update is synced once that
-    /// update ends.
+    /// unreadable config is left to Settings › AeroSpace. A change that arrives during an update is synced
+    /// once that update ends.
     public func sync() async {
         guard !isUpdating else {
             isSyncPending = true

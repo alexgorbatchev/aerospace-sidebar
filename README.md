@@ -38,7 +38,7 @@
 - The list is saved to `~/Library/Application Support/com.alexgorbatchev.aerospace-sidebar/notifications.json` on every change and holds at most 200 notifications by default; a stack counts as one.
 - The list draws its own thin scroll indicator in the margin on the sidebar's screen edge instead of the system scroll bar, so the cards keep their width when a mouse is attached. It appears while scrolling or when the pointer is over that margin, and can be dragged.
 - Settings live in `${XDG_CONFIG_HOME:-~/.config}/aerospace-sidebar/config.toml`. Edits to that file apply immediately; saving from the Settings window rewrites it and drops comments.
-- Each edit keeps the rest of your AeroSpace config and its comments, saves the previous version next to it as `aerospace.toml.bak`, checks the result with `aerospace reload-config --dry-run`, and puts the previous version back if AeroSpace rejects it. While AeroSpace is not running the edit is kept unchecked, and AeroSpace reads it when it starts. Settings › Setup shows the result, and **Update AeroSpace Config** runs the same edit on demand.
+- Each edit keeps the rest of your AeroSpace config and its comments, saves the previous version next to it as `aerospace.toml.bak`, checks the result with `aerospace reload-config --dry-run`, and puts the previous version back if AeroSpace rejects it. While AeroSpace is not running the edit is kept unchecked, and AeroSpace reads it when it starts. Settings › AeroSpace shows the config file and the result, **Update AeroSpace Config** runs the same edit on demand, and **Write Again** rewrites the block and reloads AeroSpace even when the config already matches.
 - Success messages go to stdout and errors to stderr. Exit codes: `0` success, `1` notification rejected or undeliverable, `64` invalid arguments, `74` output could not be written. With `AGENT=1`, output is compact: `OK: pushed`, or `ERR: <code>: <detail>`.
 
 # Installation
@@ -53,7 +53,7 @@ curl -sSL https://github.com/alexgorbatchev/aerospace-sidebar/releases/latest/do
 
 # Setup
 
-Open `~/Applications/AerospaceSidebar.app`, click the gear button at the top of the sidebar, choose the sidebar's side and width in the **General** tab if the default (300 points on the right) does not suit you, and use the **Setup** tab. Each step can also be done by hand:
+Open `~/Applications/AerospaceSidebar.app`, click the gear button at the top of the sidebar, choose the sidebar's side and width under **Sidebar** if the default (300 points on the right) does not suit you, and work through **Permissions** and **AeroSpace**. **Permissions** explains what each permission is for and has a **Remove** button that takes AerospaceSidebar off that list in System Settings. Each step can also be done by hand:
 
 - [AeroSpace](https://nikitabobko.github.io/AeroSpace/guide) - Reserves the strip. The sidebar adds its gap block and a floating rule to an existing AeroSpace config at launch; it never creates the file. **Copy Settings** copies them for adding by hand, after which you run `aerospace reload-config`:
   ```toml
@@ -68,7 +68,7 @@ Open `~/Applications/AerospaceSidebar.app`, click the gear button at the top of 
   run = 'layout floating'
   ```
   Bind fullscreen as `fullscreen`, not `fullscreen --no-outer-gaps`, or fullscreen windows cover the sidebar.
-- [Accessibility permission](https://support.apple.com/guide/mac-help/allow-accessibility-apps-to-access-your-mac-mh43185/mac) - Needed to read and hide macOS notifications. **Open Accessibility** opens System Settings › Privacy & Security › Accessibility with a panel below it; drag AerospaceSidebar from the panel into the list, or enable it if it is already there. Release builds are not signed with a developer certificate, so after each update remove AerospaceSidebar from that list and enable it again.
+- [Accessibility permission](https://support.apple.com/guide/mac-help/allow-accessibility-apps-to-access-your-mac-mh43185/mac) - Needed to read and hide macOS notifications. **Open Accessibility** opens System Settings › Privacy & Security › Accessibility with a panel below it; drag AerospaceSidebar from the panel into the list, or enable it if it is already there. Release builds are not signed with a developer certificate, so after each update click **Remove** (or remove AerospaceSidebar from that list) and grant it again.
 - Full Disk Access (optional) - Needed to list notifications that showed no banner. **Open Full Disk Access** opens System Settings › Privacy & Security › Full Disk Access the same way; drag AerospaceSidebar into the list, or enable it if macOS already lists it. Like Accessibility, release builds need it granted again after each update.
 - Login item - **Add to Login Items** opens the sidebar when you log in. It needs the app in `~/Applications` or `/Applications`.
 - Quit other apps that restyle or hide notification banners, such as NotifyMeHow, so only one app handles them.
@@ -136,7 +136,7 @@ A notification needs `--title` or `--body`. `--open` and `--run` cannot be combi
 
 # Configuration
 
-`~/.config/aerospace-sidebar/config.toml` (or under `$XDG_CONFIG_HOME`), also editable in Settings › General:
+`~/.config/aerospace-sidebar/config.toml` (or under `$XDG_CONFIG_HOME`), also editable in Settings under Sidebar, Notifications, History and Font:
 
 ```toml
 [sidebar]
@@ -153,7 +153,7 @@ retention_hours = 24                     # 1 to 720
 max_count = 200                          # 10 to 2000
 
 [font]
-name = ""                                # font family (Settings › General › Choose… picks one); empty uses the system font
+name = ""                                # font family (Settings › Font › Choose… picks one); empty uses the system font
 size = 13                                # 8 to 32; every text size in the sidebar and Settings scales with it
 ```
 
