@@ -198,6 +198,8 @@ struct NotificationCard: View {
     static let dismissOverhang: CGFloat = 5
     /// The underline under links in the body, which keep the text's color.
     static let linkUnderline = Color.primary.opacity(0.35)
+    /// The underline under the link the pointer is on, white like a hovered button's label.
+    static let hoveredLinkUnderline = Color.white
     /// Space between the card's lines of text.
     static let lineSpacing: CGFloat = 4
     /// Space between the icon and the text beside it.
@@ -326,8 +328,11 @@ struct NotificationCard: View {
     @ViewBuilder private var content: some View {
         header
         ForEach(lines) { line in
-            // Links keep the text's color; only a faint underline marks them.
-            Text(line.text).font(line.font).lineLimit(line.lineLimit).tint(.primary)
+            // Links keep the text's color; only a faint underline marks them, white under the pointer.
+            LinkedText(text: line.text, hoverUnderline: Self.hoveredLinkUnderline)
+                .font(line.font)
+                .lineLimit(line.lineLimit)
+                .tint(.primary)
         }
         ForEach(notes, id: \.self) { note in
             Text(note)
