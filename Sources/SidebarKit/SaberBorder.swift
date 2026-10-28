@@ -171,7 +171,7 @@ enum SaberBeam {
     /// Seconds from the head entering until the tail has left, one lap.
     static let duration: TimeInterval = 0.35
     /// The beam's length as a fraction of the outline.
-    static let length: CGFloat = 0.25
+    static let length: CGFloat = 0.5
     /// Where the head stops: one lap plus the beam's length, by which time the beam has faded out.
     static let end: CGFloat = 1 + length
     static let tailLayers = 4

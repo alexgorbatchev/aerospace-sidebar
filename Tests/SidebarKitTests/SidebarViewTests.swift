@@ -447,12 +447,14 @@ struct SidebarViewTests {
     /// the start at full length, so neither end of the lap cuts it off.
     @Test func saberBeamFadesInAtTheStartAndOutPastIt() {
         let rect = CGRect(x: 0, y: 0, width: 200, height: 40)
+        // A quarter-lap beam, so the stretch past the start stays on the edges asserted below.
+        let length: CGFloat = 0.25
         func trail(head: CGFloat) -> CGRect {
-            SaberTrail(outline: Rectangle(), head: head, length: SaberBeam.length).path(in: rect).boundingRect
+            SaberTrail(outline: Rectangle(), head: head, length: length).path(in: rect).boundingRect
         }
         func extent(_ bounds: CGRect) -> CGFloat { bounds.width + bounds.height }
 
-        #expect(SaberTrail(outline: Rectangle(), head: 0, length: SaberBeam.length).path(in: rect).isEmpty)
+        #expect(SaberTrail(outline: Rectangle(), head: 0, length: length).path(in: rect).isEmpty)
         // Entering, only the part already past the start shows.
         #expect(extent(trail(head: 0.1)) < extent(trail(head: 0.5)))
         // Past the start the head runs on: up the left edge and 48 points (a tenth of the outline) along the top.
@@ -470,7 +472,7 @@ struct SidebarViewTests {
             #expect(SaberBeam.fade(at: 1 + head) > SaberBeam.fade(at: 1 + head + 0.01))
         }
         // SwiftUI animates the head of the trail and the blade, so the lap and its fade play out.
-        var animated = SaberTrail(outline: Rectangle(), head: 0, length: SaberBeam.length)
+        var animated = SaberTrail(outline: Rectangle(), head: 0, length: length)
         animated.animatableData = 0.5
         #expect(animated.path(in: rect).boundingRect == trail(head: 0.5))
         var blade = SaberBlade(shape: Rectangle(), color: .red, entry: nil, head: 0)
