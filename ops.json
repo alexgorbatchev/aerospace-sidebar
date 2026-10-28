@@ -5,7 +5,7 @@
       "email": "alex.gorbatchev@gmail.com"
     },
     "timestamp": 1793221280,
-    "op": "AddComment",
-    "text": "Implemented in 9cb34a7. A card click opens the newest native notification the card stands for (nativeIdentifiers). One on screen or hidden is pressed in place. One only in history goes through NotificationHistoryOpener: clock press, panel window moved off-screen as soon as AXExpanded, stacks of the app expanded, entry pressed, panel closed. activateApp runs only when nothing can be opened. Intercepted notifications with a UUID stay hidden but open until their card goes (Q2). Verified live on macOS 26.6: hidden Script Editor alert opened from its card and closed 2 s after; history entry E387A405 opened from a card in 175 ms, a screenshot burst showed no panel; full suite and coverage gate pass. Not yet verified: a real Vivaldi/web Telegram notification. Open: NotificationCenter files every banner-style app's notification (Vivaldi, Slack, MeetingBar, Loom) with visibility [] and never shows a banner, while alert-style apps display; the cause is unknown."
+    "op": "SetStatus",
+    "status": "IN_PROGRESS"
   }
 ]
