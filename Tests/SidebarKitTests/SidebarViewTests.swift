@@ -443,22 +443,51 @@ struct SidebarViewTests {
         #expect(SaberBorderModifier<Capsule>.entry(first, after: .ended) == nil)
     }
 
-    /// The beam enters at the outline's start and leaves there after one lap instead of wrapping around.
-    @Test func saberBeamRunsOnceAroundTheOutline() {
+    /// The beam grows out of the outline's start while fading in, and fades out while its head runs on past
+    /// the start at full length, so neither end of the lap cuts it off.
+    @Test func saberBeamFadesInAtTheStartAndOutPastIt() {
         let rect = CGRect(x: 0, y: 0, width: 200, height: 40)
         func trail(head: CGFloat) -> CGRect {
             SaberTrail(outline: Rectangle(), head: head, length: SaberBeam.length).path(in: rect).boundingRect
         }
+        func extent(_ bounds: CGRect) -> CGFloat { bounds.width + bounds.height }
 
         #expect(SaberTrail(outline: Rectangle(), head: 0, length: SaberBeam.length).path(in: rect).isEmpty)
-        #expect(SaberTrail(outline: Rectangle(), head: SaberBeam.end, length: SaberBeam.length).path(in: rect).isEmpty)
-        // Entering, only the part already past the start shows; leaving, only the part not yet back at it.
-        #expect(trail(head: 0.1).width + trail(head: 0.1).height < trail(head: 0.5).width + trail(head: 0.5).height)
-        #expect(trail(head: 1.2).width + trail(head: 1.2).height < trail(head: 0.5).width + trail(head: 0.5).height)
-        // SwiftUI animates the head, so the lap plays out along the outline.
+        // Entering, only the part already past the start shows.
+        #expect(extent(trail(head: 0.1)) < extent(trail(head: 0.5)))
+        // Past the start the head runs on: up the left edge and 48 points (a tenth of the outline) along the top.
+        let past = trail(head: 1.1)
+        #expect(past.minX == 0 && past.minY == 0 && abs(past.maxX - 0.1 * 480) < 0.01, "\(past)")
+        #expect(SaberBeam.fade(at: 0) == 0)
+        #expect(SaberBeam.fade(at: SaberBeam.length / 2) == 0.5)
+        #expect(SaberBeam.fade(at: SaberBeam.length) == 1)
+        #expect(SaberBeam.fade(at: 0.5) == 1)
+        #expect(SaberBeam.fade(at: 1) == 1)
+        #expect(SaberBeam.fade(at: 1 + SaberBeam.length / 2) == 0.5)
+        #expect(SaberBeam.fade(at: SaberBeam.end) == 0)
+        for head in stride(from: CGFloat(0), to: SaberBeam.length, by: 0.01) {
+            #expect(SaberBeam.fade(at: head) < SaberBeam.fade(at: head + 0.01))
+            #expect(SaberBeam.fade(at: 1 + head) > SaberBeam.fade(at: 1 + head + 0.01))
+        }
+        // SwiftUI animates the head of the trail and the blade, so the lap and its fade play out.
         var animated = SaberTrail(outline: Rectangle(), head: 0, length: SaberBeam.length)
         animated.animatableData = 0.5
         #expect(animated.path(in: rect).boundingRect == trail(head: 0.5))
+        var blade = SaberBlade(shape: Rectangle(), color: .red, entry: nil, head: 0)
+        blade.animatableData = 1.1
+        #expect(blade.head == 1.1)
+    }
+
+    /// From an entry late in the outline, the head runs past the entry at full length, across the outline's
+    /// start again.
+    @Test func saberBeamRunsOnPastTheEntry() {
+        let rect = CGRect(x: 0, y: 0, width: 200, height: 40)
+        let entry = CGPoint(x: -3, y: 30)
+
+        for head in stride(from: CGFloat(1), through: SaberBeam.end, by: 0.01) {
+            let bounds = SaberTrail(outline: Rectangle(), entry: entry, head: head, length: 0.05).path(in: rect).boundingRect
+            #expect(abs(bounds.width + bounds.height - 24) < 0.01, "head \(head)")
+        }
     }
 
     @Test func iconButtonLabelShowsTitleOnlyWhenExpandedOnTheChosenSide() throws {

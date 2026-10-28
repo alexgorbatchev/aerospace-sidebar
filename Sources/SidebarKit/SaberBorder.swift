@@ -40,10 +40,10 @@ struct SaberBorderModifier<Border: InsettableShape>: ViewModifier {
 
 /// A faint glow along `shape`'s edge while `isActive`, and a beam of light that runs once around it when
 /// it becomes active, like a saber blade tracing the border. Cards and the round icon buttons show it
-/// under the pointer. The beam starts at the outline's point nearest `entry` (or at the outline's start)
-/// and moves along it at a constant speed, so it crosses long and short edges at the same pace. It is
-/// clipped to the shape, so it never spills onto neighbors or the shadow under them. With Reduce Motion
-/// the edge glows without the beam.
+/// under the pointer. The beam fades in as it grows out of the outline's point nearest `entry` (or the
+/// outline's start), moves along the outline at a constant speed, so it crosses long and short edges at
+/// the same pace, and fades out as its head runs on past that point. It is clipped to the shape, so it
+/// never spills onto neighbors or the shadow under them. With Reduce Motion the edge glows without the beam.
 struct SaberBorder<Border: InsettableShape>: View {
     let shape: Border
     let color: Color
@@ -77,28 +77,36 @@ struct SaberBorder<Border: InsettableShape>: View {
     }
 }
 
-/// The beam at one point of its lap.
-struct SaberBlade<Border: InsettableShape>: View {
+/// The beam at one point of its lap. Animatable, so its fade follows the head frame by frame.
+struct SaberBlade<Border: InsettableShape>: View, @MainActor Animatable {
     let shape: Border
     let color: Color
     let entry: CGPoint?
-    let head: CGFloat
+    var head: CGFloat
+
+    var animatableData: CGFloat {
+        get { head }
+        set { head = newValue }
+    }
 
     var body: some View {
         let outline = shape.inset(by: SaberBeam.coreWidth / 2)
-        // Each layer is a longer, faint stretch ending at the head; together they brighten toward it.
-        ForEach(1...SaberBeam.tailLayers, id: \.self) { layer in
-            let trail = SaberTrail(outline: outline, entry: entry, head: head, length: SaberBeam.length * CGFloat(layer) / CGFloat(SaberBeam.tailLayers))
-            trail.stroke(color.opacity(SaberBeam.layerOpacity * SaberBeam.glowOpacity), lineWidth: SaberBeam.glowWidth)
-                .blur(radius: SaberBeam.glowWidth / 2)
-            trail.stroke(SaberBeam.core(color).opacity(SaberBeam.layerOpacity), style: StrokeStyle(lineWidth: SaberBeam.coreWidth, lineCap: .round))
+        ZStack {
+            // Each layer is a longer, faint stretch ending at the head; together they brighten toward it.
+            ForEach(1...SaberBeam.tailLayers, id: \.self) { layer in
+                let trail = SaberTrail(outline: outline, entry: entry, head: head, length: SaberBeam.length * CGFloat(layer) / CGFloat(SaberBeam.tailLayers))
+                trail.stroke(color.opacity(SaberBeam.layerOpacity * SaberBeam.glowOpacity), lineWidth: SaberBeam.glowWidth)
+                    .blur(radius: SaberBeam.glowWidth / 2)
+                trail.stroke(SaberBeam.core(color).opacity(SaberBeam.layerOpacity), style: StrokeStyle(lineWidth: SaberBeam.coreWidth, lineCap: .round))
+            }
         }
+        .opacity(SaberBeam.fade(at: head))
     }
 }
 
 /// The stretch of `outline` that ends at `head`, both measured as fractions of the outline's length from
-/// the point nearest `entry` (or from the outline's start). Parts outside one lap are cut off, so the beam
-/// grows out of that point and runs out there after one lap.
+/// the point nearest `entry` (or from the outline's start). The part before that point is cut off, so the
+/// beam grows out of it; past one lap the head runs on into the next.
 struct SaberTrail<Outline: Shape>: Shape {
     let outline: Outline
     var entry: CGPoint?
@@ -111,16 +119,17 @@ struct SaberTrail<Outline: Shape>: Shape {
     }
 
     func path(in rect: CGRect) -> Path {
-        let lapFrom = min(max(head - length, 0), 1)
-        let lapTo = min(max(head, 0), 1)
+        let lapFrom = max(head - length, 0)
+        let lapTo = max(head, 0)
         guard lapTo > lapFrom else { return Path() }
         let full = outline.path(in: rect)
         let start = entry.map { Self.fraction(nearest: $0, along: full) } ?? 0
-        let (from, to) = (start + lapFrom, start + lapTo)
+        // The same stretch within the first time round the outline; it is shorter than one lap.
+        let laps = (start + lapFrom).rounded(.down)
+        let (from, to) = (start + lapFrom - laps, start + lapTo - laps)
         // `trimmedPath` measures by arc length, which keeps the beam's speed the same on every edge.
         // A stretch crossing the outline's start is drawn as its two pieces.
         if to <= 1 { return full.trimmedPath(from: from, to: to) }
-        if from >= 1 { return full.trimmedPath(from: from - 1, to: to - 1) }
         var path = full.trimmedPath(from: from, to: 1)
         path.addPath(full.trimmedPath(from: 0, to: to - 1))
         return path
@@ -163,7 +172,7 @@ enum SaberBeam {
     static let duration: TimeInterval = 0.7
     /// The beam's length as a fraction of the outline.
     static let length: CGFloat = 0.25
-    /// Where the head stops: one lap plus the beam's length, so the tail runs out too.
+    /// Where the head stops: one lap plus the beam's length, by which time the beam has faded out.
     static let end: CGFloat = 1 + length
     static let tailLayers = 4
     static let layerOpacity: Double = 1 / Double(tailLayers)
@@ -178,6 +187,15 @@ enum SaberBeam {
     static func core(_ color: Color) -> Color {
         color.mix(with: .white, by: 0.75)
     }
+    /// How visible the beam is with its head at `head`: it fades in while it grows out of its starting point
+    /// to its full length, and fades out while the head runs on past that point, so it never looks cut off.
+    static func fade(at head: CGFloat) -> Double {
+        let ramp = min(head / length, (end - head) / length, 1)
+        let t = Double(max(ramp, 0))
+        // Smoothstep: the fade starts and settles gently.
+        return t * t * (3 - 2 * t)
+    }
+
     /// The whole edge glows faintly while active, and more where no beam runs.
     static let outlineOpacity: Double = 0.2
     static let stillOutlineOpacity: Double = 0.5
