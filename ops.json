@@ -4,10 +4,8 @@
       "name": "Alex Gorbatchev",
       "email": "alex.gorbatchev@gmail.com"
     },
-    "timestamp": 1793156741,
-    "op": "CreateTask",
-    "title": "settings panel",
-    "kind": "task",
-    "description": "fonts -> need to be shorter so they dont wrap, general should be first tab, then appearance, sidebar, aerospace should be merged into sidebar w/o any headers"
+    "timestamp": 1793161311,
+    "op": "SetStatus",
+    "status": "DONE"
   }
 ]
