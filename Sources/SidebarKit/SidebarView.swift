@@ -325,7 +325,9 @@ struct NotificationCard: View {
             // accessibility runs the card's action. It gets the choices as the card's actions.
             HStack(spacing: 6) {
                 ForEach(presentAlert.choices, id: \.self) { choice in
+                    // Lifted off the card like its icon.
                     Button(choice, font: typography.font(.callout)) { choose(choice) }
+                        .modifier(ArtworkShadow())
                 }
             }
             .padding(.top, 2)

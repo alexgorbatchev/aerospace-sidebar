@@ -27,21 +27,49 @@ struct IconShadowTests {
             .frame(width: CGFloat(Self.side), height: CGFloat(Self.side))
             .modifier(IconShadow())
             .frame(width: CGFloat(Self.side), height: CGFloat(Self.side))
+        return try render(view)
+    }
+
+    /// The artwork alone, at its own size, shadowed by `ArtworkShadow`, centered in an icon's square.
+    func shadowedSelfSizedArtwork() throws -> CGImage {
+        let artwork = CGFloat(Self.side) * NotificationCard.iconArtwork
+        let view = Rectangle().fill(.white).frame(width: artwork, height: artwork)
+            .modifier(ArtworkShadow())
+            .frame(width: CGFloat(Self.side), height: CGFloat(Self.side))
+        return try render(view)
+    }
+
+    func render(_ view: some View) throws -> CGImage {
         let renderer = ImageRenderer(content: view)
         renderer.scale = 1
         return try #require(renderer.cgImage)
     }
 
+    /// Points just outside the artwork, above, below and beside it.
+    var outside: [(x: Int, y: Int)] {
+        let center = Self.side / 2
+        return [76, 80, 88, 96, 99].map { (center, $0) }
+            + [924, 928, 936, 944, 952, 960].map { (center, $0) }
+            + [72, 80, 88, 96].map { ($0, center) }
+    }
+
     /// The shadow falls off around the artwork the way it does around a system app icon: above, below and
     /// beside it, so a font icon looks like it sits on the card as an app icon does.
     @Test func matchesTheShadowOfSystemAppIcons() throws {
-        let center = Self.side / 2
-        let outside: [(x: Int, y: Int)] = [76, 80, 88, 96, 99].map { (center, $0) }
-            + [924, 928, 936, 944, 952, 960].map { (center, $0) }
-            + [72, 80, 88, 96].map { ($0, center) }
-
         let expected = alphas(of: try appIcon("/System/Applications/Notes.app"), at: outside)
         let actual = alphas(of: try shadowedArtwork(), at: outside)
+
+        #expect(expected.contains { $0 > 10 })
+        for (expected, actual) in zip(expected, actual) {
+            #expect(abs(expected - actual) <= 3)
+        }
+    }
+
+    /// Content that sizes itself, such as a card's push buttons, casts the shadow an icon with that
+    /// artwork would.
+    @Test func selfSizedContentCastsTheShadowOfAnIconWithItsArtwork() throws {
+        let expected = alphas(of: try appIcon("/System/Applications/Notes.app"), at: outside)
+        let actual = alphas(of: try shadowedSelfSizedArtwork(), at: outside)
 
         #expect(expected.contains { $0 > 10 })
         for (expected, actual) in zip(expected, actual) {
