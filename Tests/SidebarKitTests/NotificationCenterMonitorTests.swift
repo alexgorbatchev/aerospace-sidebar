@@ -172,12 +172,11 @@ struct NotificationCenterMonitorTests {
         banner.actions.append("Name:Snooze\nTarget:0x0\nSelector:(null)")
         let window = FakeElement.window(banner)
         platform.windowsByPID[42] = [window]
-        let screen = CGRect(x: 0, y: 0, width: 1920, height: 1080)
         let monitor = SidebarAppDelegate.makeMonitor(
             model: model,
             settings: settings,
             platform: platform,
-            screenFrames: { (screen, CGRect(x: 0, y: 0, width: 1920, height: 1050)) }
+            targetVisibleFrame: { CGRect(x: 0, y: 0, width: 1920, height: 1050) }
         )
 
         monitor.start()

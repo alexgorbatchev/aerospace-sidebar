@@ -155,14 +155,14 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// - Parameter screenFrames: The primary screen, whose right edge the sidebar may cover; native
-    ///   notifications are moved left of the sidebar there.
+    /// - Parameter targetVisibleFrame: The visible frame of the sidebar's screen, whose right edge the
+    ///   sidebar may cover; native notifications are moved left of the sidebar there.
     public static func makeMonitor(
         model: SidebarModel,
         settings: SettingsStore,
         identities: NotificationIdentities = NotificationIdentities(),
         platform: any AccessibilityPlatform = SystemAccessibility(),
-        screenFrames: @escaping @MainActor () -> (frame: CGRect, visibleFrame: CGRect)? = SidebarPanelController.primaryScreenFrames
+        targetVisibleFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenVisibleFrame
     ) -> NotificationCenterMonitor {
         NotificationCenterMonitor(
             platform: platform,
@@ -173,10 +173,8 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
                 listsAlert: { model.lists(alert: $0) },
                 onPresentAlerts: { model.presentAlerts = $0 },
                 nativeOrigin: {
-                    guard let screen = screenFrames() else { return .zero }
-                    let covered = SidebarLayout(settings.settings.sidebar)
-                        .coverage(ofRightEdgeOf: screen.frame, visibleFrame: screen.visibleFrame)
-                    return CGPoint(x: -covered, y: 0)
+                    guard let visibleFrame = targetVisibleFrame() else { return .zero }
+                    return CGPoint(x: -SidebarLayout(settings.settings.sidebar).coverage(ofRightEdgeOf: visibleFrame), y: 0)
                 },
                 onNotification: { model.add($0) }
             ),

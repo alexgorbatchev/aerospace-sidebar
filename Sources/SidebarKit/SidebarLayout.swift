@@ -26,11 +26,10 @@ public struct SidebarLayout: Equatable, Sendable {
         )
     }
 
-    /// How far the strip reaches in from the right edge of `screenFrame`, where NotificationCenter draws
-    /// notifications: the screen's right edge to the strip's left edge on the right side, nothing on the
-    /// left side.
-    public func coverage(ofRightEdgeOf screenFrame: CGRect, visibleFrame: CGRect) -> CGFloat {
-        guard side == .right else { return 0 }
-        return max(0, screenFrame.maxX - frame(in: visibleFrame).minX)
+    /// How far the strip reaches in from the right edge of `visibleFrame`, where NotificationCenter draws
+    /// notifications (16 points in from it, left of a Dock on the right): the strip's width on the right
+    /// side, nothing on the left side.
+    public func coverage(ofRightEdgeOf visibleFrame: CGRect) -> CGFloat {
+        side == .right ? frame(in: visibleFrame).width : 0
     }
 }

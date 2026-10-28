@@ -27,14 +27,11 @@ struct SidebarLayoutTests {
         #expect(frame == visibleFrame)
     }
 
-    /// NotificationCenter draws at the screen's right edge: a right-side strip covers it from there, a
-    /// Dock on the right adds its width, and a left-side strip covers nothing.
+    /// A right-side strip covers the right edge of the visible frame, where NotificationCenter draws, by
+    /// its clamped width; a left-side strip covers nothing.
     @Test func coversTheRightEdgeOnlyFromTheRightSide() {
-        let screen = CGRect(x: 1920, y: 0, width: 2560, height: 1440)
-        let besideDock = CGRect(x: 1920, y: 70, width: 2480, height: 1340)
-
-        #expect(SidebarLayout(width: 300, side: .right).coverage(ofRightEdgeOf: screen, visibleFrame: visibleFrame) == 300)
-        #expect(SidebarLayout(width: 300, side: .right).coverage(ofRightEdgeOf: screen, visibleFrame: besideDock) == 380)
-        #expect(SidebarLayout(width: 300, side: .left).coverage(ofRightEdgeOf: screen, visibleFrame: visibleFrame) == 0)
+        #expect(SidebarLayout(width: 300, side: .right).coverage(ofRightEdgeOf: visibleFrame) == 300)
+        #expect(SidebarLayout(width: 300, side: .right).coverage(ofRightEdgeOf: CGRect(x: 0, y: 0, width: 200, height: 800)) == 200)
+        #expect(SidebarLayout(width: 300, side: .left).coverage(ofRightEdgeOf: visibleFrame) == 0)
     }
 }
