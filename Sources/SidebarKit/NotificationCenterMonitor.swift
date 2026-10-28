@@ -14,6 +14,8 @@ public protocol AccessibilityPlatform {
     /// Calls `handler` once the process exits. Returns a token that keeps watching while alive, or nil
     /// when the process cannot be watched.
     func watchExit(of pid: pid_t, handler: @escaping @MainActor () -> Void) -> AnyObject?
+    /// The menu bar clock, whose press opens and closes Notification Center's history panel.
+    func menuBarClock() -> (any AccessibilityElement)?
 }
 
 /// Keeps a `SystemNotificationInterceptor` attached to the NotificationCenter process:
@@ -28,6 +30,10 @@ public protocol AccessibilityPlatform {
 /// event. A banner reports a single layout change as it starts sliding in, and its close action only
 /// works once the slide-in ends, so the repeats are what close it (NotificationNanny re-sweeps the same
 /// way). Sweeping stops `maxSweepDuration` after the last event even if a notification never closes.
+///
+/// While `NotificationHistoryOpener` opens a notification from the history, its steps replace the sweeps,
+/// which would otherwise move the panel's window back on screen, and run every `historyStepInterval`, so
+/// that the panel is off-screen before it is seen; sweeping resumes once the panel is closed.
 @MainActor
 public final class NotificationCenterMonitor {
     nonisolated public static let notificationCenterBundleID = "com.apple.notificationcenterui"
@@ -35,9 +41,11 @@ public final class NotificationCenterMonitor {
     static let settleDuration: TimeInterval = 1.5
     static let maxSweepDuration: TimeInterval = 10
     static let maxReattachDelay: TimeInterval = 30
+    static let historyStepInterval: TimeInterval = 0.02
 
     private let platform: any AccessibilityPlatform
     private let interceptor: SystemNotificationInterceptor
+    private let historyOpener: NotificationHistoryOpener
     private let onStatus: @MainActor (InterceptionStatus) -> Void
     private let workspaceCenter: NotificationCenter
     private let permissionPollInterval: TimeInterval
@@ -47,6 +55,7 @@ public final class NotificationCenterMonitor {
     private var attachedPID: pid_t?
     private var permissionTimer: Timer?
     private var sweepTimer: Timer?
+    private var historyTimer: Timer?
     private var lastEvent: Date?
     private var workspaceObservers: [NSObjectProtocol] = []
     private var exitWatch: AnyObject?
@@ -69,6 +78,7 @@ public final class NotificationCenterMonitor {
     ) {
         self.platform = platform
         self.interceptor = interceptor
+        self.historyOpener = NotificationHistoryOpener(now: now)
         self.workspaceCenter = workspaceCenter
         self.permissionPollInterval = permissionPollInterval
         self.initialReattachDelay = initialReattachDelay
@@ -79,6 +89,7 @@ public final class NotificationCenterMonitor {
 
     isolated deinit {
         sweepTimer?.invalidate()
+        historyTimer?.invalidate()
         permissionTimer?.invalidate()
         reattachTimer?.invalidate()
     }
@@ -129,6 +140,7 @@ public final class NotificationCenterMonitor {
         reattachTimer?.invalidate()
         reattachTimer = nil
         stopSweeping()
+        stopOpeningHistory()
         if let attachedPID {
             interceptor.restore(platform.windows(ofProcess: attachedPID))
         }
@@ -143,8 +155,13 @@ public final class NotificationCenterMonitor {
         notificationCenterChanged()
     }
 
-    /// Sweeps now and keeps sweeping until NotificationCenter settles.
+    /// Sweeps now and keeps sweeping until NotificationCenter settles; while a notification is being opened
+    /// from the history, advances that instead.
     func notificationCenterChanged() {
+        if historyOpener.isOpening {
+            stepHistory()
+            return
+        }
         lastEvent = now()
         sweep()
         guard sweepTimer == nil else { return }
@@ -191,6 +208,7 @@ public final class NotificationCenterMonitor {
         exitWatch = nil
         attachedPID = nil
         stopSweeping()
+        stopOpeningHistory()
         interceptor.detach()
         onStatus(.notificationCenterUnavailable)
         scheduleReattach()
@@ -244,23 +262,62 @@ public final class NotificationCenterMonitor {
         attachedPID = pid
         let language = platform.application(ofProcess: pid)?.string("AXPreferredLanguage")
         interceptor.labels = NotificationCenterLabels.load(language: language)
+        historyOpener.labels = interceptor.labels
         interceptor.restore(platform.windows(ofProcess: pid))
         notificationCenterChanged()
         onStatus(.active)
     }
 }
 
-extension NotificationCenterMonitor: NativeAlertControlling {
+extension NotificationCenterMonitor: NativeNotificationControlling {
     @discardableResult
     public func perform(_ action: AlertAction, onAlert identifier: String) -> Bool {
         guard let attachedPID else { return false }
         return interceptor.perform(action, onAlert: identifier, in: platform.windows(ofProcess: attachedPID))
     }
 
-    /// Sweeps, which closes the hidden alerts that no card stands for any more.
-    public func alertsReleased() {
+    /// Presses the notification where NotificationCenter shows or hides it, else opens it from the history
+    /// (`NotificationHistoryOpener`). One history request runs at a time; another fails meanwhile.
+    public func open(_ identifiers: [String], from source: String, completion: @escaping @MainActor (Bool) -> Void) {
+        guard let attachedPID else { return completion(false) }
+        if interceptor.open(identifiers, in: platform.windows(ofProcess: attachedPID)) {
+            return completion(true)
+        }
+        guard historyOpener.start(identifiers, from: source, completion: completion) else { return completion(false) }
+        stopSweeping()
+        stepHistory()
+        guard historyOpener.isOpening, historyTimer == nil else { return }
+        historyTimer = Timer.scheduledTimer(withTimeInterval: Self.historyStepInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stepHistory() }
+        }
+    }
+
+    /// Sweeps, which closes the hidden notifications that no card stands for any more.
+    public func notificationsReleased() {
         guard attachedPID != nil else { return }
         notificationCenterChanged()
+    }
+
+    var isOpeningHistory: Bool { historyOpener.isOpening }
+
+    /// Advances the history request; once it is done, sweeping resumes.
+    func stepHistory() {
+        guard let attachedPID else { return stopOpeningHistory() }
+        let working = historyOpener.step(
+            windows: platform.windows(ofProcess: attachedPID),
+            application: platform.application(ofProcess: attachedPID),
+            clock: platform.menuBarClock()
+        )
+        guard !working else { return }
+        stopOpeningHistory()
+        notificationCenterChanged()
+    }
+
+    /// Stops stepping, and abandons a request that is still running.
+    private func stopOpeningHistory() {
+        historyTimer?.invalidate()
+        historyTimer = nil
+        historyOpener.cancel()
     }
 }
 
@@ -301,6 +358,26 @@ public struct SystemAccessibility: AccessibilityPlatform {
     public func watchExit(of pid: pid_t, handler: @escaping @MainActor () -> Void) -> AnyObject? {
         ProcessExitWatch(pid: pid, handler: handler)
     }
+
+    /// Control Center hosts the clock on macOS 26; later versions moved it to the menu bar agent, under a
+    /// group without actions (OmniWM, dwarvesf/hidden), so it is looked for one level down too.
+    public func menuBarClock() -> (any AccessibilityElement)? {
+        for bundleIdentifier in Self.menuExtraHosts {
+            for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier) {
+                let host = AXElement(AXUIElementCreateApplication(app.processIdentifier))
+                guard let bar = host.attribute(kAXExtrasMenuBarAttribute), CFGetTypeID(bar) == AXUIElementGetTypeID() else { continue }
+                let items = AXElement(bar as! AXUIElement).children
+                let candidates = items + items.flatMap { $0.children }
+                if let clock = candidates.first(where: { $0.string(kAXIdentifierAttribute) == Self.clockIdentifier }) {
+                    return clock
+                }
+            }
+        }
+        return nil
+    }
+
+    static let menuExtraHosts = ["com.apple.controlcenter", "com.apple.MenuBarAgent"]
+    static let clockIdentifier = "com.apple.menuextra.clock"
 
     static let messagingTimeout: Float = 1
 }

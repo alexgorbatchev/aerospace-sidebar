@@ -99,10 +99,12 @@ final class RecordingPerformer: NotificationActionPerforming {
 }
 
 @MainActor
-final class RecordingAlerts: NativeAlertControlling {
+final class RecordingAlerts: NativeNotificationControlling {
     var performed: [String] = []
     var succeeds = true
     var releases = 0
+    /// Completions of `open` calls, held back instead of called while set.
+    var heldCompletions: [@MainActor (Bool) -> Void]?
 
     func perform(_ action: AlertAction, onAlert identifier: String) -> Bool {
         switch action {
@@ -112,7 +114,16 @@ final class RecordingAlerts: NativeAlertControlling {
         return succeeds
     }
 
-    func alertsReleased() {
+    func open(_ identifiers: [String], from source: String, completion: @escaping @MainActor (Bool) -> Void) {
+        performed.append("open \(identifiers.joined(separator: " ")) from \(source)")
+        if heldCompletions != nil {
+            heldCompletions?.append(completion)
+        } else {
+            completion(succeeds)
+        }
+    }
+
+    func notificationsReleased() {
         releases += 1
     }
 }
@@ -128,6 +139,8 @@ final class FakePlatform: AccessibilityPlatform {
     var observedPIDs: [pid_t] = []
     var handler: (@MainActor (any AccessibilityElement) -> Void)?
     var exitHandlers: [pid_t: @MainActor () -> Void] = [:]
+    /// The menu bar clock; nil when none can be found.
+    var clock: FakeElement?
 
     func isTrusted(prompt: Bool) -> Bool {
         promptRequests.append(prompt)
@@ -150,6 +163,8 @@ final class FakePlatform: AccessibilityPlatform {
         exitHandlers[pid] = handler
         return NSObject()
     }
+
+    func menuBarClock() -> (any AccessibilityElement)? { clock }
 }
 
 /// A value a test changes after handing a closure that reads it to the code under test. A captured local

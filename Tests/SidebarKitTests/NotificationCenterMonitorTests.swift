@@ -58,10 +58,10 @@ struct NotificationCenterMonitorTests {
     }
 
     /// Sweeps repeat while a notification is still closing, stop once NotificationCenter has been quiet
-    /// for `settleDuration`, and give up after `maxSweepDuration`.
+    /// for `settleDuration`, and give up after `maxSweepDuration`. A banner without an identifier is closed.
     @Test func keepsSweepingUntilNotificationCenterSettles() throws {
         let harness = Harness()
-        let banner = FakeElement.banner()
+        let banner = FakeElement.banner(id: nil)
         harness.platform.windowsByPID[42] = [FakeElement.window(banner)]
         harness.monitor.start()
         defer { harness.monitor.stop() }
@@ -156,8 +156,10 @@ struct NotificationCenterMonitorTests {
 
         #expect(model.interception == .active)
         #expect(Set(model.notifications.map { "\($0.title):\($0.shownByMacOS)" }) == ["Meeting:true", "Lunch:false"])
+        #expect(Set(model.notifications.map(\.nativeIdentifiers)) == [["z"], ["m"]])
         #expect(zoom.performed.isEmpty)
-        #expect(mail.performed.count == 1)
+        // Hidden but left open, so that its card can open it.
+        #expect(mail.performed.isEmpty)
     }
 
     /// A window holding a native notification moves left of a right-side sidebar, so the sidebar does not
@@ -212,7 +214,7 @@ struct NotificationCenterMonitorTests {
         model.alerts = monitor
 
         #expect(!monitor.perform(.open, onAlert: "first"))
-        monitor.alertsReleased()
+        monitor.notificationsReleased()
         monitor.start()
         defer { monitor.stop() }
 
@@ -240,7 +242,7 @@ struct NotificationCenterMonitorTests {
         platform.windowsByPID[42] = [FakeElement.window(FakeElement.alert(id: "a"))]
         let monitor = NotificationCenterMonitor(
             platform: platform,
-            interceptor: SystemNotificationInterceptor(listsAlert: { _ in true }, onPresentAlerts: { present.append($0) }) { _ in },
+            interceptor: SystemNotificationInterceptor(listsNotification: { _ in true }, onPresentAlerts: { present.append($0) }) { _ in },
             workspaceCenter: NotificationCenter(),
             onStatus: { _ in }
         )
@@ -366,6 +368,93 @@ struct NotificationCenterMonitorTests {
         #expect(window.position == .zero)
         #expect(harness.platform.observedPIDs == [42])
     }
+
+    /// A notification NotificationCenter still shows or hides is pressed where it is.
+    @Test func opensNotificationsWhereNotificationCenterKeepsThem() {
+        let harness = Harness()
+        var results: [Bool] = []
+        harness.monitor.open(["b"], from: "Mail") { results.append($0) }
+        let banner = FakeElement.banner(id: "b")
+        harness.platform.windowsByPID[42] = [FakeElement.window(banner)]
+        harness.monitor.start()
+        defer { harness.monitor.stop() }
+
+        harness.monitor.open(["b"], from: "Mail") { results.append($0) }
+
+        #expect(results == [false, true])
+        #expect(banner.performed == [kAXPressAction])
+        #expect(!harness.monitor.isOpeningHistory)
+    }
+
+    /// Any other notification is opened from the history: its steps replace the sweeps, which would move the
+    /// panel's window back on screen, and sweeping resumes once the panel is closed. Meanwhile another
+    /// request fails at once.
+    @Test func opensNotificationsFromTheHistoryInsteadOfSweeping() async throws {
+        let harness = Harness()
+        let application = FakeElement()
+        harness.platform.applicationsByPID[42] = application
+        let clock = FakeElement()
+        harness.platform.clock = clock
+        harness.monitor.start()
+        defer { harness.monitor.stop() }
+        var results: [Bool] = []
+
+        harness.monitor.open(["h"], from: "Vivaldi") { results.append($0) }
+        #expect(clock.performed == [kAXPressAction])
+        #expect(harness.monitor.isOpeningHistory)
+        #expect(!harness.monitor.isSweeping)
+        harness.monitor.open(["other"], from: "Vivaldi") { results.append($0) }
+        #expect(results == [false])
+
+        let entry = FakeElement.banner(id: "h", app: "Vivaldi")
+        let panel = FakeElement.window(entry)
+        application.flags["AXExpanded"] = true
+        harness.platform.windowsByPID[42] = [panel]
+        // The timer steps on its own; an event steps at once.
+        for _ in 0..<200 where entry.performed.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(entry.performed == [kAXPressAction])
+        #expect(results == [false, true])
+        #expect(panel.position == SystemNotificationInterceptor.offScreen)
+        #expect(clock.performed == [kAXPressAction, kAXPressAction])
+
+        application.flags["AXExpanded"] = false
+        let handler = try #require(harness.platform.handler)
+        handler(panel)
+        #expect(!harness.monitor.isOpeningHistory)
+        #expect(harness.monitor.isSweeping)
+        #expect(harness.received.map(\.nativeIdentifiers) == [["h"]])
+    }
+
+    /// Stopping, or NotificationCenter exiting, abandons the history request.
+    @Test func stopsOpeningTheHistoryWhenDetached() {
+        let harness = Harness()
+        harness.platform.clock = FakeElement()
+        harness.monitor.start()
+        var results: [Bool] = []
+
+        harness.monitor.open(["h"], from: "Vivaldi") { results.append($0) }
+        harness.monitor.notificationCenterExited(pid: 42)
+        harness.monitor.stepHistory()
+
+        #expect(!harness.monitor.isOpeningHistory)
+        #expect(results == [false])
+        harness.monitor.stop()
+    }
+
+    /// Without a clock to press, the card's own action runs at once.
+    @Test func failsAtOnceWithoutAClock() {
+        let harness = Harness()
+        harness.monitor.start()
+        defer { harness.monitor.stop() }
+        var results: [Bool] = []
+
+        harness.monitor.open(["h"], from: "Vivaldi") { results.append($0) }
+
+        #expect(results == [false])
+        #expect(!harness.monitor.isOpeningHistory)
+    }
 }
 
 /// Read-only checks against the real Accessibility API, using the Dock because every logged-in
@@ -425,6 +514,13 @@ struct SystemAccessibilityTests {
         ).first
 
         #expect(platform.notificationCenterPID() == running?.processIdentifier)
+    }
+
+    /// The clock is the one menu extra with its identifier; the test process may lack the permission to see it.
+    @Test func findsTheMenuBarClock() {
+        let clock = platform.menuBarClock()
+
+        #expect(clock == nil || clock?.string(kAXIdentifierAttribute) == SystemAccessibility.clockIdentifier)
     }
 
     @Test func refusesInvalidProcess() {

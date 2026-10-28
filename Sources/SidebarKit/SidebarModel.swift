@@ -7,7 +7,8 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
     public enum ClickAction: Codable, Equatable, Sendable {
         case open(URL)
         case run(command: String, workingDirectory: String)
-        /// Brings the app that posted an intercepted system notification to the front.
+        /// Brings the app that posted an intercepted system notification to the front. What a click does when
+        /// none of the card's `nativeIdentifiers` can be opened any more.
         case activateApp(name: String)
     }
 
@@ -59,6 +60,10 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
     public let shownByMacOS: Bool
     /// The hidden macOS alert this entry stands for, whose choices the card offers while it exists.
     public let nativeAlert: NativeAlert?
+    /// The NotificationCenter notifications this entry stands for, newest first: their `AXIdentifier`s, which
+    /// are also their UUIDs in the notification database. A click opens the newest one that still exists, as
+    /// clicking it in macOS would, so the posting app learns which notification was clicked.
+    public let nativeIdentifiers: [String]
     /// When the most recent copy arrived.
     public let receivedAt: Date
     /// How many identical notifications this entry stands for (see `SidebarModel.add(_:)`).
@@ -78,6 +83,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         action: ClickAction? = nil,
         shownByMacOS: Bool = false,
         nativeAlert: NativeAlert? = nil,
+        nativeIdentifiers: [String] = [],
         receivedAt: Date = Date(),
         occurrences: Int = 1
     ) {
@@ -94,6 +100,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         self.action = action
         self.shownByMacOS = shownByMacOS
         self.nativeAlert = nativeAlert
+        self.nativeIdentifiers = nativeIdentifiers
         self.receivedAt = receivedAt
         self.occurrences = occurrences
     }
@@ -121,9 +128,10 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
 }
 
 extension SidebarNotification {
-    /// Same sender and its app, text, severity, icon, click action and presentation as shown; only identity, time and
-    /// count may differ. Two alerts are never the same content: each card answers its own alert. A stack
-    /// keeps the severity its first card arrived with (`postedSeverity`).
+    /// Same sender and its app, text, severity, icon, click action and presentation as shown; only identity, time,
+    /// count and the native notifications it stands for may differ. Two alerts with choices are never the same
+    /// content: each card answers its own alert. A stack keeps the severity its first card arrived with
+    /// (`postedSeverity`).
     func hasSameContent(as other: SidebarNotification) -> Bool {
         source == other.source && bundleIdentifier == other.bundleIdentifier && title == other.title
             && subtitle == other.subtitle && body == other.body
@@ -131,7 +139,8 @@ extension SidebarNotification {
             && action == other.action && shownByMacOS == other.shownByMacOS && nativeAlert == other.nativeAlert
     }
 
-    /// This entry with `newer` folded in: it keeps its identity, takes `newer`'s time, and adds its count.
+    /// This entry with `newer` folded in: it keeps its identity, takes `newer`'s time, adds its count, and
+    /// stands for `newer`'s native notifications too, newest first.
     func stacking(_ newer: SidebarNotification) -> SidebarNotification {
         SidebarNotification(
             id: id,
@@ -147,6 +156,7 @@ extension SidebarNotification {
             action: action,
             shownByMacOS: shownByMacOS,
             nativeAlert: nativeAlert,
+            nativeIdentifiers: newer.nativeIdentifiers + nativeIdentifiers.filter { !newer.nativeIdentifiers.contains($0) },
             receivedAt: max(receivedAt, newer.receivedAt),
             occurrences: occurrences + newer.occurrences
         )
@@ -171,6 +181,7 @@ extension SidebarNotification {
             action: action,
             shownByMacOS: shownByMacOS,
             nativeAlert: nativeAlert,
+            nativeIdentifiers: nativeIdentifiers,
             receivedAt: receivedAt,
             occurrences: occurrences
         )
@@ -182,7 +193,8 @@ extension SidebarNotification {
         case nil: "Click to dismiss"
         case .open(let url): "Click to open \(url.absoluteString)"
         case .run(let command, let directory): "Click to run in \(directory):\n\(command)"
-        case .activateApp(let name): "Click to switch to \(name)"
+        case .activateApp(let name) where nativeIdentifiers.isEmpty: "Click to switch to \(name)"
+        case .activateApp(let name): "Click to open in \(name)"
         }
     }
 }
@@ -213,13 +225,17 @@ public enum AlertAction: Equatable, Sendable {
     case choice(String)
 }
 
-/// Acts on the macOS alerts that cards stand for; `NotificationCenterMonitor` is the real implementation.
+/// Acts on the macOS notifications that cards stand for; `NotificationCenterMonitor` is the real implementation.
 @MainActor
-public protocol NativeAlertControlling: AnyObject {
+public protocol NativeNotificationControlling: AnyObject {
     /// Performs `action` on the alert; false when the alert is gone or refuses it.
     @discardableResult func perform(_ action: AlertAction, onAlert identifier: String) -> Bool
-    /// The list dropped cards for alerts; the alerts that are still hidden are closed.
-    func alertsReleased()
+    /// Opens the first of the notifications, newest first, that NotificationCenter still has, on screen or in
+    /// its history, as clicking it would. `completion` receives whether one was opened; it may run before
+    /// this returns.
+    func open(_ identifiers: [String], from source: String, completion: @escaping @MainActor (Bool) -> Void)
+    /// The list dropped cards for hidden notifications; those that are still hidden are closed.
+    func notificationsReleased()
 }
 
 /// Persists the notification list between launches.
@@ -240,10 +256,11 @@ public final class SidebarModel {
     /// rule hid it: what Settings › Rules tests rules against. Repeats stack, and the history limits apply.
     public private(set) var received: [SidebarNotification] = []
     public var interception: InterceptionStatus = .starting
-    /// Identifiers of the hidden macOS alerts that still exist; only their cards offer choices.
+    /// Identifiers of the hidden macOS alerts with choices that still exist; only their cards offer choices.
     public var presentAlerts: Set<String> = []
-    /// Performs alert choices and closes alerts whose cards are gone; set once interception is wired up.
-    @ObservationIgnored public weak var alerts: (any NativeAlertControlling)?
+    /// Opens native notifications, performs alert choices and closes hidden notifications whose cards are gone;
+    /// set once interception is wired up.
+    @ObservationIgnored public weak var alerts: (any NativeNotificationControlling)?
 
     @ObservationIgnored private let performer: any NotificationActionPerforming
     @ObservationIgnored private let store: any NotificationStore
@@ -254,8 +271,8 @@ public final class SidebarModel {
     @ObservationIgnored public private(set) var history: SidebarSettings.History
     /// Change or hide notifications as they arrive.
     @ObservationIgnored private var rules: NotificationRules
-    /// The alerts listed after the last change, to tell when a change drops one.
-    @ObservationIgnored private var listedAlerts: Set<String> = []
+    /// The native notifications listed after the last change, to tell when a change drops one.
+    @ObservationIgnored private var listedNotifications: Set<String> = []
 
     public init(
         performer: any NotificationActionPerforming = WorkspaceActionPerformer(),
@@ -280,7 +297,7 @@ public final class SidebarModel {
             .filter { $0.receivedAt >= cutoff }
             .sorted { $0.receivedAt > $1.receivedAt }
             .prefix(history.maxCount))
-        listedAlerts = Self.alertIdentifiers(in: notifications)
+        listedNotifications = Self.nativeIdentifiers(in: notifications)
     }
 
     /// Applies new history limits, dropping notifications they no longer allow.
@@ -374,12 +391,21 @@ public final class SidebarModel {
         didChange()
     }
 
-    /// Runs the notification's click action, then dismisses it. A card whose alert is still present
-    /// opens the alert, as clicking it in macOS would; if that fails, the card's own action runs instead.
+    /// Runs the notification's click action, then dismisses it. A card that stands for native notifications
+    /// opens the newest one NotificationCenter still has, as clicking it in macOS would, which tells the posting
+    /// app which notification it was (a browser then shows the page that posted it); the card's own action
+    /// runs only when none can be opened.
     public func activate(_ id: SidebarNotification.ID) {
         guard let notification = notifications.first(where: { $0.id == id }) else { return }
-        let openedAlert = presentAlert(of: notification).map { alerts?.perform(.open, onAlert: $0.identifier) == true } ?? false
-        if !openedAlert, let action = notification.action {
+        let action = notification.action
+        let performer = performer
+        if let alerts, !notification.nativeIdentifiers.isEmpty {
+            alerts.open(notification.nativeIdentifiers, from: notification.source) { opened in
+                if !opened, let action {
+                    performer.perform(action)
+                }
+            }
+        } else if let action {
             performer.perform(action)
         }
         dismiss(id)
@@ -400,23 +426,24 @@ public final class SidebarModel {
         notification.nativeAlert.flatMap { presentAlerts.contains($0.identifier) ? $0 : nil }
     }
 
-    /// Whether a card stands for the alert with `identifier`.
-    public func lists(alert identifier: String) -> Bool {
-        listedAlerts.contains(identifier)
+    /// Whether a card stands for the native notification with `identifier`.
+    public func lists(notification identifier: String) -> Bool {
+        listedNotifications.contains(identifier)
     }
 
-    /// Saves the list and reports alerts whose cards it no longer holds, so they do not stay hidden.
+    /// Saves the list and reports native notifications whose cards it no longer holds, so they do not stay
+    /// hidden.
     private func didChange() {
         store.save(notifications)
-        let listed = Self.alertIdentifiers(in: notifications)
-        let released = !listedAlerts.isSubset(of: listed)
-        listedAlerts = listed
+        let listed = Self.nativeIdentifiers(in: notifications)
+        let released = !listedNotifications.isSubset(of: listed)
+        listedNotifications = listed
         if released {
-            alerts?.alertsReleased()
+            alerts?.notificationsReleased()
         }
     }
 
-    private static func alertIdentifiers(in notifications: [SidebarNotification]) -> Set<String> {
-        Set(notifications.compactMap(\.nativeAlert?.identifier))
+    private static func nativeIdentifiers(in notifications: [SidebarNotification]) -> Set<String> {
+        Set(notifications.flatMap(\.nativeIdentifiers))
     }
 }

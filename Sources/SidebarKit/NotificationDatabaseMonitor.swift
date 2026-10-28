@@ -148,6 +148,7 @@ public final class NotificationDatabaseMonitor {
                 body: notification.body,
                 bundleIdentifier: name == nil ? nil : notification.bundleIdentifier,
                 action: name.map { .activateApp(name: $0) },
+                nativeIdentifiers: [notification.identifier],
                 receivedAt: notification.deliveredAt
             ))
         }

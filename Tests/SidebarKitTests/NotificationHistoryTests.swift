@@ -111,7 +111,8 @@ struct NotificationHistoryTests {
             SidebarNotification(source: "Mail", title: "m", bundleIdentifier: "com.apple.mail", action: .activateApp(name: "Mail"),
                                 shownByMacOS: true, receivedAt: start),
             SidebarNotification(source: "URL", title: "u", action: .open(URL(string: "https://a.example")!), receivedAt: start, occurrences: 4),
-            SidebarNotification(source: "macOS", title: "a", nativeAlert: .init(identifier: "A-1", choices: ["Allow…"]), receivedAt: start),
+            SidebarNotification(source: "macOS", title: "a", nativeAlert: .init(identifier: "A-1", choices: ["Allow…"]),
+                                nativeIdentifiers: ["A-1"], receivedAt: start),
         ]
 
         store.save(notifications)
@@ -119,13 +120,13 @@ struct NotificationHistoryTests {
         #expect(store.load() == notifications)
     }
 
-    /// Lists saved before cards could stand for alerts have no `nativeAlert` key.
+    /// Entries for notifications that are not alerts have no `nativeAlert` key.
     @Test func fileStoreLoadsEntriesSavedWithoutAlerts() throws {
         let directory = try TemporaryDirectory()
         let url = directory.url.appendingPathComponent("notifications.json")
         try Data("""
             [{"id": "05E8D885-F2D3-4170-902C-27F064B139F0", "source": "macOS", "title": "Privacy & Security", "subtitle": "",
-              "body": "b", "severity": "normal", "shownByMacOS": true, "receivedAt": 0, "occurrences": 1}]
+              "body": "b", "severity": "normal", "shownByMacOS": true, "nativeIdentifiers": [], "receivedAt": 0, "occurrences": 1}]
             """.utf8).write(to: url)
 
         let loaded = FileNotificationStore(url: url).load()

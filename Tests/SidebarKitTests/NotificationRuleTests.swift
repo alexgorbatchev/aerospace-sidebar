@@ -106,7 +106,7 @@ struct NotificationRuleTests {
         model.alerts = alerts
         model.add(SidebarNotification(source: "ci", title: "Build", severity: .high, receivedAt: start))
         model.add(SidebarNotification(source: "Slack", title: "Hi", receivedAt: start + 1))
-        model.add(SidebarNotification(source: "macOS", title: "Allow?", nativeAlert: .init(identifier: "a", choices: ["Allow"]), receivedAt: start + 2))
+        model.add(SidebarNotification(source: "macOS", title: "Allow?", nativeAlert: .init(identifier: "a", choices: ["Allow"]), nativeIdentifiers: ["a"], receivedAt: start + 2))
 
         model.apply(rules: [Rule(source: "Slack", action: .severity(.critical)), Rule(source: "macOS", action: .hide)])
         #expect(model.notifications.map(\.title) == ["Hi", "Build"])

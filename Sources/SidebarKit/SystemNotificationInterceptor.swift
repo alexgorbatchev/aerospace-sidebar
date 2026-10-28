@@ -7,9 +7,12 @@ import os
 ///
 /// Notifications that need interaction (`NotificationBanners.needsInteraction`) stay visible as
 /// macOS presents them and are reported with `shownByMacOS`, unless the settings list them without
-/// their buttons instead. Alerts whose choices are all named actions (`NotificationBanners.choices`) are
-/// the exception: they are hidden but left open, listed with their choices, performed through
-/// `perform(_:onAlert:in:)`, and closed once their card is gone.
+/// their buttons instead. The others are hidden but left open while their card exists, so that a click on
+/// the card can open them as a click in macOS would (`open(_:in:)`), and closed once their card is gone; a
+/// banner that times out meanwhile moves to Notification Center's history like any other. Alerts whose
+/// choices are all named actions (`NotificationBanners.choices`) are hidden whatever the settings say, listed
+/// with their choices and performed through `perform(_:onAlert:in:)`. Notifications without an identifier
+/// cannot be told apart later, so they are closed.
 ///
 /// Every notification on screen shares NotificationCenter's single "Notification Center" window. A
 /// banner that arrives while another notification is showing does not create a window: NotificationCenter
@@ -28,8 +31,8 @@ import os
 /// Windows moved off-screen or beside the sidebar are moved back by `restore(_:)`.
 @MainActor
 public final class SystemNotificationInterceptor {
-    /// What the sidebar did to an alert it keeps hidden.
-    private enum AlertStep: Equatable {
+    /// What the sidebar did to a notification it keeps hidden.
+    private enum HiddenStep: Equatable {
         /// An action performed from the card: a choice, or `AXPress` for a click.
         case performed(String)
         /// Its card is gone, so the sidebar presses Close until it leaves.
@@ -44,8 +47,8 @@ public final class SystemNotificationInterceptor {
     static let expansionGrace: TimeInterval = 2
     /// The source shown for notifications that macOS itself posts.
     static let systemSource = "macOS"
-    /// How long an alert whose choice was just performed is given to go away before it is closed. Its
-    /// card is dismissed as the choice is performed, which would otherwise close it at once.
+    /// How long a notification that was just opened, or whose choice was just performed, is given to go away
+    /// before it is closed. Its card is dismissed at the same time, which would otherwise close it at once.
     static let choiceGrace: TimeInterval = 2
 
     /// Whether a pass left work for a later one: notifications that are still closing, or stacks that
@@ -59,7 +62,7 @@ public final class SystemNotificationInterceptor {
     private let leavesToMacOS: @MainActor (String) -> Bool
     private let bundleIdentifier: @MainActor (String) -> String?
     private let leavesActionableToMacOS: @MainActor () -> Bool
-    private let listsAlert: @MainActor (String) -> Bool
+    private let listsNotification: @MainActor (String) -> Bool
     private let onPresentAlerts: @MainActor (Set<String>) -> Void
     private let nativeOrigin: @MainActor () -> CGPoint
     private let now: () -> Date
@@ -67,14 +70,16 @@ public final class SystemNotificationInterceptor {
     private var recentContent: [(content: BannerContent, at: Date)] = []
     private var expandedStacks: [String: Date] = [:]
     private var isPanelOpen = false
-    /// Alerts kept hidden for a card that offers their choices; once their card is gone, they are closed.
-    private var handedOverAlerts: Set<String> = []
-    /// What the sidebar last did to a handed-over alert, and when, by identifier.
-    private var alertSteps: [String: (step: AlertStep, at: Date)] = [:]
-    /// Listed alerts found by the current sweep, unlisted ones it is closing, and the listed ones the last
-    /// complete sweep reported.
+    /// Notifications kept hidden for their card; once their card is gone, they are closed.
+    private var handedOver: Set<String> = []
+    /// What the sidebar last did to a handed-over notification, and when, by identifier.
+    private var hiddenSteps: [String: (step: HiddenStep, at: Date)] = [:]
+    /// Listed notifications found by the current sweep, those of them that offer choices, and unlisted ones
+    /// it is closing.
+    private var sweptHidden: Set<String> = []
     private var sweptAlerts: Set<String> = []
-    private var closingAlerts: Set<String> = []
+    private var closingHidden: Set<String> = []
+    /// The listed alerts with choices that the last complete sweep reported.
     private var presentAlerts: Set<String> = []
     /// Every notification identifier the current sweep found, handed over or not.
     private var sweptIdentifiers: Set<String> = []
@@ -88,9 +93,9 @@ public final class SystemNotificationInterceptor {
     ///   - leavesActionableToMacOS: Whether notifications that need interaction stay native. Otherwise
     ///     they are hidden and listed like the others, without their buttons. Alerts whose choices the
     ///     sidebar offers are hidden either way.
-    ///   - listsAlert: Whether the sidebar still has a card for the alert with this identifier.
-    ///   - onPresentAlerts: Receives the identifiers of the listed alerts that still exist, after each
-    ///     sweep that changes them.
+    ///   - listsNotification: Whether the sidebar still has a card for the notification with this identifier.
+    ///   - onPresentAlerts: Receives the identifiers of the listed alerts with choices that still exist, after
+    ///     each sweep that changes them.
     ///   - nativeOrigin: Where a window holding a notification left to macOS is placed, so that the
     ///     sidebar does not cover it.
     public init(
@@ -99,7 +104,7 @@ public final class SystemNotificationInterceptor {
         leavesToMacOS: @escaping @MainActor (String) -> Bool = { _ in false },
         bundleIdentifier: @escaping @MainActor (String) -> String? = { _ in nil },
         leavesActionableToMacOS: @escaping @MainActor () -> Bool = { true },
-        listsAlert: @escaping @MainActor (String) -> Bool = { _ in false },
+        listsNotification: @escaping @MainActor (String) -> Bool = { _ in false },
         onPresentAlerts: @escaping @MainActor (Set<String>) -> Void = { _ in },
         nativeOrigin: @escaping @MainActor () -> CGPoint = { .zero },
         onNotification: @escaping @MainActor (SidebarNotification) -> Void
@@ -109,7 +114,7 @@ public final class SystemNotificationInterceptor {
         self.leavesToMacOS = leavesToMacOS
         self.bundleIdentifier = bundleIdentifier
         self.leavesActionableToMacOS = leavesActionableToMacOS
-        self.listsAlert = listsAlert
+        self.listsNotification = listsNotification
         self.onPresentAlerts = onPresentAlerts
         self.nativeOrigin = nativeOrigin
         self.onNotification = onNotification
@@ -128,50 +133,63 @@ public final class SystemNotificationInterceptor {
             restore(windows)
             return .settled
         }
+        sweptHidden = []
         sweptAlerts = []
-        closingAlerts = []
+        closingHidden = []
         sweptIdentifiers = []
         let outcome: Outcome = windows.map(process(window:)).contains(.pending) ? .pending : .settled
-        // An alert missing from a sweep is gone, or no longer offers its choices (Reply opened its text
-        // field) and is left to macOS. Should a sweep miss one that is still there, it is left to macOS like
-        // any other interactive notification the sidebar did not list with its choices.
-        let remaining = handedOverAlerts.intersection(sweptAlerts.union(closingAlerts))
-        for identifier in handedOverAlerts.subtracting(remaining) {
+        // A notification missing from a sweep is gone (a banner that timed out is in the history now), or it
+        // needs interaction (Reply opened an alert's text field) and is left to macOS. Should a sweep miss one
+        // that is still there, it is left to macOS like any other notification the sidebar does not hide.
+        let remaining = handedOver.intersection(sweptHidden.union(closingHidden))
+        for identifier in handedOver.subtracting(remaining) {
             logDeparture(of: identifier, returnedToMacOS: sweptIdentifiers.contains(identifier))
         }
-        handedOverAlerts = remaining
+        handedOver = remaining
         publishPresentAlerts(sweptAlerts)
         return outcome
     }
 
-    /// No NotificationCenter is attached, so no alert can be acted on.
+    /// No NotificationCenter is attached, so no notification can be acted on.
     public func detach() {
         publishPresentAlerts([])
     }
 
-    /// Performs `action` on the alert with `identifier` in `windows`; false when it is not there, does
+    /// Performs `action` on the notification with `identifier` in `windows`; false when it is not there, does
     /// not offer the choice, or neither reports success nor changes. NotificationCenter reports failure
     /// for Reply although it opens the alert's text field before the call returns, which changes the
     /// alert's actions (Show Details becomes Hide Details); an alert that is gone reports none.
     @discardableResult
     public func perform(_ action: AlertAction, onAlert identifier: String, in windows: [any AccessibilityElement]) -> Bool {
-        let alert = windows.lazy.flatMap { NotificationBanners.find(in: $0) }.first { $0.string(kAXIdentifierAttribute) == identifier }
+        let alert = windows.lazy.flatMap { NotificationBanners.find(in: $0) }.first {
+            $0.string(kAXIdentifierAttribute) == identifier && NotificationBanners.kind(of: $0) != .stack
+        }
         guard let alert else { return false }
         let rawAction: String? = switch action {
         case .open: kAXPressAction
         case .choice(let name): alert.actionNames.first { NotificationBanners.actionName($0) == name }
         }
         guard let rawAction else { return false }
-        alertSteps[identifier] = (.performed(NotificationBanners.actionName(rawAction)), now())
+        hiddenSteps[identifier] = (.performed(NotificationBanners.actionName(rawAction)), now())
         let actionsBefore = alert.actionNames
         let succeeded = alert.perform(rawAction)
         let changed = !succeeded && alert.actionNames != actionsBefore
         let result = succeeded ? "done" : changed ? "reported failure, but the alert changed" : "refused"
         Self.logger.info("""
-            Performing \(NotificationBanners.actionName(rawAction), privacy: .public) on alert \(identifier, privacy: .public): \
+            Performing \(NotificationBanners.actionName(rawAction), privacy: .public) on notification \(identifier, privacy: .public): \
             \(result, privacy: .public)
             """)
         return succeeded || changed
+    }
+
+    /// Opens the first of `identifiers` that is in `windows`, as a click on it would; false when none is. Only
+    /// notifications themselves count: pressing a stack would expand it instead.
+    @discardableResult
+    public func open(_ identifiers: [String], in windows: [any AccessibilityElement]) -> Bool {
+        let present = Set(windows.flatMap { NotificationBanners.find(in: $0) }.filter { NotificationBanners.kind(of: $0) != .stack }
+            .compactMap { $0.string(kAXIdentifierAttribute) })
+        guard let identifier = identifiers.first(where: present.contains) else { return false }
+        return perform(.open, onAlert: identifier, in: windows)
     }
 
     private func publishPresentAlerts(_ alerts: Set<String>) {
@@ -180,8 +198,8 @@ public final class SystemNotificationInterceptor {
         onPresentAlerts(alerts)
     }
 
-    /// Expands stacks and closes the notifications in one window, reporting new ones. The window is moved
-    /// off-screen unless it holds a notification left to macOS (an interactive one, while those stay
+    /// Expands stacks and hides or closes the notifications in one window, reporting new ones. The window is
+    /// moved off-screen unless it holds a notification left to macOS (an interactive one, while those stay
     /// native, or one from an app left to macOS); then it is moved to `nativeOrigin`.
     @discardableResult
     func process(window: any AccessibilityElement) -> Outcome {
@@ -201,13 +219,16 @@ public final class SystemNotificationInterceptor {
                 outcome = .pending
                 continue
             }
-            if !leftToMacOS, let identifier, !identifier.isEmpty,
-               let choices = NotificationBanners.choices(of: item, labels: labels),
-               let alertOutcome = handOver(item, identifier: identifier, content: content, choices: choices) {
-                if alertOutcome == .pending { outcome = .pending }
-                continue
+            let needsInteraction = leavesActionable && NotificationBanners.needsInteraction(item, labels: labels)
+            if !leftToMacOS, let identifier, !identifier.isEmpty {
+                let choices = NotificationBanners.choices(of: item, labels: labels)
+                if choices != nil || !needsInteraction,
+                   let hiddenOutcome = handOver(item, kind: kind, identifier: identifier, content: content, choices: choices) {
+                    if hiddenOutcome == .pending { outcome = .pending }
+                    continue
+                }
             }
-            let shownByMacOS = leftToMacOS || (leavesActionable && NotificationBanners.needsInteraction(item, labels: labels))
+            let shownByMacOS = leftToMacOS || needsInteraction
             var closed = false
             if shownByMacOS {
                 keepsNative = true
@@ -232,63 +253,68 @@ public final class SystemNotificationInterceptor {
         return outcome
     }
 
-    /// Keeps an alert with choices hidden while its card exists, lists it with them when it is new, and
-    /// closes it once its card is gone. Nil when it was listed before without its choices, by the
-    /// notification database, which leaves it to the handling of other interactive notifications.
+    /// Keeps a notification hidden while its card exists, lists it when it is new (an alert with its
+    /// choices), and closes it once its card is gone. Nil when it was listed before, by the notification
+    /// database or before its card was dismissed, which leaves it to the handling of other notifications.
     private func handOver(
-        _ alert: any AccessibilityElement,
+        _ notification: any AccessibilityElement,
+        kind: NotificationBanners.Kind,
         identifier: String,
         content: BannerContent,
-        choices: [String]
+        choices: [String]?
     ) -> Outcome? {
-        if listsAlert(identifier) {
-            // A card restored from the saved list counts too, so the alert closes when that card goes.
+        if listsNotification(identifier) {
+            // A card restored from the saved list counts too, so the notification closes when that card goes.
             identities.insert(identifier)
-            handedOverAlerts.insert(identifier)
-            sweptAlerts.insert(identifier)
+            handedOver.insert(identifier)
+            sweptHidden.insert(identifier)
+            if choices != nil { sweptAlerts.insert(identifier) }
             return .settled
         }
-        if handedOverAlerts.contains(identifier) {
-            closingAlerts.insert(identifier)
+        if handedOver.contains(identifier) {
+            closingHidden.insert(identifier)
             let time = now()
-            let last = alertSteps[identifier]
+            let last = hiddenSteps[identifier]
             if case .performed = last?.step, let at = last?.at, time.timeIntervalSince(at) < Self.choiceGrace {
                 return .pending
             }
-            let closed = NotificationBanners.dismiss(alert, labels: labels)
-            // Close is pressed on every sweep until the alert goes, but logged once.
+            let closed = NotificationBanners.dismiss(notification, labels: labels)
+            // Close is pressed on every sweep until the notification goes, but logged once.
             if last?.step != .closing {
-                alertSteps[identifier] = (.closing, time)
-                Self.logger.info("Closing alert \(identifier, privacy: .public), whose card is gone: \(closed ? "closed" : "refused", privacy: .public)")
+                hiddenSteps[identifier] = (.closing, time)
+                Self.logger.info("Closing notification \(identifier, privacy: .public), whose card is gone: \(closed ? "closed" : "refused", privacy: .public)")
             }
             return .pending
         }
-        let nativeAlert = SidebarNotification.NativeAlert(identifier: identifier, choices: choices)
+        let nativeAlert = choices.map { SidebarNotification.NativeAlert(identifier: identifier, choices: $0) }
         guard report(content, identifier: identifier, shownByMacOS: false, nativeAlert: nativeAlert) else { return nil }
-        handedOverAlerts.insert(identifier)
-        if listsAlert(identifier) {
-            sweptAlerts.insert(identifier)
+        handedOver.insert(identifier)
+        if listsNotification(identifier) {
+            sweptHidden.insert(identifier)
+            if choices != nil { sweptAlerts.insert(identifier) }
         }
+        let handling = choices.map { "hidden with its choices \($0)" } ?? "hidden until its card goes"
+        let actions = notification.actionNames.map(NotificationBanners.actionName)
         Self.logger.info("""
-            alert \(identifier, privacy: .public) from \(content.appName, privacy: .private): hidden with its choices \
-            \(choices, privacy: .public)
+            \(String(describing: kind), privacy: .public) \(identifier, privacy: .public) from \(content.appName, privacy: .private): \
+            \(handling, privacy: .public); actions \(actions, privacy: .public)
             """)
         return .settled
     }
 
-    /// Records how a handed-over alert left NotificationCenter, or returned to macOS because it no longer
-    /// offers its choices: after a choice performed from its card, after the sidebar closed it, or with no
-    /// help from the sidebar (another device, the history panel).
+    /// Records how a handed-over notification left NotificationCenter's banners, or returned to macOS because
+    /// it needs interaction: after an action performed from its card, after the sidebar closed it, or with no
+    /// help from the sidebar (a banner timing out into the history, another device, the history panel).
     private func logDeparture(of identifier: String, returnedToMacOS: Bool) {
-        let last = alertSteps.removeValue(forKey: identifier)
+        let last = hiddenSteps.removeValue(forKey: identifier)
         let elapsed = last.map { String(format: "%.1f s", now().timeIntervalSince($0.at)) } ?? ""
         let reason = switch last?.step {
         case .performed(let action)?: "\(elapsed) after the sidebar performed \(action)"
         case .closing?: "\(elapsed) after the sidebar closed it"
         case nil: "without an action from the sidebar"
         }
-        let departure = returnedToMacOS ? "returned to macOS" : "left NotificationCenter"
-        Self.logger.info("Alert \(identifier, privacy: .public) \(departure, privacy: .public) \(reason, privacy: .public)")
+        let departure = returnedToMacOS ? "returned to macOS" : "left the banners"
+        Self.logger.info("Notification \(identifier, privacy: .public) \(departure, privacy: .public) \(reason, privacy: .public)")
     }
 
     /// Moves NotificationCenter windows that the sidebar moved, off-screen or beside the sidebar, back to
@@ -352,6 +378,7 @@ public final class SystemNotificationInterceptor {
             action: content.appName.isEmpty ? nil : .activateApp(name: content.appName),
             shownByMacOS: shownByMacOS,
             nativeAlert: nativeAlert,
+            nativeIdentifiers: identifier.flatMap { $0.isEmpty ? nil : [$0] } ?? [],
             receivedAt: now()
         ))
         return true

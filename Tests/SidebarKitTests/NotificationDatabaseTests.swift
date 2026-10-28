@@ -166,9 +166,9 @@ struct NotificationDatabaseMonitorTests {
         defer { monitor.stop() }
         #expect(monitor.isReadable)
 
-        try fixture.insert(title: "During Focus", subtitle: "Sub")
+        let focus = try fixture.insert(title: "During Focus", subtitle: "Sub")
         identities.insert(try fixture.insert(title: "Shown as a banner").uuidString)
-        try fixture.insert(app: 2, title: "From macOS")
+        let system = try fixture.insert(app: 2, title: "From macOS")
         monitor.readNewRecords()
         monitor.deliverPending()
         #expect(harness.received.isEmpty)
@@ -180,6 +180,8 @@ struct NotificationDatabaseMonitorTests {
         #expect(harness.received.map(\.source) == ["Script Editor", SystemNotificationInterceptor.systemSource])
         #expect(harness.received.map(\.action) == [.activateApp(name: "Script Editor"), nil])
         #expect(harness.received.map(\.bundleIdentifier) == ["com.apple.ScriptEditor2", nil])
+        // A card opens its notification from the history, which knows it by the record's UUID.
+        #expect(harness.received.map(\.nativeIdentifiers) == [[focus.uuidString], [system.uuidString]])
         #expect(harness.received.first?.subtitle == "Sub")
         #expect(harness.received.first?.receivedAt == Date(timeIntervalSinceReferenceDate: 800_000_000))
     }

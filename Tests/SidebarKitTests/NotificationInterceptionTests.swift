@@ -289,7 +289,9 @@ struct NotificationBannersTests {
 
 @MainActor
 struct SystemNotificationInterceptorTests {
-    @Test func hidesWindowClosesBannerAndReportsContent() throws {
+    /// An intercepted banner is hidden but left open, so that its card can open it, and listed with its
+    /// identifier.
+    @Test func hidesWindowKeepsBannerAndReportsContent() throws {
         var received: [SidebarNotification] = []
         let date = Date(timeIntervalSince1970: 100)
         let interceptor = SystemNotificationInterceptor(
@@ -302,7 +304,7 @@ struct SystemNotificationInterceptorTests {
         interceptor.process(window: window)
 
         #expect(window.moves == [SystemNotificationInterceptor.offScreen])
-        #expect(banner.performed.count == 1)
+        #expect(banner.performed.isEmpty)
         let notification = try #require(received.first)
         #expect(received.count == 1)
         #expect(notification.source == "Mail")
@@ -311,18 +313,21 @@ struct SystemNotificationInterceptorTests {
         #expect(notification.severity == .normal)
         #expect(notification.action == .activateApp(name: "Mail"))
         #expect(notification.bundleIdentifier == "com.apple.mail")
+        #expect(notification.nativeIdentifiers == ["banner-1"])
+        #expect(notification.nativeAlert == nil)
         #expect(notification.receivedAt == date)
     }
 
-    @Test func reportsEachBannerOnceButKeepsClosingIt() {
-        var received = 0
-        let interceptor = SystemNotificationInterceptor { _ in received += 1 }
-        let banner = FakeElement.banner(id: "same")
+    /// A banner without an identifier cannot be found again, so it is closed, on every pass until it goes.
+    @Test func reportsEachUnidentifiedBannerOnceButKeepsClosingIt() {
+        var received: [SidebarNotification] = []
+        let interceptor = SystemNotificationInterceptor { received.append($0) }
+        let banner = FakeElement.banner(id: nil)
 
         interceptor.process(window: FakeElement.window(banner))
         interceptor.process(window: FakeElement.window(banner))
 
-        #expect(received == 1)
+        #expect(received.map(\.nativeIdentifiers) == [[]])
         #expect(banner.performed.count == 2)
     }
 
@@ -401,9 +406,11 @@ struct SystemNotificationInterceptorTests {
 
         #expect(window.position == .zero)
         #expect(interactive.performed.isEmpty)
-        #expect(plain.performed.count == 1)
+        #expect(plain.performed.isEmpty)
         #expect(received.map(\.title) == ["Standup", "Hi"])
         #expect(received.map(\.shownByMacOS) == [true, false])
+        // A card for a notification macOS shows opens it too.
+        #expect(received.map(\.nativeIdentifiers) == [["alert"], ["plain"]])
     }
 
     @Test func hidesAlertsWithoutChoices() throws {
@@ -416,8 +423,10 @@ struct SystemNotificationInterceptorTests {
         interceptor.process(window: window)
 
         #expect(window.position == SystemNotificationInterceptor.offScreen)
-        #expect(alert.performed.count == 1)
+        #expect(alert.performed.isEmpty)
         #expect(received.map(\.shownByMacOS) == [false])
+        #expect(received.map(\.nativeAlert) == [nil])
+        #expect(received.map(\.nativeIdentifiers) == [["disk"]])
     }
 
     @Test func listsInteractiveNotificationsWithoutButtonsWhenSettingsSaySo() throws {
@@ -431,7 +440,7 @@ struct SystemNotificationInterceptorTests {
         interceptor.process(window: window)
 
         #expect(window.position == SystemNotificationInterceptor.offScreen)
-        #expect(reply.performed.count == 1)
+        #expect(reply.performed.isEmpty)
         #expect(received.map(\.shownByMacOS) == [false])
         #expect(received.map(\.action) == [.activateApp(name: "Messages")])
 
@@ -464,9 +473,9 @@ struct SystemNotificationInterceptorTests {
         let expanded = [FakeElement.banner(id: "a", title: "First"), FakeElement.banner(id: "b", title: "Second")]
         expanded.forEach { $0.attributes[kAXSubroleAttribute] = "AXNotificationCenterAlert" }
         let expandedWindow = FakeElement.window(expanded[0], expanded[1])
-        #expect(interceptor.sweep(windows: [expandedWindow], application: nil) == .pending)
+        #expect(interceptor.sweep(windows: [expandedWindow], application: nil) == .settled)
         #expect(received.map(\.title) == ["First", "Second"])
-        #expect(expanded.map(\.performed.count) == [1, 1])
+        #expect(expanded.map(\.performed.count) == [0, 0])
 
         #expect(interceptor.sweep(windows: [FakeElement.window()], application: nil) == .settled)
     }
@@ -508,7 +517,7 @@ struct SystemNotificationInterceptorTests {
         let kept = FakeElement.window(interactive)
         let hidden = FakeElement.window(FakeElement.banner(id: "plain"))
 
-        #expect(interceptor.sweep(windows: [kept, hidden], application: FakeElement()) == .pending)
+        #expect(interceptor.sweep(windows: [kept, hidden], application: FakeElement()) == .settled)
         interceptor.sweep(windows: [kept, hidden], application: FakeElement())
 
         #expect(kept.moves.isEmpty)
@@ -526,7 +535,7 @@ struct SystemNotificationInterceptorTests {
 
         #expect(window.moves == [SystemNotificationInterceptor.offScreen])
         #expect(window.position == .zero)
-        #expect(banner.performed.count == 1)
+        #expect(banner.performed.isEmpty)
         #expect(received == 1)
     }
 
@@ -536,7 +545,7 @@ struct SystemNotificationInterceptorTests {
         var present: [Set<String>] = []
 
         func lists(_ identifier: String) -> Bool {
-            notifications.contains { $0.nativeAlert?.identifier == identifier }
+            notifications.contains { $0.nativeIdentifiers.contains(identifier) }
         }
     }
 
@@ -550,7 +559,7 @@ struct SystemNotificationInterceptorTests {
             now: now,
             identities: identities,
             leavesToMacOS: leavesToMacOS,
-            listsAlert: { list.lists($0) },
+            listsNotification: { list.lists($0) },
             onPresentAlerts: { list.present.append($0) }
         ) { list.notifications.append($0) }
     }
@@ -629,11 +638,64 @@ struct SystemNotificationInterceptorTests {
         #expect(list.notifications.isEmpty)
     }
 
+    /// A banner is hidden but left open while its card exists, so that the card can open it, and closed once
+    /// the card is gone, until it leaves.
+    @Test func keepsBannersHiddenUntilTheirCardIsGone() throws {
+        let list = AlertList()
+        let interceptor = interceptor(for: list)
+        let banner = FakeElement.banner(id: "b")
+        let window = FakeElement.window(banner)
+
+        #expect(interceptor.sweep(windows: [window], application: nil) == .settled)
+        #expect(interceptor.sweep(windows: [window], application: nil) == .settled)
+        #expect(window.position == SystemNotificationInterceptor.offScreen)
+        #expect(banner.performed.isEmpty)
+        #expect(list.notifications.map(\.nativeIdentifiers) == [["b"]])
+        // Only alerts with choices make a card offer them.
+        #expect(list.present.isEmpty)
+
+        list.notifications = []
+        #expect(interceptor.sweep(windows: [window], application: nil) == .pending)
+        #expect(banner.performed == ["Name:Close\nTarget:0x0\nSelector:(null)"])
+        #expect(interceptor.sweep(windows: [FakeElement.window()], application: nil) == .settled)
+    }
+
+    /// A card opens the newest of its notifications that NotificationCenter still shows or hides; a stack
+    /// with one of their identifiers does not count, since pressing it would only expand it. The opened
+    /// notification is given `choiceGrace` to go away before it is closed for its dismissed card.
+    @Test func opensTheNewestNotificationACardStandsFor() {
+        let list = AlertList()
+        var now = Date(timeIntervalSince1970: 0)
+        let interceptor = interceptor(for: list, now: { now })
+        let older = FakeElement.banner(id: "older", title: "Old")
+        let newer = FakeElement.banner(id: "newer", title: "New")
+        let stack = FakeElement.alertStack(id: "stacked")
+        let window = FakeElement.window(older, newer, stack)
+        interceptor.sweep(windows: [window], application: nil)
+
+        #expect(!interceptor.open(["stacked", "missing"], in: [window]))
+        #expect(!interceptor.open([], in: [window]))
+        #expect(interceptor.open(["missing", "newer", "older"], in: [window]))
+        #expect(newer.performed == [kAXPressAction])
+        #expect(older.performed.isEmpty)
+        #expect(stack.performed == [kAXPressAction])
+
+        list.notifications.removeAll { $0.nativeIdentifiers == ["newer"] }
+        interceptor.sweep(windows: [window], application: nil)
+        #expect(newer.performed == [kAXPressAction])
+        now += SystemNotificationInterceptor.choiceGrace
+        interceptor.sweep(windows: [window], application: nil)
+        #expect(newer.performed.last == "Name:Close\nTarget:0x0\nSelector:(null)")
+        #expect(older.performed.isEmpty)
+    }
+
     /// After a relaunch the saved card stands for the alert, which stays hidden and is not listed twice,
     /// and closes when that card goes.
     @Test func keepsAlertsHiddenForCardsRestoredFromTheSavedList() {
         let list = AlertList()
-        list.notifications = [SidebarNotification(source: "Calendar", title: "Standup", nativeAlert: .init(identifier: "a", choices: ["Allow…"]))]
+        list.notifications = [SidebarNotification(
+            source: "Calendar", title: "Standup", nativeAlert: .init(identifier: "a", choices: ["Allow…"]), nativeIdentifiers: ["a"]
+        )]
         let identities = NotificationIdentities()
         let interceptor = interceptor(for: list, identities: identities)
         let alert = FakeElement.alert(id: "a")

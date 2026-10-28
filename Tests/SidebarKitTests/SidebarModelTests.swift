@@ -127,7 +127,7 @@ struct SidebarModelTests {
         model.presentAlerts = present
         let notification = SidebarNotification(
             source: "Calendar", title: "Standup", action: .activateApp(name: "Calendar"),
-            nativeAlert: .init(identifier: "a", choices: ["Snooze", "Join"])
+            nativeAlert: .init(identifier: "a", choices: ["Snooze", "Join"]), nativeIdentifiers: ["a"]
         )
         model.add(notification)
         return (model, performer, alerts, notification)
@@ -160,23 +160,38 @@ struct SidebarModelTests {
         #expect(model.notifications.count == 1)
     }
 
-    /// Clicking the card of a present alert clicks the alert; otherwise the card's own action runs.
-    @Test func activatingOpensThePresentAlertInsteadOfTheCardsAction() {
+    /// Clicking the card of a native notification opens the notification, newest first; the card's own
+    /// action runs only when none can be opened, whenever that is known. The card goes at once either way.
+    @Test func activatingOpensTheNativeNotificationInsteadOfTheCardsAction() {
         let (model, performer, alerts, notification) = alertModel()
         model.activate(notification.id)
-        #expect(alerts.performed == ["open a"])
+        #expect(alerts.performed == ["open a from Calendar"])
         #expect(performer.actions.isEmpty)
         #expect(model.notifications.isEmpty)
 
         let (refusing, refusingPerformer, refusingAlerts, refused) = alertModel()
-        refusingAlerts.succeeds = false
+        refusingAlerts.heldCompletions = []
         refusing.activate(refused.id)
+        #expect(refusing.notifications.isEmpty)
+        #expect(refusingPerformer.actions.isEmpty)
+        refusingAlerts.heldCompletions?.forEach { $0(false) }
         #expect(refusingPerformer.actions == [.activateApp(name: "Calendar")])
 
-        let (gone, gonePerformer, goneAlerts, absent) = alertModel(present: [])
-        gone.activate(absent.id)
-        #expect(goneAlerts.performed.isEmpty)
-        #expect(gonePerformer.actions == [.activateApp(name: "Calendar")])
+        let performerOnly = RecordingPerformer()
+        let unwired = SidebarModel(performer: performerOnly, store: InMemoryStore())
+        unwired.add(notification)
+        unwired.activate(unwired.notifications[0].id)
+        #expect(performerOnly.actions == [.activateApp(name: "Calendar")])
+
+        let repeats = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        let opener = RecordingAlerts()
+        repeats.alerts = opener
+        for identifier in ["old", "new"] {
+            repeats.add(SidebarNotification(source: "Vivaldi", title: "Alex", nativeIdentifiers: [identifier]))
+        }
+        #expect(repeats.notifications.map(\.nativeIdentifiers) == [["new", "old"]])
+        repeats.activate(repeats.notifications[0].id)
+        #expect(opener.performed == ["open new old from Vivaldi"])
     }
 
     /// Every way a card for an alert leaves the list lets its alert close; other changes do not.
@@ -186,18 +201,26 @@ struct SidebarModelTests {
         let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), now: { now })
         model.alerts = alerts
         func addAlert(_ identifier: String, title: String = "t") {
-            model.add(SidebarNotification(source: "s", title: title, nativeAlert: .init(identifier: identifier, choices: ["Allow…"]), receivedAt: now))
+            model.add(SidebarNotification(
+                source: "s", title: title, nativeAlert: .init(identifier: identifier, choices: ["Allow…"]),
+                nativeIdentifiers: [identifier], receivedAt: now
+            ))
         }
 
         addAlert("a")
         model.add(SidebarNotification(source: "s", title: "plain", receivedAt: now))
         model.dismiss(model.notifications.first { $0.title == "plain" }!.id)
         #expect(alerts.releases == 0)
-        #expect(model.lists(alert: "a"))
+        #expect(model.lists(notification: "a"))
+        model.add(SidebarNotification(source: "s", title: "banner", nativeIdentifiers: ["banner"], receivedAt: now))
+        #expect(model.lists(notification: "banner"))
+        model.dismiss(model.notifications.first { $0.title == "banner" }!.id)
+        #expect(alerts.releases == 1)
+        alerts.releases = 0
 
         model.dismiss(model.notifications[0].id)
         #expect(alerts.releases == 1)
-        #expect(!model.lists(alert: "a"))
+        #expect(!model.lists(notification: "a"))
 
         addAlert("b")
         model.clear()
@@ -218,10 +241,10 @@ struct SidebarModelTests {
     }
 
     @Test func listsAlertsRestoredFromTheSavedList() {
-        let saved = SidebarNotification(source: "s", title: "t", nativeAlert: .init(identifier: "a", choices: ["Allow…"]))
+        let saved = SidebarNotification(source: "s", title: "t", nativeAlert: .init(identifier: "a", choices: ["Allow…"]), nativeIdentifiers: ["a"])
         let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore([saved]))
 
-        #expect(model.lists(alert: "a"))
+        #expect(model.lists(notification: "a"))
         #expect(model.presentAlert(of: saved) == nil)
     }
 
@@ -288,6 +311,12 @@ struct SidebarModelTests {
     ])
     func describesClickBeforeItHappens(action: SidebarNotification.ClickAction?, description: String) {
         #expect(SidebarNotification(source: "s", title: "t", action: action).clickDescription == description)
+    }
+
+    /// A card that stands for a native notification opens it in its app rather than only switching to the app.
+    @Test func describesOpeningANativeNotification() {
+        let notification = SidebarNotification(source: "Vivaldi", title: "t", action: .activateApp(name: "Vivaldi"), nativeIdentifiers: ["a"])
+        #expect(notification.clickDescription == "Click to open in Vivaldi")
     }
 }
 

@@ -199,7 +199,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
                 leavesToMacOS: { settings.settings.notifications.leavesToMacOS($0) },
                 bundleIdentifier: { InstalledApps.shared.bundleIdentifier(named: $0) },
                 leavesActionableToMacOS: { settings.settings.notifications.actionableLeftToMacOS },
-                listsAlert: { model.lists(alert: $0) },
+                listsNotification: { model.lists(notification: $0) },
                 onPresentAlerts: { model.presentAlerts = $0 },
                 nativeOrigin: {
                     guard let visibleFrame = targetVisibleFrame() else { return .zero }
