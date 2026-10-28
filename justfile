@@ -83,7 +83,8 @@ reset-permissions:
     tccutil reset Accessibility {{ bundle_id }}
 
 # The alerts come from alerter (brew install vjeantet/tap/alerter); each alerter waits in the background
-# until its alert is answered or closed, or for alert_timeout seconds.
+# until its alert is answered or closed, or for alert_timeout seconds. They are sent as Script Editor, like
+# the osascript notification, so keep Script Editor out of apps_left_to_macos.
 # Push test notifications through the CLI, the URL scheme and macOS itself, plus alerts with buttons
 test-notifications alert_timeout="600":
     @command -v alerter >/dev/null || { echo "alerter not found; install it with: brew install vjeantet/tap/alerter" >&2; exit 1; }
@@ -96,9 +97,9 @@ test-notifications alert_timeout="600":
     {{ cli }} notification push --severity high --title "High severity" --body "Orange, listed above normal notifications."
     open -g "$({{ cli }} notification url --severity critical --title 'Critical severity' --body 'Red, always on top. Sent through a URL.')"
     osascript -e 'display notification "A native macOS notification, intercepted and moved into the sidebar." with title "macOS notification" subtitle "Posted by osascript"'
-    alerter --title "Alert with a choice" --subtitle "Posted by alerter" --message "Allow, and Deny as its close button." --actions Allow --close-label Deny --timeout {{ alert_timeout }} >/dev/null 2>&1 &
-    alerter --title "Alert with a menu" --subtitle "Posted by alerter" --message "Three actions under a When? menu." --actions "Now,Later today,Tomorrow" --dropdown-label "When?" --timeout {{ alert_timeout }} >/dev/null 2>&1 &
-    alerter --title "Alert with a reply" --subtitle "Posted by alerter" --message "A Reply button that opens a text field." --reply "Type a reply" --timeout {{ alert_timeout }} >/dev/null 2>&1 &
+    alerter --sender com.apple.ScriptEditor2 --title "Alert with a choice" --subtitle "Posted by alerter" --message "Allow, and Deny as its close button." --actions Allow --close-label Deny --timeout {{ alert_timeout }} >/dev/null 2>&1 &
+    alerter --sender com.apple.ScriptEditor2 --title "Alert with a menu" --subtitle "Posted by alerter" --message "Three actions under a When? menu." --actions "Now,Later today,Tomorrow" --dropdown-label "When?" --timeout {{ alert_timeout }} >/dev/null 2>&1 &
+    alerter --sender com.apple.ScriptEditor2 --title "Alert with a reply" --subtitle "Posted by alerter" --message "A Reply button that opens a text field." --reply "Type a reply" --timeout {{ alert_timeout }} >/dev/null 2>&1 &
 
 # Push count distinct notifications of mixed severity and length, enough to make the list scroll; none stack
 fill-notifications count="20":
