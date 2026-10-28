@@ -4,10 +4,8 @@
       "name": "Alex Gorbatchev",
       "email": "alex.gorbatchev@gmail.com"
     },
-    "timestamp": 1793146490,
-    "op": "CreateTask",
-    "title": "startup key focus",
-    "kind": "task",
-    "description": "when app starts it steals keyboard focus"
+    "timestamp": 1793160542,
+    "op": "SetStatus",
+    "status": "DONE"
   }
 ]
