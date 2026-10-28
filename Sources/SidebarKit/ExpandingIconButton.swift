@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// A small round icon button. Under the pointer it widens into a capsule that shows its title next to the
-/// icon, which stays in place, and turns white.
+/// icon, which stays in place, turns white and traces its edge with a `SaberBorder`.
 struct ExpandingIconButton: View {
     let title: String
     let systemImage: String
@@ -65,6 +65,7 @@ struct ExpandingIconButtonBody: View {
             .labelStyle(style)
             .font(typography.font(.caption1))
             .background(.regularMaterial, in: Capsule())
+            .saberBorder(Capsule(), color: .accentColor, isActive: isHighlighted)
             .clipShape(Capsule())
             .floatingShadow()
             .contentShape(Capsule())

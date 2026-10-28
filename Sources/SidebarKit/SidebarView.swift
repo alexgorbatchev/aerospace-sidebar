@@ -301,6 +301,7 @@ struct NotificationCard: View {
                         .strokeBorder(accent, lineWidth: notification.severity == .critical ? 2 : 1)
                 }
             }
+            .saberBorder(RoundedRectangle(cornerRadius: Self.cornerRadius), color: saberColor, isActive: isHovered)
             .opacity(notification.severity == .low ? 0.6 : 1)
             .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
         }
@@ -315,6 +316,9 @@ struct NotificationCard: View {
         case .critical: .red
         }
     }
+
+    /// The hover border takes the severity's color, so it does not clash with the accent stroke.
+    var saberColor: Color { accent ?? .accentColor }
 
     private var background: AnyShapeStyle {
         switch notification.severity {

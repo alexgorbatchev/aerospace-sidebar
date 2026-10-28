@@ -310,6 +310,98 @@ struct SidebarViewTests {
         }
     }
 
+    @Test(arguments: [(NotificationSeverity.normal, Color.accentColor), (.high, .orange), (.critical, .red)])
+    func cardsTraceTheirBorderOnlyWhileHovered(severity: NotificationSeverity, color: Color) throws {
+        model.add(SidebarNotification(source: "s", title: "t", severity: severity))
+
+        for hovered in [false, true] {
+            let saber = try card(model.notifications[0], hovered: hovered).inspect()
+                .find(SaberBorder<RoundedRectangle>.self)
+            #expect(try saber.actualView().isActive == hovered)
+            #expect(try saber.actualView().color == color)
+            #expect(try saber.zStack().opacity() == (hovered ? 1 : 0))
+        }
+    }
+
+    @Test func iconButtonsTraceTheirBorderWhilePressed() throws {
+        let style = ExpandingIconButtonStyle(expandsToward: .leading)
+
+        for pressed in [false, true] {
+            let saber = try style.inspect(isPressed: pressed).find(SaberBorder<Capsule>.self).actualView()
+            #expect(saber.isActive == pressed)
+            #expect(saber.color == .accentColor)
+        }
+    }
+
+    /// On a rectangle, a stretch of outline turning at most one corner is as long as its bounds are wide
+    /// plus tall, so equal steps of the head cover equal distances on horizontal and vertical edges alike.
+    @Test func saberBeamKeepsOnePaceOnEveryEdge() {
+        let rect = CGRect(x: 0, y: 0, width: 200, height: 40)
+        let perimeter = 2 * (rect.width + rect.height)
+        let length: CGFloat = 0.05
+
+        for head in stride(from: length, through: 1, by: 0.01) {
+            let bounds = SaberTrail(outline: Rectangle(), head: head, length: length).path(in: rect).boundingRect
+            #expect(abs(bounds.width + bounds.height - length * perimeter) < 0.01, "head \(head)")
+        }
+    }
+
+    /// A rectangle's outline runs clockwise from its top-left corner.
+    @Test(arguments: [(50.0, -5.0, 50.0), (210, 20, 220), (100, 45, 340), (0, 20, 460)])
+    func saberBeamStartsNearestTheEntryPoint(x: Double, y: Double, distance: Double) {
+        let rect = CGRect(x: 0, y: 0, width: 200, height: 40)
+        let entry = CGPoint(x: x, y: y)
+
+        #expect(abs(SaberTrail<Rectangle>.fraction(nearest: entry, along: Rectangle().path(in: rect)) - distance / 480) < 1e-6)
+    }
+
+    /// From an entry on the left edge, the beam grows upward out of it, crosses the outline's start at the
+    /// top-left corner as two pieces, and keeps one pace throughout.
+    @Test func saberBeamRunsFromTheEntryAcrossTheOutlineStart() {
+        let rect = CGRect(x: 0, y: 0, width: 200, height: 40)
+        let entry = CGPoint(x: -3, y: 30)
+        func trail(head: CGFloat) -> CGRect {
+            SaberTrail(outline: Rectangle(), entry: entry, head: head, length: 0.05).path(in: rect).boundingRect
+        }
+
+        let first = trail(head: 0.01)
+        #expect(first.minX == 0 && first.width == 0)
+        #expect(abs(first.maxY - 30) < 0.01 && abs(first.height - 4.8) < 0.01, "\(first)")
+        for head in stride(from: 0.05, through: 1, by: 0.01) {
+            let bounds = trail(head: head)
+            #expect(abs(bounds.width + bounds.height - 24) < 0.01, "head \(head)")
+        }
+        // Crossing the start: up the left edge and on along the top.
+        let crossing = trail(head: 0.08)
+        #expect(crossing.minX == 0 && crossing.minY == 0 && crossing.width > 0 && crossing.height > 0)
+    }
+
+    @Test func saberBorderKeepsThePointerEntryUntilItLeaves() {
+        let first = CGPoint(x: 3, y: 4)
+
+        #expect(SaberBorderModifier<Capsule>.entry(nil, after: .active(first)) == first)
+        #expect(SaberBorderModifier<Capsule>.entry(first, after: .active(CGPoint(x: 9, y: 9))) == first)
+        #expect(SaberBorderModifier<Capsule>.entry(first, after: .ended) == nil)
+    }
+
+    /// The beam enters at the outline's start and leaves there after one lap instead of wrapping around.
+    @Test func saberBeamRunsOnceAroundTheOutline() {
+        let rect = CGRect(x: 0, y: 0, width: 200, height: 40)
+        func trail(head: CGFloat) -> CGRect {
+            SaberTrail(outline: Rectangle(), head: head, length: SaberBeam.length).path(in: rect).boundingRect
+        }
+
+        #expect(SaberTrail(outline: Rectangle(), head: 0, length: SaberBeam.length).path(in: rect).isEmpty)
+        #expect(SaberTrail(outline: Rectangle(), head: SaberBeam.end, length: SaberBeam.length).path(in: rect).isEmpty)
+        // Entering, only the part already past the start shows; leaving, only the part not yet back at it.
+        #expect(trail(head: 0.1).width + trail(head: 0.1).height < trail(head: 0.5).width + trail(head: 0.5).height)
+        #expect(trail(head: 1.2).width + trail(head: 1.2).height < trail(head: 0.5).width + trail(head: 0.5).height)
+        // SwiftUI animates the head, so the lap plays out along the outline.
+        var animated = SaberTrail(outline: Rectangle(), head: 0, length: SaberBeam.length)
+        animated.animatableData = 0.5
+        #expect(animated.path(in: rect).boundingRect == trail(head: 0.5))
+    }
+
     @Test func iconButtonLabelShowsTitleOnlyWhenExpandedOnTheChosenSide() throws {
         func label(expanded: Bool, edge: HorizontalEdge) throws -> InspectableView<ViewType.HStack> {
             try ExpandingLabelStyle(isExpanded: expanded, titleEdge: edge, diameter: 18).inspect().hStack()
