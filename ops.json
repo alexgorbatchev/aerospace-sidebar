@@ -4,8 +4,8 @@
       "name": "Alex Gorbatchev",
       "email": "alex.gorbatchev@gmail.com"
     },
-    "timestamp": 1793160542,
-    "op": "SetStatus",
-    "status": "DONE"
+    "timestamp": 1793160545,
+    "op": "AddComment",
+    "text": "Fixed in a044d64: the panel accepts key status only for a mouse-down on it."
   }
 ]
