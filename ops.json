@@ -4,10 +4,8 @@
       "name": "Alex Gorbatchev",
       "email": "alex.gorbatchev@gmail.com"
     },
-    "timestamp": 1793146826,
-    "op": "CreateTask",
-    "title": "filter notifications",
-    "kind": "task",
-    "description": "similarly to priority, i want to be able to filter out some notifications"
+    "timestamp": 1793161786,
+    "op": "SetStatus",
+    "status": "DONE"
   }
 ]
