@@ -18,7 +18,7 @@ Swift package (`Package.swift`) driven by `justfile`:
 - Fill the list with distinct notifications that never stack, to check scrolling: `just fill-notifications [count]` (default 20)
 - Tests: `just test`
 - Coverage gate: `just coverage`
-- Re-prompt for Accessibility: `just reset-permissions`
+- Take the app off a privacy list so it asks again: `just reset-accessibility`, `just reset-full-disk-access`, or both with `just reset-permissions`
 - Replace the vendored sketchybar-app-font with a release: `just update-app-font <tag>` (downloads `sketchybar-app-font.ttf`, `icon_map.json` and `LICENSE`, writes the tag to `VERSION`)
 - Release archives into `dist/` (what the release workflow runs): `just release-archives <version>`. Set `AEROSPACE_SIDEBAR_SIGNING_IDENTITY=-` for an ad-hoc build like CI; note that it replaces `.build/AerospaceSidebar.app`, so run `just run` afterwards to restore the Developer ID build.
 

@@ -78,9 +78,16 @@ cli *args:
 cli-ai *args:
     AGENT=1 {{ cli }} {{ args }}
 
-# Clear the sidebar's Accessibility permission so the next launch asks again
-reset-permissions:
+# Take the sidebar off the Accessibility list, so it asks for the permission again
+reset-accessibility:
     tccutil reset Accessibility {{ bundle_id }}
+
+# Take the sidebar off the Full Disk Access list, so it asks for the permission again
+reset-full-disk-access:
+    tccutil reset SystemPolicyAllFiles {{ bundle_id }}
+
+# Take the sidebar off every privacy list it asks to be on, to walk through Settings › Permissions from scratch
+reset-permissions: reset-accessibility reset-full-disk-access
 
 # The alerts come from alerter (brew install vjeantet/tap/alerter); each alerter waits in the background
 # until its alert is answered or closed, or for alert_timeout seconds. They are sent as Script Editor, like
