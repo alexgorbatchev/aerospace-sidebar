@@ -113,7 +113,10 @@ struct SidebarPanelControllerTests {
         #expect(!panel.hidesOnDeactivate)
     }
 
-    @Test func panelAcceptsKeyboardFocus() {
+    /// Borderless windows refuse key status unless the panel overrides it; the panel accepts it only for a
+    /// click on it, so launching or closing Settings leaves keyboard focus with the frontmost app. Making
+    /// the panel key to assert `isKeyWindow` would take the user's keyboard focus from the frontmost app.
+    @Test func panelTakesKeyboardFocusOnlyWhenClicked() throws {
         let controller = SidebarPanelController.forTesting(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
             settings: settings,
@@ -121,11 +124,27 @@ struct SidebarPanelControllerTests {
             notificationCenter: NotificationCenter()
         )
         controller.pin()
+        let panel = try #require(controller.panel as? SidebarPanel)
+        func event(_ type: NSEvent.EventType, in window: NSWindow) -> NSEvent? {
+            NSEvent.mouseEvent(
+                with: type, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+            )
+        }
+        let other = TestPanel(contentRect: .zero, styleMask: [], backing: .buffered, defer: false)
+        other.orderFrontRegardless()
+        defer { other.orderOut(nil) }
 
-        // Borderless windows refuse key status unless the panel overrides it. Making the panel key
-        // to assert `isKeyWindow` would take the user's keyboard focus from the frontmost app.
-        #expect(controller.panel.canBecomeKey)
-        #expect(controller.panel.styleMask.contains(.nonactivatingPanel))
+        #expect(panel.styleMask.contains(.nonactivatingPanel))
+        // Launching: AppKit makes a window key with no event to handle.
+        #expect(!panel.canBecomeKey)
+        #expect(!panel.acceptsKeyStatus(during: nil))
+        for type in [NSEvent.EventType.leftMouseDown, .rightMouseDown, .otherMouseDown] {
+            #expect(panel.acceptsKeyStatus(during: event(type, in: panel)))
+        }
+        #expect(!panel.acceptsKeyStatus(during: event(.leftMouseUp, in: panel)))
+        // Closing Settings with a click: AppKit looks for the next key window.
+        #expect(!panel.acceptsKeyStatus(during: event(.leftMouseDown, in: other)))
     }
 
     @Test func rendersContentInsidePanel() throws {

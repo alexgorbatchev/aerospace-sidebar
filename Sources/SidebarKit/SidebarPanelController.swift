@@ -105,6 +105,18 @@ struct SidebarPanelContent: View {
 /// Borderless windows refuse key status by default, which blocks clicks from focusing
 /// the sidebar and keyboard input from reaching it. `.nonactivatingPanel` lets it become
 /// key without activating the app or stealing activation from the frontmost app.
-private final class SidebarPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
+///
+/// The panel takes key status only for a click on it. AppKit makes the first visible window that can
+/// become key the key window once the app finishes launching, and picks another when a key window closes,
+/// such as Settings; either would move the user's keyboard focus to the sidebar unasked.
+final class SidebarPanel: NSPanel {
+    override var canBecomeKey: Bool { acceptsKeyStatus(during: currentEvent) }
+
+    /// Whether `event`, the event being handled, is a click on the panel.
+    func acceptsKeyStatus(during event: NSEvent?) -> Bool {
+        guard let event else { return false }
+        return event.windowNumber == windowNumber && Self.clicks.contains(event.type)
+    }
+
+    private static let clicks: Set<NSEvent.EventType> = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
 }
