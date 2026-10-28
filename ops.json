@@ -4,10 +4,8 @@
       "name": "Alex Gorbatchev",
       "email": "alex.gorbatchev@gmail.com"
     },
-    "timestamp": 1793140549,
-    "op": "CreateTask",
-    "title": "click to close",
-    "kind": "task",
-    "description": "we should add a modifyer key to close notification with a click instead of taking any actions... alt'"
+    "timestamp": 1793160732,
+    "op": "SetStatus",
+    "status": "DONE"
   }
 ]
