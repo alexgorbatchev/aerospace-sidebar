@@ -37,6 +37,8 @@ struct SettingsFileTests {
         #expect(text.contains("[font]") && text.contains("name = \"Menlo\""))
         #expect(text.contains("apps_left_to_macos = [") && text.contains("\"zoom.us\""))
         #expect(text.contains("actionable_left_to_macos = false"))
+        // Without rules there is no `rules = []` above the tables.
+        #expect(!text.contains("rules"))
         #expect(try file.load() == settings)
     }
 

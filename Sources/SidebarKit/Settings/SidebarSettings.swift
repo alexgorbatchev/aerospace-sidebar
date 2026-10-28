@@ -167,6 +167,10 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
     /// Applied in order to every notification as it arrives; see `Rule`.
     public var rules: [Rule] = []
 
+    enum CodingKeys: String, CodingKey {
+        case sidebar, notifications, history, font, rules
+    }
+
     public init(
         sidebar: Sidebar = Sidebar(),
         notifications: Notifications = Notifications(),
@@ -188,5 +192,17 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
         history = try container.decodeIfPresent(History.self, forKey: .history) ?? History()
         font = try container.decodeIfPresent(Font.self, forKey: .font) ?? Font()
         rules = try container.decodeIfPresent([Rule].self, forKey: .rules) ?? []
+    }
+
+    /// Leaves out `rules` while there are none, which would otherwise read `rules = []` above every table.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(sidebar, forKey: .sidebar)
+        try container.encode(notifications, forKey: .notifications)
+        try container.encode(history, forKey: .history)
+        try container.encode(font, forKey: .font)
+        if !rules.isEmpty {
+            try container.encode(rules, forKey: .rules)
+        }
     }
 }

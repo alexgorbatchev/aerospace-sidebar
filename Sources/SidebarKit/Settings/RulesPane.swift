@@ -44,11 +44,11 @@ struct RulesPane: View {
             }
             SettingsHint(text: "Case-insensitive regular expressions, found anywhere.")
             SettingsRow(label: "Then") {
-                // Pop-up buttons do not open in a key window of an inactive app.
+                // Pop-up buttons do not open in a key window of an inactive app. AppKit draws the segments in
+                // the system font; the configured font does not reach them.
                 Picker("Then", selection: action) {
                     ForEach(SidebarSettings.Rule.Action.allCases, id: \.self) { action in
-                        // AppKit draws the segments; the font only applies when set on each label.
-                        Text(action.title).font(typography.font(.body)).tag(action)
+                        Text(action.title).tag(action)
                     }
                 }
                 .pickerStyle(.segmented)
