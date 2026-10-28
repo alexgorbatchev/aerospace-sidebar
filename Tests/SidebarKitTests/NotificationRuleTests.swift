@@ -190,6 +190,18 @@ struct RulesPaneTests {
         #expect(try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Source" }).input() == "b")
     }
 
+    /// Cancel empties the list under a selection while a field still has focus; the field then commits its
+    /// text, and the pane drops it instead of writing past the end of the list.
+    @Test func dropsEditsToARuleThatIsGone() {
+        let sut = pane(selection: 0)
+
+        sut.pattern(.source).wrappedValue = "late"
+        sut.action.wrappedValue = .hide
+
+        #expect(editor.draft.rules.isEmpty)
+        #expect(sut.pattern(.source).wrappedValue == "")
+    }
+
     @Test func showsWhatTheSelectedRuleMatches() {
         editor.draft.rules = [Rule(source: "slack"), Rule(title: "nothing"), Rule(title: "(")]
 

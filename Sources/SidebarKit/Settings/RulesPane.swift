@@ -103,20 +103,27 @@ struct RulesPane: View {
     }
 
     var selectedRule: SidebarSettings.Rule? {
-        selection.flatMap { editor.draft.rules.indices.contains($0) ? editor.draft.rules[$0] : nil }
+        selectedIndex.map { editor.draft.rules[$0] }
     }
 
-    private func pattern(_ field: SidebarSettings.Rule.Field) -> Binding<String> {
+    /// The selected rule's pattern for `field`. A field that loses focus commits its text, also after
+    /// Cancel has emptied the list under the selection, so writes go only to a rule that still exists.
+    func pattern(_ field: SidebarSettings.Rule.Field) -> Binding<String> {
         Binding(
             get: { selectedRule?[field] ?? "" },
-            set: { value in selection.map { editor.draft.rules[$0][field] = value } }
+            set: { value in selectedIndex.map { editor.draft.rules[$0][field] = value } }
         )
     }
 
-    private var action: Binding<SidebarSettings.Rule.Action> {
+    /// `selection`, while it names a rule in the draft.
+    private var selectedIndex: Int? {
+        selection.flatMap { editor.draft.rules.indices.contains($0) ? $0 : nil }
+    }
+
+    var action: Binding<SidebarSettings.Rule.Action> {
         Binding(
             get: { selectedRule?.action ?? SidebarSettings.Rule().action },
-            set: { value in selection.map { editor.draft.rules[$0].action = value } }
+            set: { value in selectedIndex.map { editor.draft.rules[$0].action = value } }
         )
     }
 
