@@ -193,9 +193,13 @@ struct NotificationCard: View {
     static let hoverScale: CGFloat = 1.02
     /// How far the dismiss button sticks out past the card's top-trailing corner.
     static let dismissOverhang: CGFloat = 5
-    /// App icons are drawn this much larger than the caption text beside them: their artwork fills 824
-    /// of the icon's 1024 points (Apple's macOS app icon grid), the rest is a transparent margin.
-    static let appIconScale: CGFloat = 1024.0 / 824.0
+    /// Space between the card's lines of text.
+    static let lineSpacing: CGFloat = 4
+    /// Space between the icon and the text beside it.
+    static let iconSpacing: CGFloat = 8
+    /// How much of the icon's square its artwork fills: 824 of an app icon's 1024 points (Apple's macOS
+    /// app icon grid), the rest is a transparent margin. Font icons are drawn this size to match.
+    static let iconArtwork: CGFloat = 824.0 / 1024.0
 
     @Environment(\.typography) private var typography
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -238,65 +242,15 @@ struct NotificationCard: View {
 
     private var card: some View {
         Button(action: activate) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 4) {
-                    if let icon = notification.icon {
-                        Text(icon.glyph)
-                            .font(.custom(AppIconFont.family, fixedSize: typography.size(.caption1)))
-                            .accessibilityLabel(icon.accessibilityLabel)
-                    } else if let appIcon = notification.bundleIdentifier.flatMap(appIcon) {
-                        let size = typography.size(.caption1) * Self.appIconScale
-                        Image(nsImage: appIcon)
-                            .resizable()
-                            .frame(width: size, height: size)
-                            // The source beside it names the app.
-                            .accessibilityHidden(true)
+            Group {
+                if hasIcon {
+                    // The icon spans the header and the line under it; every line sits beside it.
+                    LeadingIconLayout(spannedLines: 2, lineSpacing: Self.lineSpacing, iconSpacing: Self.iconSpacing) {
+                        icon
+                        content
                     }
-                    if let symbol = severitySymbol {
-                        Image(systemName: symbol)
-                            .foregroundStyle(accent ?? .secondary)
-                            .accessibilityLabel(notification.severity.rawValue)
-                    }
-                    if let symbol = actionSymbol {
-                        Image(systemName: symbol)
-                    }
-                    Text(notification.source.isEmpty ? "Notification" : notification.source)
-                    Text(notification.receivedAt, style: .time)
-                    if notification.occurrences > 1 {
-                        Text("×\(notification.occurrences)")
-                            .monospacedDigit()
-                            .padding(.horizontal, 5)
-                            .background(.quaternary, in: Capsule())
-                            .accessibilityLabel("Received \(notification.occurrences) times")
-                    }
-                }
-                .font(typography.font(.caption1))
-                .foregroundStyle(.secondary)
-                if !notification.title.isEmpty {
-                    Text(notification.title).font(typography.font(.body).bold())
-                }
-                if !notification.subtitle.isEmpty {
-                    Text(notification.subtitle).font(typography.font(.callout))
-                }
-                if !notification.body.isEmpty {
-                    Text(notification.body).font(typography.font(.callout)).lineLimit(8)
-                }
-                ForEach(notes, id: \.self) { note in
-                    Text(note)
-                        .font(typography.font(.caption2))
-                        .foregroundStyle(.secondary)
-                }
-                if let presentAlert {
-                    // Buttons inside the card's button take their own clicks. VoiceOver cannot reach them
-                    // there: it sees the card as one button, and pressing a nested button through
-                    // accessibility runs the card's action. It gets the choices as the card's actions.
-                    HStack(spacing: 6) {
-                        ForEach(presentAlert.choices, id: \.self) { choice in
-                            Button(choice, font: typography.font(.callout)) { choose(choice) }
-                        }
-                    }
-                    .padding(.top, 2)
-                    .accessibilityHidden(true)
+                } else {
+                    VStack(alignment: .leading, spacing: Self.lineSpacing) { content }
                 }
             }
             .padding(10)
@@ -330,6 +284,95 @@ struct NotificationCard: View {
             // The dismiss button shows only under the pointer.
             Button("Dismiss", action: dismiss)
         }
+    }
+
+    /// The icon of the app that posted the notification, unless the notification names an icon.
+    private var appImage: NSImage? {
+        notification.icon == nil ? notification.bundleIdentifier.flatMap(appIcon) : nil
+    }
+
+    private var hasIcon: Bool { notification.icon != nil || appImage != nil }
+
+    /// The icon the notification names, else the icon of the app that posted it, filling the square it
+    /// is given.
+    @ViewBuilder private var icon: some View {
+        if let icon = notification.icon {
+            // App icons carry their shadow; the glyph gets the same one.
+            Image(nsImage: AppIconFont.image(for: icon, artwork: Self.iconArtwork))
+                .resizable()
+                .modifier(IconShadow())
+                .accessibilityLabel(icon.accessibilityLabel)
+        } else if let appImage {
+            // The source in the header names the app.
+            Image(nsImage: appImage).resizable().accessibilityHidden(true)
+        }
+    }
+
+    /// The card's lines: header, texts, notes and the alert's choices.
+    @ViewBuilder private var content: some View {
+        header
+        ForEach(lines) { line in
+            Text(line.text).font(line.font).lineLimit(line.lineLimit)
+        }
+        ForEach(notes, id: \.self) { note in
+            Text(note)
+                .font(typography.font(.caption2))
+                .foregroundStyle(.secondary)
+        }
+        if let presentAlert {
+            // Buttons inside the card's button take their own clicks. VoiceOver cannot reach them
+            // there: it sees the card as one button, and pressing a nested button through
+            // accessibility runs the card's action. It gets the choices as the card's actions.
+            HStack(spacing: 6) {
+                ForEach(presentAlert.choices, id: \.self) { choice in
+                    Button(choice, font: typography.font(.callout)) { choose(choice) }
+                }
+            }
+            .padding(.top, 2)
+            .accessibilityHidden(true)
+        }
+    }
+
+    /// Who posted the notification, when, and how often.
+    private var header: some View {
+        HStack(spacing: 4) {
+            if let symbol = severitySymbol {
+                Image(systemName: symbol)
+                    .foregroundStyle(accent ?? .secondary)
+                    .accessibilityLabel(notification.severity.rawValue)
+            }
+            if let symbol = actionSymbol {
+                Image(systemName: symbol)
+            }
+            Text(notification.source.isEmpty ? "Notification" : notification.source)
+            Text(notification.receivedAt, style: .time)
+            if notification.occurrences > 1 {
+                Text("×\(notification.occurrences)")
+                    .monospacedDigit()
+                    .padding(.horizontal, 5)
+                    .background(.quaternary, in: Capsule())
+                    .accessibilityLabel("Received \(notification.occurrences) times")
+            }
+        }
+        .font(typography.font(.caption1))
+        .foregroundStyle(.secondary)
+    }
+
+    /// One of the card's texts under the header.
+    struct Line: Identifiable {
+        let id: String
+        let text: String
+        let font: Font
+        let lineLimit: Int?
+    }
+
+    /// The title, subtitle and body the notification has, in that order.
+    var lines: [Line] {
+        [
+            Line(id: "title", text: notification.title, font: typography.font(.body).bold(), lineLimit: nil),
+            Line(id: "subtitle", text: notification.subtitle, font: typography.font(.callout), lineLimit: nil),
+            Line(id: "body", text: notification.body, font: typography.font(.callout), lineLimit: 8),
+        ].filter { !$0.text.isEmpty }
     }
 
     /// What a click does, and that Option-click only dismisses, unless a click does nothing else.

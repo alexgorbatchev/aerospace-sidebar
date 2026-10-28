@@ -1,5 +1,5 @@
+import AppKit
 import CoreText
-import Foundation
 import os
 
 /// App icons from sketchybar-app-font (github.com/kvndrsslr/sketchybar-app-font), which draws each icon as a
@@ -52,6 +52,49 @@ public struct AppIconFont: Sendable {
     public func icon(for value: String) -> SidebarNotification.Icon? {
         let id = Self.id(value.trimmingCharacters(in: .whitespaces).lowercased())
         return ids.contains(id) ? SidebarNotification.Icon(id: id) : nil
+    }
+
+    /// `icon` as a template image whose glyph is centered on its ink, set at `artwork` of the image's height
+    /// as its font size, which the vendored glyphs' ink fills at most. Set as text, the glyph would sit off-center: a ligature's advance
+    /// is wider than its ink (142 points for a 100-point `:slack:`), and some glyphs are narrower or shorter
+    /// than the em. Drawn on demand, so it stays sharp at any size; nothing is drawn while the font is not
+    /// registered.
+    @MainActor
+    static func image(for icon: SidebarNotification.Icon, artwork: CGFloat) -> NSImage {
+        let key = "\(icon.id)@\(artwork)"
+        if let cached = images[key] { return cached }
+        let image = NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in
+            guard let font = NSFont(name: family, size: rect.height * artwork),
+                  let context = NSGraphicsContext.current?.cgContext else { return false }
+            let line = CTLineCreateWithAttributedString(NSAttributedString(string: icon.glyph, attributes: [.font: font]))
+            let ink = inkBounds(of: line, in: font)
+            context.textPosition = CGPoint(x: rect.midX - ink.midX, y: rect.midY - ink.midY)
+            CTLineDraw(line, context)
+            return true
+        }
+        image.isTemplate = true
+        images[key] = image
+        return image
+    }
+
+    @MainActor private static var images: [String: NSImage] = [:]
+
+    /// The bounds of the outlines `line` draws. `CTLineGetImageBounds` uses the font's glyph boxes, which
+    /// can be looser than the outline (`:mail:`'s reaches down to the baseline, 12.5 points below its ink).
+    private static func inkBounds(of line: CTLine, in font: NSFont) -> CGRect {
+        var bounds = CGRect.null
+        for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
+            let count = CTRunGetGlyphCount(run)
+            var glyphs = [CGGlyph](repeating: 0, count: count)
+            var positions = [CGPoint](repeating: .zero, count: count)
+            CTRunGetGlyphs(run, CFRange(), &glyphs)
+            CTRunGetPositions(run, CFRange(), &positions)
+            for (glyph, position) in zip(glyphs, positions) {
+                guard let outline = CTFontCreatePathForGlyph(font, glyph, nil) else { continue }
+                bounds = bounds.union(outline.boundingBoxOfPath.offsetBy(dx: position.x, dy: position.y))
+            }
+        }
+        return bounds
     }
 
     private static func id(_ name: String) -> String {

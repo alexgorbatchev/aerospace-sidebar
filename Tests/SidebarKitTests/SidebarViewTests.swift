@@ -136,14 +136,14 @@ struct SidebarViewTests {
     @Test func drawsIconInTheAppIconFontLabeledWithItsApp() throws {
         model.add(SidebarNotification(source: "cli", title: "Browse", icon: AppIconFont.vendored.icon(for: "google_chrome")))
 
-        let icon = try view().inspect().find(viewWithAccessibilityLabel: "Google Chrome").text()
+        let icon = try view().inspect().find(viewWithAccessibilityLabel: "Google Chrome").image()
 
-        #expect(try icon.string() == ":google_chrome:")
-        #expect(try icon.attributes().font() == .custom(AppIconFont.family, fixedSize: 10))
+        let image = try icon.actualImage().nsImage()
+        #expect(image === AppIconFont.image(for: .init(id: "google_chrome"), artwork: NotificationCard.iconArtwork))
+        #expect(image.isTemplate)
     }
 
-    /// A notification from an app shows the app's icon at the size of the caption beside it, leaving the
-    /// app's name to the source text.
+    /// A notification from an app shows the app's icon, leaving the app's name to the source text.
     @Test func drawsTheIconOfTheAppThatPosted() throws {
         let appIcon = NSImage(size: NSSize(width: 64, height: 64))
         model.add(SidebarNotification(source: "Slack", title: "Ping", bundleIdentifier: "com.tinyspeck.slackmacgap"))
@@ -153,9 +153,6 @@ struct SidebarViewTests {
             .inspect()
         let image = try sut.find(ViewType.Image.self) { try $0.actualImage().nsImage() === appIcon }
 
-        let size = 10 * NotificationCard.appIconScale
-        #expect(try image.fixedWidth() == size)
-        #expect(try image.fixedHeight() == size)
         #expect(try image.accessibilityHidden())
         #expect(throws: Never.self) { try sut.find(text: "Slack") }
     }
