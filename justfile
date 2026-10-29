@@ -100,7 +100,7 @@ test-notifications alert_timeout="600":
     {{ cli }} notification push --severity low --title "Low severity" --body "Dimmed and listed below everything else."
     {{ cli }} notification push --icon ghostty --title "CLI notification" --body "Pushed with aerospace-sidebar notification push, with the Ghostty icon."
     {{ cli }} notification push --icon no_such_app --title "Unknown icon" --body "Notes an icon id the font does not have under the text."
-    {{ cli }} notification push --title "Click to run a command" --body "Runs 'say clicked' in this directory." --run "say clicked"
+    {{ cli }} notification push --title "Click to run a command" --body "Runs 'say clicked' in this directory. The link https://github.com/alexgorbatchev/aerospace-sidebar opens on its own." --run "say clicked"
     {{ cli }} notification push --title "Click to open a link" --subtitle "Opens the AeroSpace guide" --open "https://nikitabobko.github.io/AeroSpace/guide"
     open -g "$({{ cli }} notification url --icon safari --title 'URL notification' --body 'Delivered through the aerospace-sidebar:// URL scheme, with the Safari icon.')"
     {{ cli }} notification push --severity high --title "High severity" --body "Orange, listed above normal notifications."
