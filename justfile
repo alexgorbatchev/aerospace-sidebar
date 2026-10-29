@@ -1,5 +1,9 @@
 app := ".build/AerospaceSidebar.app"
 cli := "bin/aerospace-sidebar"
+# Dev app that posts notifications with actions through UNUserNotificationCenter (Tools/NotificationSampler)
+sampler_app := ".build/NotificationSampler.app"
+# The sampler's stderr: launched through open, it has no terminal to report failures to
+sampler_log := ".build/NotificationSampler.log"
 bundle_id := "com.alexgorbatchev.aerospace-sidebar"
 # Vendored sketchybar-app-font release (CC0), copied into the bundle's Resources
 app_font := "Resources/sketchybar-app-font"
@@ -26,6 +30,14 @@ bundle version="":
     {{ if version != "" { "plutil -replace CFBundleShortVersionString -string " + quote(version) + " " + app + "/Contents/Info.plist" } else { "true" } }}
     codesign --force --sign "{{ signing_identity }}" {{ app }}
     cp "$(swift build -c release --show-bin-path)/aerospace-sidebar" {{ cli }}
+
+# Build the Notification Sampler dev app into .build/NotificationSampler.app, signed like the sidebar
+sampler:
+    rm -rf {{ sampler_app }}
+    mkdir -p {{ sampler_app }}/Contents/MacOS
+    swiftc -swift-version 6 -o {{ sampler_app }}/Contents/MacOS/NotificationSampler Tools/NotificationSampler/main.swift
+    cp Tools/NotificationSampler/Info.plist {{ sampler_app }}/Contents/Info.plist
+    codesign --force --sign "{{ signing_identity }}" {{ sampler_app }}
 
 # Rebuild and (re)launch the sidebar, quitting NotifyMeHow so only one app hides banners
 run: stop quit-notifymehow bundle
@@ -94,8 +106,15 @@ reset-permissions: reset-accessibility reset-full-disk-access
 # the osascript notification, so keep Script Editor out of apps_left_to_macos. A Reply alert whose field is
 # still open when alerter exits can never be closed: answer or close it before alert_timeout, or run
 # killall NotificationCenter.
-# Push test notifications through the CLI, the URL scheme and macOS itself, plus alerts with buttons
-test-notifications alert_timeout="600":
+# The Notification Sampler (just sampler) posts through UNUserNotificationCenter with actions from the categories
+# it declares (alerter posts through NSUserNotification and declares none) and pushes every response it gets
+# through the CLI. It quits once its notifications are answered or closed, or after alert_timeout seconds,
+# removing the rest. Its first run makes macOS ask whether "Notification Sampler" may post notifications. Its
+# notifications are banners by default; set its style to Alerts in System Settings › Notifications to see the
+# persistent variant. open leaves it no terminal, so its errors and the CLI's go to .build/NotificationSampler.log
+# (open appends, so the recipe deletes the previous run's log first).
+# Push test notifications through the CLI, the URL scheme and macOS itself, plus alerts and the sampler's actions
+test-notifications alert_timeout="600": sampler
     @command -v alerter >/dev/null || { echo "alerter not found; install it with: brew install vjeantet/tap/alerter" >&2; exit 1; }
     {{ cli }} notification push --severity low --title "Low severity" --body "Dimmed and listed below everything else."
     {{ cli }} notification push --icon ghostty --title "CLI notification" --body "Pushed with aerospace-sidebar notification push, with the Ghostty icon."
@@ -109,6 +128,8 @@ test-notifications alert_timeout="600":
     alerter --sender com.apple.ScriptEditor2 --title "Alert with a choice" --subtitle "Posted by alerter" --message "Allow, and Deny as its close button." --actions Allow --close-label Deny --timeout {{ alert_timeout }} >/dev/null 2>&1 &
     alerter --sender com.apple.ScriptEditor2 --title "Alert with a menu" --subtitle "Posted by alerter" --message "Three actions under a When? menu." --actions "Now,Later today,Tomorrow" --dropdown-label "When?" --timeout {{ alert_timeout }} >/dev/null 2>&1 &
     alerter --sender com.apple.ScriptEditor2 --title "Alert with a reply" --subtitle "Posted by alerter" --message "A Reply button that opens a text field." --reply "Type a reply" --timeout {{ alert_timeout }} >/dev/null 2>&1 &
+    rm -f {{ sampler_log }}
+    open -g -n --stderr {{ sampler_log }} {{ sampler_app }} --args {{ quote(justfile_directory() / cli) }} {{ alert_timeout }} choices reply
 
 # Push count distinct notifications of mixed severity and length, enough to make the list scroll; none stack
 fill-notifications count="20":

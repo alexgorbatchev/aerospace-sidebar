@@ -30,6 +30,7 @@ struct NotificationRuleTests {
         ("[[rules]]\naction = \"hide\"\n", "rules[0].action: a rule needs at least one pattern"),
         ("[[rules]]\nsource = \"Slack\"\naction = \"low\"\n\n[[rules]]\ntitle = \"(\"\naction = \"hide\"\n", "rules[1].title: invalid regular expression"),
         ("[[rules]]\nsource = \"Slack\"\n", "rules[0]"),
+        ("[[rules]]\nsource = \"Slack\"\naction = \"low\"\n\n[[rules]]\nsource = \"Mail\"\nbdy = \"x\"\naction = \"hide\"\n", "rules[1]: unknown key bdy; expected source, title, subtitle, body, or action"),
     ])
     func rejectsUnusableRules(toml: String, fragment: String) throws {
         let directory = try TemporaryDirectory()

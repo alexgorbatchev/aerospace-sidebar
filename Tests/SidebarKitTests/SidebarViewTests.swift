@@ -86,7 +86,7 @@ struct SidebarViewTests {
     @Test func helpMentionsOptionClickOnlyWhenAClickDoesMore() throws {
         model.add(SidebarNotification(source: "cli", title: "Plain"))
         model.add(SidebarNotification(source: "macOS", title: "Privacy", nativeChoices: .init(identifier: "a", choices: ["Allow…"])))
-        model.presentChoices = ["a"]
+        model.interception = .active
 
         let plain = try #require(model.notifications.first { $0.title == "Plain" })
         let alert = try #require(model.notifications.first { $0.title == "Privacy" })
@@ -235,15 +235,20 @@ struct SidebarViewTests {
         #expect(throws: Never.self) { try view().inspect().find(text: "Shown by macOS for its buttons") }
     }
 
-    /// A card offers its alert's choices only while the alert exists.
-    @Test func offersTheChoicesOfAPresentAlert() throws {
+    /// A card offers its notification's choices while notifications are intercepted, until the notification is
+    /// known to have lost them.
+    @Test func offersTheChoicesOfANotificationThatHasThem() throws {
         let alerts = RecordingNativeNotifications()
         model.nativeNotifications = alerts
         model.add(SidebarNotification(source: "macOS", title: "Privacy & Security", nativeChoices: .init(identifier: "a", choices: ["Allow…", "Later"])))
 
         #expect(throws: (any Error).self) { try view().inspect().find(button: "Allow…") }
 
-        model.presentChoices = ["a"]
+        model.interception = .active
+        model.unavailableChoices = ["a"]
+        #expect(throws: (any Error).self) { try view().inspect().find(button: "Allow…") }
+
+        model.unavailableChoices = []
         // The card's label holds the buttons the pointer clicks; its accessibility actions repeat them.
         let label = try view().inspect().find(NotificationCard.self).find(ViewType.Button.self).labelView()
         #expect(try label.find(button: "Later").labelView().text().attributes().font() == Typography(SidebarSettings.Font()).font(.callout))
@@ -254,6 +259,20 @@ struct SidebarViewTests {
         #expect(model.notifications.isEmpty)
     }
 
+    /// A card the notification database gave its notification's choices shows them in place of the note that macOS
+    /// shows the notification for its buttons.
+    @Test func showsChoicesTheDatabaseNamedInPlaceOfTheMacOSNote() throws {
+        model.interception = .active
+        model.add(SidebarNotification(source: "alerter", title: "When?", shownByMacOS: true, nativeIdentifiers: ["menu"]))
+        #expect(throws: Never.self) { try view().inspect().find(text: "Shown by macOS for its buttons") }
+
+        model.offer(["Now", "Later today"], forNotification: "menu")
+
+        let sut = try view().inspect()
+        #expect(throws: (any Error).self) { try sut.find(text: "Shown by macOS for its buttons") }
+        #expect(throws: Never.self) { try sut.find(NotificationCard.self).find(ViewType.Button.self).labelView().find(button: "Later today") }
+    }
+
     /// While a reply is typed the card is no button, so that VoiceOver reaches the field and its send button;
     /// VoiceOver opens the field with the card's action for the choice.
     @Test func turnsIntoAComposerWhileAReplyIsTyped() throws {
@@ -261,7 +280,7 @@ struct SidebarViewTests {
         let alerts = RecordingNativeNotifications()
         model.nativeNotifications = alerts
         model.add(SidebarNotification(source: "Slack", title: "Ada", nativeChoices: .init(identifier: "r", choices: [reply, "Later"]), nativeIdentifiers: ["r"]))
-        model.presentChoices = ["r"]
+        model.interception = .active
         let notification = model.notifications[0]
         let draft = ReplyDraft()
 
@@ -288,7 +307,7 @@ struct SidebarViewTests {
         let alerts = RecordingNativeNotifications()
         model.nativeNotifications = alerts
         model.add(SidebarNotification(source: "Slack", title: "Ada", nativeChoices: .init(identifier: "r", choices: [reply]), nativeIdentifiers: ["r"]))
-        model.presentChoices = ["r"]
+        model.interception = .active
         let draft = ReplyDraft()
         draft.open(reply)
 
@@ -309,7 +328,7 @@ struct SidebarViewTests {
         for _ in 0..<2 {
             model.add(SidebarNotification(source: "Calendar", title: "Standup", severity: .high, shownByMacOS: true))
         }
-        model.presentChoices = ["a"]
+        model.interception = .active
         let privacy = try #require(model.notifications.first { $0.title == "Privacy & Security" })
         let standup = try #require(model.notifications.first { $0.title == "Standup" })
 

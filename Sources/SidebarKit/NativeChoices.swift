@@ -32,18 +32,33 @@ public struct NativeChoice: Codable, Equatable, Hashable, Sendable {
 
     /// `UNNotificationActionOptions.destructive`.
     static let destructiveOption = 1 << 1
+    /// Marks an item of an NSUserNotification's actions menu in the actions its record carries (`scat`).
+    static let menuItemOption = 1 << 6
+    /// The action usernoted records for an NSUserNotification's action button, which heads its actions menu
+    /// when it has one.
+    static let actionButtonIdentifier = "ACTION"
 
     /// The choices a category's declared actions offer, in order, as usernoted stores them: dictionaries with
     /// the title `ti`, options `op`, and for text input `st` 1 with the placeholder `tip` and send title `tia`.
+    /// An NSUserNotification's record carries its actions the same way, its actions menu's items marked with
+    /// `menuItemOption`; the menu's header, the action button without that option, only closes the notification
+    /// unanswered, so it is no choice. Neither is an action without a title, which names no accessibility action.
     static func choices(declaredBy actions: [[String: Any]]) -> [NativeChoice] {
-        actions.compactMap { action in
-            guard let title = action["ti"] as? String else { return nil }
+        let hasMenu = actions.contains { options(of: $0) & menuItemOption != 0 }
+        return actions.compactMap { action in
+            let options = options(of: action)
+            guard let title = action["ti"] as? String, !title.isEmpty,
+                  !(hasMenu && action["id"] as? String == actionButtonIdentifier && options & menuItemOption == 0)
+            else { return nil }
             let textInput = (action["st"] as? NSNumber)?.intValue == 1
                 ? TextInput(placeholder: action["tip"] as? String ?? "", sendTitle: action["tia"] as? String ?? "")
                 : nil
-            let options = (action["op"] as? NSNumber)?.intValue ?? 0
             return NativeChoice(title: title, textInput: textInput, isDestructive: options & destructiveOption != 0)
         }
+    }
+
+    private static func options(of action: [String: Any]) -> Int {
+        (action["op"] as? NSNumber)?.intValue ?? 0
     }
 }
 
@@ -116,6 +131,17 @@ extension NotificationDatabase {
             guard let identifier = category["id"] as? String else { continue }
             choices[identifier] = NativeChoice.choices(declaredBy: category["acts"] as? [[String: Any]] ?? [])
         }
+        return choices
+    }
+
+    /// The choices a delivered notification offers, as its record names them: the actions an NSUserNotification
+    /// carries itself, else those of the category its app declared for it, read now rather than from a cache,
+    /// since an app declares its categories when it launches, just before it posts. Nil when it offers none.
+    public func choices(ofNotification notification: DeliveredNotification) throws(Failure) -> [NativeChoice]? {
+        if let own = notification.ownChoices { return own }
+        guard let category = notification.category,
+              let choices = try declaredChoices(ofApp: notification.bundleIdentifier)[category], !choices.isEmpty
+        else { return nil }
         return choices
     }
 }

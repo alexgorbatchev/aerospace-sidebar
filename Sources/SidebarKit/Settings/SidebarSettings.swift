@@ -24,6 +24,9 @@ import Foundation
 /// source = "^Slack$"
 /// action = "high"
 /// ```
+///
+/// Missing keys take their defaults; a key or table outside this schema makes the file invalid
+/// (`Decoder.strictContainer(keyedBy:)`).
 public struct SidebarSettings: Codable, Equatable, Sendable {
     /// The strip the sidebar occupies on the main display. AeroSpace must reserve the same strip with a
     /// `monitor.main` outer gap on `side`; Settings › AeroSpace writes it.
@@ -41,13 +44,17 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
         /// Width in points, excluding AeroSpace's regular outer gap between the sidebar and tiled windows.
         public var width = defaultWidth
 
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case side, width
+        }
+
         public init(side: Side = .right, width: Int = defaultWidth) {
             self.side = side
             self.width = width
         }
 
         public init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let container = try decoder.strictContainer(keyedBy: CodingKeys.self)
             side = try container.decodeIfPresent(Side.self, forKey: .side) ?? .right
             width = try container.decodeIfPresent(Int.self, forKey: .width) ?? Self.defaultWidth
             guard Self.widthRange.contains(width) else {
@@ -68,7 +75,7 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
         /// Apps whose notifications macOS keeps presenting; matched case-insensitively by app name.
         public var appsLeftToMacOS: [String] = []
 
-        enum CodingKeys: String, CodingKey {
+        enum CodingKeys: String, CodingKey, CaseIterable {
             case replaceSystem = "replace_system"
             case actionableLeftToMacOS = "actionable_left_to_macos"
             case appsLeftToMacOS = "apps_left_to_macos"
@@ -81,7 +88,7 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
         }
 
         public init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let container = try decoder.strictContainer(keyedBy: CodingKeys.self)
             replaceSystem = try container.decodeIfPresent(Bool.self, forKey: .replaceSystem) ?? true
             actionableLeftToMacOS = try container.decodeIfPresent(Bool.self, forKey: .actionableLeftToMacOS) ?? true
             appsLeftToMacOS = try container.decodeIfPresent([String].self, forKey: .appsLeftToMacOS) ?? []
@@ -100,7 +107,7 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
         public var retentionHours = 24
         public var maxCount = 200
 
-        enum CodingKeys: String, CodingKey {
+        enum CodingKeys: String, CodingKey, CaseIterable {
             case retentionHours = "retention_hours"
             case maxCount = "max_count"
         }
@@ -111,7 +118,7 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
         }
 
         public init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let container = try decoder.strictContainer(keyedBy: CodingKeys.self)
             retentionHours = try container.decodeIfPresent(Int.self, forKey: .retentionHours) ?? 24
             maxCount = try container.decodeIfPresent(Int.self, forKey: .maxCount) ?? 200
             guard Self.retentionRange.contains(retentionHours) else {
@@ -142,13 +149,17 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
         /// Body text size in points; every other text size scales with it.
         public var size = defaultSize
 
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case name, size
+        }
+
         public init(name: String = "", size: Double = defaultSize) {
             self.name = name
             self.size = size
         }
 
         public init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let container = try decoder.strictContainer(keyedBy: CodingKeys.self)
             name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
             size = try container.decodeIfPresent(Double.self, forKey: .size) ?? Self.defaultSize
             guard Self.sizeRange.contains(size) else {
@@ -167,7 +178,7 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
     /// Applied in order to every notification as it arrives; see `Rule`.
     public var rules: [Rule] = []
 
-    enum CodingKeys: String, CodingKey {
+    enum CodingKeys: String, CodingKey, CaseIterable {
         case sidebar, notifications, history, font, rules
     }
 
@@ -186,7 +197,7 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
     }
 
     public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let container = try decoder.strictContainer(keyedBy: CodingKeys.self)
         sidebar = try container.decodeIfPresent(Sidebar.self, forKey: .sidebar) ?? Sidebar()
         notifications = try container.decodeIfPresent(Notifications.self, forKey: .notifications) ?? Notifications()
         history = try container.decodeIfPresent(History.self, forKey: .history) ?? History()
@@ -204,5 +215,40 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
         if !rules.isEmpty {
             try container.encode(rules, forKey: .rules)
         }
+    }
+}
+
+extension Decoder {
+    /// A keyed container for a settings table that holds only keys of `Key`. Decoding reads only the keys it
+    /// asks for, so a misspelled key would otherwise be ignored: `replace_sytem = false` would leave banners
+    /// replaced, and a rule with `titel = "deploy"` would match every notification from its source.
+    /// - Throws: `DecodingError.dataCorrupted` at the table's coding path, naming the unknown keys and the
+    ///   expected ones.
+    func strictContainer<Key: CodingKey & CaseIterable>(keyedBy type: Key.Type) throws -> KeyedDecodingContainer<Key> {
+        let unknown = try container(keyedBy: AnyCodingKey.self).allKeys.map(\.stringValue).filter { Key(stringValue: $0) == nil }
+        guard unknown.isEmpty else {
+            let expected = Key.allCases.map(\.stringValue).formatted(.list(type: .or))
+            throw DecodingError.dataCorrupted(DecodingError.Context(
+                codingPath: codingPath,
+                debugDescription: "unknown \(unknown.count == 1 ? "key" : "keys") \(unknown.sorted().formatted(.list(type: .and))); expected \(expected)"
+            ))
+        }
+        return try container(keyedBy: type)
+    }
+}
+
+/// A key of any name. A container's `allKeys` lists only the keys its key type can be made from, so listing
+/// every key a table holds takes a type that accepts every name.
+private struct AnyCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int? = nil
+
+    init(stringValue: String) {
+        self.stringValue = stringValue
+    }
+
+    /// Tables have only string keys.
+    init?(intValue: Int) {
+        nil
     }
 }

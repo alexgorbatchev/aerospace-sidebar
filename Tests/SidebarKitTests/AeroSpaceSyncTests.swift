@@ -351,17 +351,19 @@ struct AeroSpaceSyncTests {
         #expect(sut.configURL == nil)
     }
 
-    @Test func copyToPasteboardWritesString() {
-        let pasteboard = NSPasteboard.general
-        let saved = pasteboard.string(forType: .string)
-        defer {
-            pasteboard.clearContents()
-            if let saved { pasteboard.setString(saved, forType: .string) }
-        }
+    /// Copy Settings replaces whatever the pasteboard held with the snippet. The test copies to a private
+    /// pasteboard, never the user's clipboard.
+    @Test func copiesSnippetToThePasteboardReplacingItsContents() {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        pasteboard.setData(Data([1, 2, 3]), forType: .png)
+        let sut = sync(copy: AeroSpaceSync.copying(to: pasteboard))
 
-        AeroSpaceSync.copyToPasteboard("snippet-\(getpid())")
+        sut.copySnippet()
 
-        #expect(pasteboard.string(forType: .string) == "snippet-\(getpid())")
+        #expect(pasteboard.data(forType: .png) == nil)
+        #expect(pasteboard.string(forType: .string) == AeroSpaceConfigEditor.snippet(for: sidebar))
     }
 }
 

@@ -109,7 +109,7 @@ struct SidebarView: View {
         .animation(Self.motion, value: model.notifications)
         .animation(Self.motion, value: model.interception)
         .animation(Self.motion, value: asksForFullDiskAccess)
-        .animation(Self.motion, value: model.presentChoices)
+        .animation(Self.motion, value: model.unavailableChoices)
     }
 
     /// The sidebar's screen edge, where the top buttons and the scroll indicator sit.
@@ -169,7 +169,7 @@ struct SidebarView: View {
 
     private var statusMessage: String? {
         switch model.interception {
-        case .starting, .active: nil
+        case .starting, .active, .stopped: nil
         case .disabled: "macOS notifications are left to macOS (see Settings)."
         case .needsAccessibility: "Grant Accessibility access to show macOS notifications here."
         case .notificationCenterUnavailable: "macOS notifications cannot be read right now."
@@ -245,7 +245,7 @@ struct EdgeFadeMask: View {
 
 struct NotificationCard: View {
     let notification: SidebarNotification
-    /// The hidden macOS notification the card stands for, while it exists; the card offers its choices.
+    /// The macOS notification whose choices the card offers (`SidebarModel.offeredChoices(of:)`).
     let offeredChoices: SidebarNotification.NativeChoices?
     /// One of its choices is being performed; the others wait for it.
     let isAnswering: Bool

@@ -42,7 +42,7 @@ public protocol AccessibilityPlatform {
 /// which would otherwise move the panel's window back on screen, and run every `historyStepInterval`, so
 /// that the panel is off-screen before it is seen; sweeping resumes once the panel is closed. A panel that
 /// opens after its request gave up is handed back to the opener by the next sweep, which would otherwise move
-/// it on screen and leave it open.
+/// it on screen and leave it open, unless the user's recent input says the user opened it.
 @MainActor
 public final class NotificationCenterMonitor {
     nonisolated public static let notificationCenterBundleID = "com.apple.notificationcenterui"
@@ -81,6 +81,7 @@ public final class NotificationCenterMonitor {
     ///     taken away.
     ///   - initialReattachDelay: How long to wait before the first attempt to attach again after
     ///     NotificationCenter exits or cannot be attached to; the delay doubles up to `maxReattachDelay`.
+    ///   - userInput: The user's recent input, which tells a history panel the user opened from a late one.
     public init(
         platform: any AccessibilityPlatform = SystemAccessibility(),
         interceptor: SystemNotificationInterceptor,
@@ -88,11 +89,12 @@ public final class NotificationCenterMonitor {
         permissionPollInterval: TimeInterval = 2,
         initialReattachDelay: TimeInterval = 0.5,
         now: @escaping () -> Date = Date.init,
+        userInput: RecentUserInput = .system,
         onStatus: @escaping @MainActor (InterceptionStatus) -> Void
     ) {
         self.platform = platform
         self.interceptor = interceptor
-        self.historyOpener = NotificationHistoryOpener(now: now)
+        self.historyOpener = NotificationHistoryOpener(now: now, input: userInput)
         self.workspaceCenter = workspaceCenter
         self.permissionPollInterval = permissionPollInterval
         self.initialReattachDelay = initialReattachDelay
@@ -144,8 +146,11 @@ public final class NotificationCenterMonitor {
         }
     }
 
-    /// Stops observing and moves any hidden NotificationCenter window back on-screen.
+    /// Stops observing and moves any hidden NotificationCenter window back on-screen. A monitor that was running
+    /// reports `.stopped`, so cards stop offering choices nothing could perform until it starts again; one that
+    /// was not leaves the status alone, such as `.disabled` while macOS notifications are left to macOS.
     public func stop() {
+        let wasRunning = isRunning
         isRunning = false
         isWaitingForPermission = false
         permissionTimer?.invalidate()
@@ -162,7 +167,9 @@ public final class NotificationCenterMonitor {
             interceptor.restore(platform.windows(ofProcess: attachedPID))
         }
         attachedPID = nil
-        interceptor.detach()
+        if wasRunning {
+            onStatus(.stopped)
+        }
     }
 
     /// Sweeps again after a change outside NotificationCenter that moves where its windows belong, such
@@ -245,7 +252,6 @@ public final class NotificationCenterMonitor {
         attachedPID = nil
         stopSweeping()
         stopOpeningHistory()
-        interceptor.detach()
     }
 
     /// Lets go of NotificationCenter, whose windows can no longer be read or moved, until
@@ -327,8 +333,8 @@ public final class NotificationCenterMonitor {
 extension NotificationCenterMonitor: NativeNotificationControlling {
     /// Performs `action` on the first of `identifiers` where NotificationCenter shows or hides it, else in the
     /// history (`NotificationHistoryOpener`). History requests run one at a time; one started meanwhile waits its
-    /// turn. A choice the history no longer holds is forgotten (`SystemNotificationInterceptor.forgetChoices(of:)`),
-    /// so its card stops offering it.
+    /// turn. A notification whose choice the history no longer holds is gone
+    /// (`SystemNotificationInterceptor.choicesGone(of:)`), so its card stops offering its choices.
     public func perform(
         _ action: NativeAction,
         on identifiers: [String],
@@ -343,7 +349,7 @@ extension NotificationCenterMonitor: NativeNotificationControlling {
         }
         let began = historyOpener.start(action, on: identifiers, from: source) { [weak self] outcome in
             if outcome == .absent, action != .open {
-                identifiers.forEach { self?.interceptor.forgetChoices(of: $0) }
+                identifiers.forEach { self?.interceptor.choicesGone(of: $0) }
             }
             completion(outcome == .performed)
         }

@@ -28,7 +28,7 @@ public final class AeroSpaceSync {
     public init(
         setup: AeroSpaceSetup,
         sidebar: @escaping @MainActor () -> SidebarSettings.Sidebar,
-        copy: @escaping @MainActor (String) -> Void = AeroSpaceSync.copyToPasteboard
+        copy: @escaping @MainActor (String) -> Void = AeroSpaceSync.copying(to: .general)
     ) {
         self.setup = setup
         self.sidebar = sidebar
@@ -147,9 +147,13 @@ public final class AeroSpaceSync {
         message = "Copied the AeroSpace settings. Put the block in your config's [gaps] table, add the rule, and run `aerospace reload-config`."
     }
 
-    public static func copyToPasteboard(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+    /// Copies text to `pasteboard`, replacing what it holds. Settings copies to the general pasteboard;
+    /// tests pass a private one, which leaves the user's clipboard alone.
+    public static func copying(to pasteboard: NSPasteboard) -> @MainActor (String) -> Void {
+        { text in
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+        }
     }
 
     static func describe(_ error: AeroSpaceSetup.SetupError) -> String {

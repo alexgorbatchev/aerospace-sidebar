@@ -10,6 +10,10 @@ public struct DeliveredNotification: Equatable, Sendable {
     public let subtitle: String
     public let body: String
     public let deliveredAt: Date
+    /// The category its app declared for it (`UNNotificationCategory`), whose actions it offers.
+    public var category: String?
+    /// The actions an NSUserNotification carries itself, without its actions menu's header; nil without any.
+    public var ownChoices: [NativeChoice]?
 }
 
 /// Reads the database in which macOS keeps every delivered notification
@@ -22,7 +26,9 @@ public struct DeliveredNotification: Equatable, Sendable {
 /// - `app`: `app_id`, `identifier` (the bundle identifier).
 /// - `record`: `rec_id`, `app_id`, `uuid` (16 bytes), `delivered_date` (seconds since 2001, empty or in
 ///   the future for notifications scheduled but not yet delivered, which usernoted fills in when it delivers
-///   them), and `data`, a binary property list whose `req` dictionary holds `titl`, `subt` and `body`.
+///   them), and `data`, a binary property list whose `req` dictionary holds `titl`, `subt` and `body`, and
+///   either the category the app declared for the notification (`cate`) or, for an NSUserNotification, its
+///   own actions (`scat`, `{id: "LEGACY", acts: [...]}`, shaped like a category).
 public struct NotificationDatabase: Sendable {
     public enum Failure: Error, Equatable, CustomStringConvertible {
         /// macOS refused access because Full Disk Access is not granted; SQLite reports `SQLITE_AUTH`
@@ -96,13 +102,16 @@ public struct NotificationDatabase: Sendable {
             let title = request["titl"] as? String ?? ""
             let body = request["body"] as? String ?? ""
             guard let identifier = Self.uuid(statement.blob(0)), !(title.isEmpty && body.isEmpty) else { continue }
+            let ownChoices = ((request["scat"] as? [String: Any])?["acts"] as? [[String: Any]]).map(NativeChoice.choices(declaredBy:))
             notifications.append(DeliveredNotification(
                 identifier: identifier,
                 bundleIdentifier: statement.text(1) ?? "",
                 title: title,
                 subtitle: request["subt"] as? String ?? "",
                 body: body,
-                deliveredAt: Date(timeIntervalSinceReferenceDate: statement.double(3))
+                deliveredAt: Date(timeIntervalSinceReferenceDate: statement.double(3)),
+                category: (request["cate"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+                ownChoices: ownChoices?.isEmpty == false ? ownChoices : nil
             ))
         }
         return notifications
@@ -127,6 +136,10 @@ public struct NotificationDatabase: Sendable {
 
 /// A read-only SQLite connection.
 final class Connection {
+    /// How long a statement waits for a lock usernoted holds, such as while it checkpoints its log, before it
+    /// fails with `SQLITE_BUSY`. Reads run on the main actor, so the wait stays short.
+    static let busyTimeout: Int32 = 250
+
     let handle: OpaquePointer
 
     init(url: URL) throws(NotificationDatabase.Failure) {
@@ -137,6 +150,7 @@ final class Connection {
             sqlite3_close(handle)
             throw .sqlite(result, message: message)
         }
+        sqlite3_busy_timeout(handle, Self.busyTimeout)
         self.handle = handle
     }
 

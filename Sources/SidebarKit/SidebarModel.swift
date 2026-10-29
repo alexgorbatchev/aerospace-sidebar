@@ -25,9 +25,10 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         var accessibilityLabel: String { id.replacingOccurrences(of: "_", with: " ").capitalized }
     }
 
-    /// A macOS notification that stays hidden while its card offers its choices: an alert's named actions
-    /// (`NotificationBanners.choices(of:labels:)`), or the actions any notification's app declared
-    /// (`SystemNotificationInterceptor`).
+    /// A macOS notification whose card offers its choices, kept hidden while NotificationCenter shows it: an
+    /// alert's named actions (`NotificationBanners.choices(of:labels:)`), the actions any notification's app
+    /// declared (`SystemNotificationInterceptor`), or those its record in the notification database names
+    /// (`NotificationDatabaseMonitor`).
     public struct NativeChoices: Codable, Equatable, Sendable {
         /// The notification's `AXIdentifier`, a UUID that NotificationCenter keeps for its lifetime.
         public let identifier: String
@@ -59,7 +60,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
     public let action: ClickAction?
     /// macOS kept presenting the original notification because it needs interaction.
     public let shownByMacOS: Bool
-    /// The hidden macOS alert this entry stands for, whose choices the card offers while it exists.
+    /// The macOS notification this entry stands for, whose choices the card offers (`SidebarModel.offeredChoices(of:)`).
     public let nativeChoices: NativeChoices?
     /// The NotificationCenter notifications this entry stands for, newest first: their `AXIdentifier`s, which
     /// are also their UUIDs in the notification database. A click opens the newest one that still exists, as
@@ -174,6 +175,28 @@ extension SidebarNotification {
     /// The severity it arrived with, before any rule.
     var ownSeverity: NotificationSeverity { postedSeverity ?? severity }
 
+    /// This entry offering `nativeChoices`, so no longer shown by macOS for its buttons.
+    func offering(_ nativeChoices: NativeChoices) -> SidebarNotification {
+        SidebarNotification(
+            id: id,
+            source: source,
+            title: title,
+            subtitle: subtitle,
+            body: body,
+            severity: severity,
+            postedSeverity: postedSeverity,
+            icon: icon,
+            bundleIdentifier: bundleIdentifier,
+            invalidIcon: invalidIcon,
+            action: action,
+            shownByMacOS: false,
+            nativeChoices: nativeChoices,
+            nativeIdentifiers: nativeIdentifiers,
+            receivedAt: receivedAt,
+            occurrences: occurrences
+        )
+    }
+
     /// This entry with the severity a rule sets, remembering its own; with its own severity, as it arrived.
     func with(severity: NotificationSeverity) -> SidebarNotification {
         SidebarNotification(
@@ -214,6 +237,9 @@ public enum InterceptionStatus: Equatable, Sendable {
     /// Turned off in settings.
     case disabled
     case active
+    /// Stopped until it starts again, as while Settings removes the Accessibility permission; nothing could
+    /// perform a card's choices meanwhile.
+    case stopped
     /// The app lacks the Accessibility permission needed to read and hide banners.
     case needsAccessibility
     /// The NotificationCenter process is not running or refused the observer.
@@ -273,9 +299,10 @@ public final class SidebarModel {
     /// Whether the user dismissed the sidebar's note asking for Full Disk Access; Settings › Permissions
     /// still offers it.
     public private(set) var fullDiskAccessNoteDismissed: Bool
-    /// Identifiers of the macOS notifications with choices that still exist, hidden or in the history; only
-    /// their cards offer choices.
-    public var presentChoices: Set<String> = []
+    /// Identifiers of the macOS notifications whose cards list their choices although the notifications are
+    /// known not to offer them any more (`SystemNotificationInterceptor`); those cards offer none. It is not
+    /// saved: after a relaunch every card offers its choices until performing one finds its notification gone.
+    public var unavailableChoices: Set<String> = []
     /// Cards one of whose choices is being performed, which can take a moment in the history; their other
     /// choices wait for it.
     public private(set) var answering: Set<SidebarNotification.ID> = []
@@ -508,9 +535,30 @@ public final class SidebarModel {
         }
     }
 
-    /// The notification's alert while it still exists in NotificationCenter.
+    /// The choices the card offers: those of the macOS notification it stands for, while notifications are
+    /// intercepted, its app's notifications are on (NotificationCenter keeps none of a switched-off app's to act
+    /// on), and the notification is not known to have lost them (`unavailableChoices`).
     public func offeredChoices(of notification: SidebarNotification) -> SidebarNotification.NativeChoices? {
-        notification.nativeChoices.flatMap { presentChoices.contains($0.identifier) ? $0 : nil }
+        guard interception == .active, let choices = notification.nativeChoices, !unavailableChoices.contains(choices.identifier),
+              !(notification.bundleIdentifier.map(notificationsAreOff) ?? false)
+        else { return nil }
+        return choices
+    }
+
+    /// Lets the card that stands for the native notification with `identifier` alone, and lists it without its
+    /// choices, offer `choices`, which the notification database named after the card was listed: an
+    /// NSUserNotification's actions menu, which NotificationCenter shows with its header as one more choice, or
+    /// a category its app declared under the same titles as another. The card keeps its place and identity, and
+    /// no longer counts as shown by macOS: the next sweep hands the notification over to it. False when no such
+    /// card exists.
+    @discardableResult
+    public func offer(_ choices: [NativeChoice], forNotification identifier: String) -> Bool {
+        guard let index = notifications.firstIndex(where: { $0.nativeIdentifiers == [identifier] && $0.nativeChoices == nil }) else {
+            return false
+        }
+        notifications[index] = notifications[index].offering(SidebarNotification.NativeChoices(identifier: identifier, choices: choices))
+        didChange()
+        return true
     }
 
     /// Whether a card stands for the native notification with `identifier`.
@@ -518,8 +566,9 @@ public final class SidebarModel {
         listedNotifications.contains(identifier)
     }
 
-    /// Whether a card offers the choices of the native alert with `identifier`. A card the notification
-    /// database listed, or one listing the alert as shown by macOS, stands for it without them.
+    /// Whether a card lists the choices of the native alert with `identifier`. A card the notification
+    /// database listed from a record that names no choices, or one listing the alert as shown by macOS that the
+    /// database has not given choices (`offer(_:forNotification:)`), stands for it without them.
     public func lists(choicesOf identifier: String) -> Bool {
         notifications.contains { $0.nativeChoices?.identifier == identifier }
     }

@@ -14,10 +14,11 @@ import Foundation
 /// NotificationNanny), and moves the panel's window off-screen as soon as it is open, so the panel is never
 /// seen. It then presses the entry with one of the notification's identifiers, expanding the app's stacks
 /// first: a collapsed stack carries the identifier of its newest entry, and expanding it turns that entry
-/// into an `AXNotificationCenterBanner` with the same identifier (OmniWM, SignalLadder). Finally it presses
-/// the clock again to close the panel, giving it `closeTimeout` to close however long the search took. A
-/// press the clock refuses may still have reached it, and a second press that reaches it opens the closing
-/// panel again, so the clock is pressed once more at most, `closeRetryDelay` later, while the panel stays open.
+/// into an `AXNotificationCenterBanner` with the same identifier (OmniWM, SignalLadder). Finally, unless that
+/// press closed the panel already, it presses the clock again to close the panel, giving it `closeTimeout` to
+/// close however long the search took. A press the clock refuses may still have reached it, and a second press
+/// that reaches it opens the closing panel again, so the clock is pressed once more at most, `closeRetryDelay`
+/// later, while the panel stays open.
 ///
 /// NotificationCenter moves its window back to the origin as the panel closes (measured on macOS 26.6), and
 /// the window still holds the notifications the sidebar keeps hidden for their cards. Once the panel has
@@ -28,9 +29,18 @@ import Foundation
 /// NotificationCenter can take seconds to answer after a wake, so the panel the clock asked for may open
 /// after the request gave up. Such a request watches for it for `latePanelGrace`: the monitor's sweeps hand
 /// a panel that opens meanwhile back to it (`adoptLatePanel(windows:application:)`), and it is closed unseen
-/// instead of staying open on screen. Nothing tells that panel from one the user opens meanwhile, so during
-/// the watch a panel that opens, the user's included, is taken for the request's own and closed, and so is
-/// one a request started during the watch finds; a panel that opens after the watch stays open on screen.
+/// instead of staying open on screen. A request started during the watch does not press the clock again and
+/// takes the late panel for its own. NotificationCenter reports nothing that tells that panel from one the
+/// user opens meanwhile, so the user's input does (`RecentUserInput`): a panel found open within
+/// `userInputWindow` of a click in a menu bar (the clock), a key press (a keyboard shortcut), a scroll or a
+/// gesture the Dock handles (perhaps the swipe in from the screen's right edge) is the user's, which ends the
+/// watch and stays open. Input the sidebar received does not count: a click on a card is not in a menu bar, and
+/// the Return that sends a card's reply, which may start a request during the watch, went to the sidebar. A hot
+/// corner opens the panel on pointer motion alone, which tells nothing, so a panel opened that way during the
+/// watch is still closed. So is one the user opens while NotificationCenter is slow, which is when panels open
+/// late: it may open more than `userInputWindow` after the click, when the pointer may have left the menu bar.
+/// And a late panel that opens just after the user gave such input to another app stays open on screen. A panel
+/// that opens after the watch stays open on screen.
 ///
 /// Requests run one at a time, in the order they were started: each opens and closes the panel itself, and
 /// one started while another runs begins once that one is done, closing its panel included.
@@ -55,6 +65,10 @@ final class NotificationHistoryOpener {
     static let closeGrace: TimeInterval = 0.5
     /// How long a request that ended before its panel opened still watches for the panel, to close it.
     static let latePanelGrace: TimeInterval = 2
+    /// How recently the user must have clicked in a menu bar, pressed a key or scrolled for a panel found open
+    /// while a request waits for a late one to be the user's: the panel opens about 0.3 s after the click while
+    /// NotificationCenter answers promptly.
+    static let userInputWindow: TimeInterval = 1
 
     typealias Completion = @MainActor (SystemNotificationInterceptor.PerformOutcome) -> Void
 
@@ -66,6 +80,9 @@ final class NotificationHistoryOpener {
         let startedAt: Date
         /// Whether the clock was pressed to open the panel; only then is the panel hidden and closed.
         var openedPanel: Bool
+        /// Whether that press was made by a request that gave up before the panel opened, this one or an
+        /// earlier one: a panel found open then may be the user's instead (`userOpenedPanel()`).
+        var waitsForLatePanel: Bool
         var panelOpenedAt: Date?
         var expanded: [String: Date] = [:]
         /// Whether the outcome was reported; the request then only closes the panel it opened.
@@ -83,6 +100,7 @@ final class NotificationHistoryOpener {
     }
 
     private let now: () -> Date
+    private let input: RecentUserInput
     private var request: Request?
     /// Requests started while another runs, oldest first.
     private var waiting: [(action: NativeAction, identifiers: [String], source: String, completion: Completion)] = []
@@ -90,8 +108,9 @@ final class NotificationHistoryOpener {
     private var unopened: (request: Request, until: Date)?
     var labels = NotificationCenterLabels.english
 
-    init(now: @escaping () -> Date = Date.init) {
+    init(now: @escaping () -> Date, input: RecentUserInput) {
         self.now = now
+        self.input = input
     }
 
     /// Whether a request is running, closing its panel included; its steps then replace the sweeps.
@@ -122,7 +141,8 @@ final class NotificationHistoryOpener {
         let clockPressed = unopened.map { time < $0.until } ?? false
         unopened = nil
         request = Request(
-            action: action, identifiers: identifiers, source: source, completion: completion, startedAt: time, openedPanel: clockPressed
+            action: action, identifiers: identifiers, source: source, completion: completion, startedAt: time,
+            openedPanel: clockPressed, waitsForLatePanel: clockPressed
         )
         SystemNotificationInterceptor.logger.info("\(action.logDescription, privacy: .public) on \(identifiers, privacy: .public) from the history")
     }
@@ -137,8 +157,8 @@ final class NotificationHistoryOpener {
     }
 
     /// Abandons the requests, which fail unless their outcome is known already, and closes the panel the running
-    /// one opened if that is open in `windows`. NotificationCenter is read only for a request that may have
-    /// opened the panel.
+    /// one opened, or the late panel one watches for, if that is open in `windows` and not the user's.
+    /// NotificationCenter is read only for a request that may have opened the panel.
     func cancel(
         windows: @autoclosure () -> [any AccessibilityElement],
         application: @autoclosure () -> (any AccessibilityElement)?,
@@ -159,12 +179,17 @@ final class NotificationHistoryOpener {
         guard let abandoned else { return }
         guard abandoned.openedPanel, !abandoned.pressedClose,
               NotificationBanners.isPanelOpen(application: application(), windows: windows()) else { return }
+        if !abandoned.ownsPanel, abandoned.waitsForLatePanel, userOpenedPanel() {
+            SystemNotificationInterceptor.logger.notice("The user opened Notification Center while an abandoned request waited for its panel; leaving it open")
+            return
+        }
         let pressed = clock()?.perform(kAXPressAction) == true
         SystemNotificationInterceptor.logger.info("Closing Notification Center for an abandoned request: \(pressed ? "pressed" : "refused", privacy: .public)")
     }
 
     /// Takes back a panel that opened after its request ended, which then closes it like a panel it found
-    /// open; false when no request watches for its panel or the panel is not open.
+    /// open; false when no request watches for its panel, the panel is not open, or the user opened it, which
+    /// ends the watch.
     func adoptLatePanel(windows: [any AccessibilityElement], application: (any AccessibilityElement)?) -> Bool {
         guard let unopened, request == nil else { return false }
         let time = now()
@@ -174,6 +199,13 @@ final class NotificationHistoryOpener {
         }
         guard NotificationBanners.isPanelOpen(application: application, windows: windows) else { return false }
         self.unopened = nil
+        guard !userOpenedPanel() else {
+            SystemNotificationInterceptor.logger.notice("""
+                The user opened Notification Center while the request for \(unopened.request.identifiers, privacy: .public) \
+                watched for its panel; leaving it open
+                """)
+            return false
+        }
         var request = unopened.request
         request.panelOpenedAt = time
         self.request = request
@@ -197,9 +229,18 @@ final class NotificationHistoryOpener {
             hide(windows)
         }
         let panelOpen = NotificationBanners.isPanelOpen(application: application, windows: windows)
-        // A panel the user opened stays where it is.
+        // A panel the user opened stays where it is: one open before the request started, or one the user opened
+        // while the request waited for a late one.
         if panelOpen, request.openedPanel, !request.ownsPanel {
-            hide(windows)
+            if request.waitsForLatePanel, userOpenedPanel() {
+                request.openedPanel = false
+                SystemNotificationInterceptor.logger.notice("""
+                    The user opened Notification Center while the request for \(request.identifiers, privacy: .public) \
+                    waited for an earlier request's panel; using it where it is
+                    """)
+            } else {
+                hide(windows)
+            }
         }
         if request.concluded {
             return close(request, panelOpen: panelOpen, at: time, clock: clock)
@@ -239,7 +280,10 @@ final class NotificationHistoryOpener {
                 \(request.action.logDescription, privacy: .public) on \(identifier, privacy: .public) from the history: \
                 \(performed ? "done" : "refused", privacy: .public)
                 """)
-            return conclude(request, performed ? .performed : .refused, panelOpen: panelOpen, at: time, clock: clock)
+            // The press leaves the panel open (measured on macOS 26.6), but a press that closed it must not be
+            // followed by a press of the clock, which would open it again. NotificationCenter's elements are live.
+            let stillOpen = NotificationBanners.isPanelOpen(application: application, windows: windows)
+            return conclude(request, performed ? .performed : .refused, panelOpen: stillOpen, at: time, clock: clock)
         }
         var expanding = false
         for stack in stacks where mayHold(stack, request) {
@@ -287,6 +331,7 @@ final class NotificationHistoryOpener {
         } else if request.ownsPanel {
             _ = close(request, panelOpen: panelOpen, at: time, clock: clock)
         } else {
+            request.waitsForLatePanel = true
             unopened = (request, time.addingTimeInterval(Self.latePanelGrace))
             _ = finish()
         }
@@ -321,6 +366,13 @@ final class NotificationHistoryOpener {
         }
         self.request = request
         return true
+    }
+
+    /// Whether the user just did something outside the sidebar that opens the panel, within `userInputWindow`: a
+    /// click in a menu bar, where the clock is, a key press (a keyboard shortcut), or a scroll or Dock gesture.
+    private func userOpenedPanel() -> Bool {
+        func recent(_ kind: RecentUserInput.Kind) -> Bool { input.secondsSince(kind) < Self.userInputWindow }
+        return (recent(.mouseDown) && input.isPointerInMenuBar()) || recent(.keyDown) || recent(.scroll)
     }
 
     /// Moves the window holding the panel off-screen, so that the panel opens unseen.

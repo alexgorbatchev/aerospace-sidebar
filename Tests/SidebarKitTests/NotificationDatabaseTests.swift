@@ -30,7 +30,8 @@ final class NotificationDatabaseFixture {
             """)
     }
 
-    /// Adds a record the way usernoted stores one: the request texts in a binary property list.
+    /// Adds a record the way usernoted stores one: the request texts in a binary property list, with the category
+    /// the app declared for it or, as for an NSUserNotification, its own actions.
     @discardableResult
     func insert(
         identifier: UUID = UUID(),
@@ -39,10 +40,14 @@ final class NotificationDatabaseFixture {
         subtitle: String? = nil,
         body: String = "Body",
         delivered: Date? = Date(timeIntervalSinceReferenceDate: 800_000_000),
+        category: String? = nil,
+        actions: [[String: Any]]? = nil,
         data: Data? = nil
     ) throws -> UUID {
-        var request: [String: String] = ["titl": title, "body": body]
+        var request: [String: Any] = ["titl": title, "body": body]
         request["subt"] = subtitle
+        request["cate"] = category
+        request["scat"] = actions.map { ["id": "LEGACY", "acts": $0] }
         let plist = try data ?? PropertyListSerialization.data(fromPropertyList: ["req": request], format: .binary, options: 0)
         try withConnection { handle in
             var statement: OpaquePointer?
@@ -58,6 +63,15 @@ final class NotificationDatabaseFixture {
             #expect(sqlite3_step(statement) == SQLITE_DONE)
         }
         return identifier
+    }
+
+    /// Records the categories an app declared, as usernoted keeps them.
+    func declare(_ categories: [[String: Any]], app: Int = 1) throws {
+        let data = try PropertyListSerialization.data(fromPropertyList: categories, format: .binary, options: 0)
+        try execute("""
+            CREATE TABLE IF NOT EXISTS categories (app_id INTEGER PRIMARY KEY, categories BLOB);
+            INSERT INTO categories VALUES (\(app), x'\(data.map { String(format: "%02x", $0) }.joined())');
+            """)
     }
 
     func execute(_ sql: String) throws {
@@ -149,9 +163,11 @@ struct NotificationDatabaseMonitorTests {
         var now = Date(timeIntervalSinceReferenceDate: 900_000_000)
         var received: [SidebarNotification] = []
         var statuses: [NotificationDatabaseStatus] = []
+        /// The choices reported for notifications listed before.
+        var choices: [SidebarNotification.NativeChoices] = []
     }
 
-    func makeMonitor(_ harness: Harness, grace: TimeInterval = 3) -> NotificationDatabaseMonitor {
+    func makeMonitor(_ harness: Harness, grace: TimeInterval = 3, readRetryDelay: TimeInterval = 1) -> NotificationDatabaseMonitor {
         NotificationDatabaseMonitor(
             database: fixture.database,
             identities: identities,
@@ -159,7 +175,9 @@ struct NotificationDatabaseMonitorTests {
             grace: grace,
             appName: { $0 == "com.apple.ScriptEditor2" ? "Script Editor" : nil },
             now: { harness.now },
-            onStatus: { harness.statuses.append($0) }
+            readRetryDelay: readRetryDelay,
+            onStatus: { harness.statuses.append($0) },
+            onChoices: { harness.choices.append(.init(identifier: $0, choices: $1)) }
         ) { harness.received.append($0) }
     }
 
@@ -193,6 +211,69 @@ struct NotificationDatabaseMonitorTests {
         #expect(harness.received.map(\.nativeIdentifiers) == [[focus.uuidString], [system.uuidString]])
         #expect(harness.received.first?.subtitle == "Sub")
         #expect(harness.received.first?.receivedAt == delivered)
+    }
+
+    /// A record no banner showed, such as one delivered during Focus, is listed with the choices it names: an
+    /// NSUserNotification's own, its actions menu's header left out, or those of the category its app declared.
+    /// Its card performs them on the notification in the history, by the record's UUID.
+    @Test func listsRecordsWithTheChoicesTheyName() throws {
+        try fixture.create()
+        try fixture.declare([NativeChoicesTests.slackCategory])
+        let harness = Harness()
+        let monitor = makeMonitor(harness, grace: 0)
+        monitor.start()
+        defer { monitor.stop() }
+
+        let menu = try fixture.insert(title: "Menu", delivered: harness.now - 3, actions: NativeChoicesTests.menuActions)
+        let reply = try fixture.insert(title: "Reply", delivered: harness.now - 2, category: "CATEGORY_1")
+        try fixture.insert(title: "Plain", delivered: harness.now - 1)
+        monitor.readNewRecords()
+        monitor.deliverPending()
+
+        #expect(harness.received.map(\.nativeChoices) == [
+            .init(identifier: menu.uuidString, choices: ["Now", "Later today", NativeChoice(title: "Tomorrow", isDestructive: true)]),
+            .init(identifier: reply.uuidString, choices: [
+                NativeChoice(title: "Reply", textInput: NativeChoice.TextInput(placeholder: "Message", sendTitle: "Reply")),
+            ]),
+            nil,
+        ])
+        #expect(harness.choices.isEmpty)
+    }
+
+    /// A record whose notification a banner reported, before the record was read or while it waited for its
+    /// banner, is not listed again; the choices it names are reported once instead, since that card may lack them.
+    /// Records naming none, records whose choices do not read (the app's categories are missing here), and
+    /// permission requests report nothing.
+    @Test func reportsTheChoicesOfRecordsListedBefore() throws {
+        try fixture.create()
+        try fixture.execute("INSERT INTO app VALUES (3, '\(NotificationDatabaseMonitor.permissionRequestApp)')")
+        let harness = Harness()
+        let monitor = makeMonitor(harness)
+        monitor.start()
+        defer { monitor.stop() }
+
+        let shown = try fixture.insert(title: "Shown", delivered: harness.now - 5, actions: NativeChoicesTests.menuActions)
+        identities.insert(shown.uuidString)
+        identities.insert(try fixture.insert(title: "Plain", delivered: harness.now - 5).uuidString)
+        identities.insert(try fixture.insert(title: "Unreadable", delivered: harness.now - 5, category: "reply").uuidString)
+        identities.insert(try fixture.insert(app: 3, title: "Asks", delivered: harness.now - 5, actions: [["id": "ACTION", "ti": "Allow"]]).uuidString)
+        let waiting = try fixture.insert(title: "Waiting", delivered: harness.now - 4, actions: [["id": "ACTION", "ti": "Approve"]])
+        monitor.readNewRecords()
+        #expect(harness.choices.map(\.identifier) == [shown.uuidString])
+
+        identities.insert(waiting.uuidString)
+        monitor.readNewRecords()
+        harness.now += 3
+        monitor.deliverPending()
+        let reported: [SidebarNotification.NativeChoices] = [
+            .init(identifier: shown.uuidString, choices: ["Now", "Later today", NativeChoice(title: "Tomorrow", isDestructive: true)]),
+            .init(identifier: waiting.uuidString, choices: ["Approve"]),
+        ]
+        #expect(harness.choices == reported)
+
+        monitor.readNewRecords()
+        #expect(harness.received.isEmpty)
+        #expect(harness.choices == reported)
     }
 
     /// macOS's request to let an app post notifications is its question, not a notification: a card for it
@@ -470,6 +551,96 @@ struct NotificationDatabaseMonitorTests {
         #expect(denied == .accessDenied("authorization denied") && denied.isAccessDenied)
         #expect(missing == .unreadable("unable to open database file") && !missing.isAccessDenied)
         #expect(denied.description == "Cannot read the notification database: authorization denied")
+    }
+
+    /// A read that fails other than for missing access, such as while the database cannot be opened for a moment,
+    /// is tried once more shortly after, which lists the record whose write woke it without another write; the
+    /// failure is then over and would be logged again.
+    @Test func retriesAReadThatFailed() async throws {
+        try fixture.create()
+        let harness = Harness()
+        let monitor = NotificationDatabaseMonitor(
+            database: fixture.database, identities: identities, defaults: fixture.defaults, grace: 0,
+            appName: { _ in "App" }, readRetryDelay: 0.3
+        ) { harness.received.append($0) }
+        monitor.start()
+        defer { monitor.stop() }
+        let path = fixture.database.url.path
+        let attributes = try FileManager.default.attributesOfItem(atPath: path)
+
+        try fixture.insert(title: "Retried", delivered: Date() - 1)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: path)
+        defer { try? FileManager.default.setAttributes(attributes, ofItemAtPath: path) }
+        for _ in 0..<300 where monitor.lastError == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(monitor.status == .unreadable)
+        try FileManager.default.setAttributes(attributes, ofItemAtPath: path)
+        for _ in 0..<300 where harness.received.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(harness.received.map(\.title) == ["Retried"])
+        #expect(monitor.status == .reading)
+        #expect(monitor.lastError == nil)
+    }
+
+    /// A read that keeps failing is tried once more, then left to the next write rather than tried again and
+    /// again, and a read that fails while that retry waits adds no retry of its own.
+    @Test func triesAFailedReadOnlyOnceMore() async throws {
+        try fixture.create()
+        fixture.defaults.set(Date.distantPast, forKey: NotificationDatabaseMonitor.readPositionKey)
+        // Not started, so nothing but these reads asks the time: no watcher, and no record waits for its banner.
+        var reads = 0
+        let monitor = NotificationDatabaseMonitor(
+            database: fixture.database, identities: identities, defaults: fixture.defaults,
+            now: { reads += 1; return Date() }, readRetryDelay: 0.05
+        ) { _ in }
+        defer { monitor.stop() }
+        let path = fixture.database.url.path
+        let attributes = try FileManager.default.attributesOfItem(atPath: path)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: path)
+        defer { try? FileManager.default.setAttributes(attributes, ofItemAtPath: path) }
+
+        monitor.readNewRecords()
+        monitor.readNewRecords()
+        #expect(monitor.status == .unreadable)
+        #expect(monitor.isWaitingToRetryRead)
+        for _ in 0..<300 where monitor.isWaitingToRetryRead {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        // Several retry delays: a retry of the retry, or a second retry, would have read by now.
+        try await Task.sleep(for: .milliseconds(250))
+
+        #expect(reads == 3)
+        #expect(!monitor.isWaitingToRetryRead)
+        #expect(monitor.status == .unreadable)
+    }
+
+    /// A read waits for a lock another connection holds for a moment, as usernoted does while it checkpoints its
+    /// log, rather than failing at once.
+    @Test func waitsForALockHeldForAMoment() throws {
+        try fixture.create()
+        try fixture.insert(title: "Locked")
+        let path = fixture.database.url.path
+        let locked = DispatchSemaphore(value: 0)
+        let released = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            var handle: OpaquePointer?
+            sqlite3_open(path, &handle)
+            sqlite3_exec(handle, "PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE;", nil, nil, nil)
+            locked.signal()
+            Thread.sleep(forTimeInterval: Double(Connection.busyTimeout) / 4000)
+            sqlite3_exec(handle, "COMMIT;", nil, nil, nil)
+            sqlite3_close(handle)
+            released.signal()
+        }
+        locked.wait()
+
+        let records = try fixture.database.notifications(deliveredAfter: .distantPast, by: Date())
+
+        #expect(records.map(\.title) == ["Locked"])
+        released.wait()
     }
 
     /// A write to the database wakes the monitor, which lists the record once its grace period ends.

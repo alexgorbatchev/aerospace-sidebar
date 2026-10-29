@@ -8,6 +8,7 @@ struct NotificationCenterMonitorTests {
     final class Harness {
         let platform = FakePlatform()
         let workspaceCenter = NotificationCenter()
+        let input = FakeUserInput()
         var statuses: [InterceptionStatus] = []
         var received: [SidebarNotification] = []
         var now = Date(timeIntervalSince1970: 0)
@@ -20,6 +21,7 @@ struct NotificationCenterMonitorTests {
                 interceptor: interceptor,
                 workspaceCenter: workspaceCenter,
                 now: { [unowned self] in now },
+                userInput: input.reader,
                 onStatus: { [unowned self] in statuses.append($0) }
             )
         }
@@ -302,6 +304,44 @@ struct NotificationCenterMonitorTests {
         #expect(model.notifications.isEmpty)
     }
 
+    /// A notification no banner showed, such as one delivered during Focus, is listed from its database record with
+    /// the choices the record names, and a choice on its card is performed on its entry in the history.
+    @Test func cardsAnswerDatabaseRecordsInTheHistory() throws {
+        let directory = try TemporaryDirectory()
+        let settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        let platform = FakePlatform()
+        let application = FakeElement()
+        platform.applicationsByPID[42] = application
+        platform.clock = FakeElement()
+        let monitor = SidebarAppDelegate.makeMonitor(model: model, settings: settings, declaredChoices: .none, platform: platform)
+        model.nativeNotifications = monitor
+        monitor.start()
+        defer { monitor.stop() }
+        let database = try NotificationDatabaseFixture()
+        try database.create()
+        let records = NotificationDatabaseMonitor(
+            database: database.database, identities: NotificationIdentities(), defaults: database.defaults, grace: 0, appName: { _ in "Script Editor" }
+        ) { model.add($0) }
+        records.start()
+        defer { records.stop() }
+
+        let identifier = try database.insert(title: "During Focus", delivered: Date() - 1, actions: [["id": "ACTION", "op": 0, "ti": "Approve"]])
+        records.readNewRecords()
+        records.deliverPending()
+        let card = try #require(model.notifications.first)
+        #expect(model.offeredChoices(of: card)?.choices == ["Approve"])
+
+        model.choose("Approve", for: card.id)
+        let entry = FakeElement.alert(id: identifier.uuidString, app: "Script Editor", title: "During Focus", choices: ["Approve"])
+        application.flags["AXExpanded"] = true
+        platform.windowsByPID[42] = [FakeElement.window(entry)]
+        monitor.stepHistory()
+
+        #expect(entry.performed == ["Name:Approve\nTarget:0x0\nSelector:(null)"])
+        #expect(model.notifications.isEmpty)
+    }
+
     /// A notification on screen that refuses a choice fails it there; the history panel, which shares its
     /// window, is left alone.
     @Test func failsAChoiceTheNotificationRefusesOnScreen() {
@@ -323,7 +363,8 @@ struct NotificationCenterMonitorTests {
         #expect(!harness.monitor.isOpeningHistory)
     }
 
-    /// A choice the history no longer holds fails, and its card stops offering it but stays.
+    /// A banner with choices that left the screen keeps offering them from the history; a choice the history no
+    /// longer holds fails, and its card stops offering its choices but stays.
     @Test func forgetsChoicesTheHistoryNoLongerHolds() throws {
         // Recent: the model lists nothing older than its retention.
         var now = Date()
@@ -339,17 +380,19 @@ struct NotificationCenterMonitorTests {
             listsNotification: { model.lists(notification: $0) },
             listsChoices: { model.lists(choicesOf: $0) },
             declaredChoices: { _, _ in [Self.reply] },
-            onPresentChoices: { model.presentChoices = $0 },
+            onUnavailableChoices: { model.unavailableChoices = $0 },
             onNotification: { model.add($0) }
         )
-        let monitor = NotificationCenterMonitor(platform: platform, interceptor: interceptor, workspaceCenter: NotificationCenter(), now: { now }) { _ in }
+        let monitor = NotificationCenterMonitor(platform: platform, interceptor: interceptor, workspaceCenter: NotificationCenter(), now: { now }) {
+            model.interception = $0
+        }
         model.nativeNotifications = monitor
         monitor.start()
         defer { monitor.stop() }
         platform.windowsByPID[42] = [FakeElement.window()]
         monitor.notificationCenterChanged()
-        #expect(model.presentChoices == ["gone"])
         let card = try #require(model.notifications.first)
+        #expect(model.offeredChoices(of: card)?.choices == [Self.reply])
 
         model.reply("Reply", text: "Too late", for: card.id)
         application.flags["AXExpanded"] = true
@@ -358,7 +401,8 @@ struct NotificationCenterMonitorTests {
         now += 1
         monitor.stepHistory()
 
-        #expect(model.presentChoices.isEmpty)
+        #expect(model.unavailableChoices == ["gone"])
+        #expect(model.offeredChoices(of: card) == nil)
         #expect(model.notifications.map(\.id) == [card.id])
         #expect(model.answering.isEmpty)
     }
@@ -383,7 +427,7 @@ struct NotificationCenterMonitorTests {
         defer { monitor.stop() }
 
         #expect(window.position == SystemNotificationInterceptor.offScreen)
-        #expect(model.presentChoices == ["first", "second"])
+        #expect(model.notifications.map { model.offeredChoices(of: $0)?.identifier } == ["second", "first"])
         let standup = try #require(model.notifications.first { $0.title == "Standup" })
         #expect(model.offeredChoices(of: standup)?.choices == ["Allow…"])
 
@@ -396,7 +440,6 @@ struct NotificationCenterMonitorTests {
         #expect(monitor.isSweeping)
 
         monitor.stop()
-        #expect(model.presentChoices.isEmpty)
         #expect(window.position == .zero)
     }
 
@@ -422,34 +465,76 @@ struct NotificationCenterMonitorTests {
         defer { monitor.stop() }
 
         #expect(window.moves.isEmpty)
-        #expect(model.presentChoices.isEmpty)
+        #expect(model.offeredChoices(of: model.notifications[0]) == nil)
         #expect(model.notifications.map(\.title) == ["Standup"])
 
         model.dismiss(model.notifications[0].id)
         #expect(alert.performed.isEmpty)
     }
 
-    @Test func noAlertCanBeActedOnOnceNotificationCenterExits() {
-        var present: [Set<String>] = []
+    /// Once NotificationCenter exits, cards offer no choices and an attempt fails, until it is attached again.
+    @Test func noAlertCanBeActedOnOnceNotificationCenterExits() throws {
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
         let platform = FakePlatform()
         platform.windowsByPID[42] = [FakeElement.window(FakeElement.alert(id: "a"))]
         let monitor = NotificationCenterMonitor(
             platform: platform,
             interceptor: SystemNotificationInterceptor(
-                listsNotification: { _ in true }, listsChoices: { _ in true }, onPresentChoices: { present.append($0) }
-            ) { _ in },
+                listsNotification: { model.lists(notification: $0) }, listsChoices: { model.lists(choicesOf: $0) }
+            ) { model.add($0) },
             workspaceCenter: NotificationCenter(),
-            onStatus: { _ in }
+            onStatus: { model.interception = $0 }
         )
         monitor.start()
         defer { monitor.stop() }
+        let card = try #require(model.notifications.first)
+        #expect(model.offeredChoices(of: card)?.choices == ["Allow…"])
 
         monitor.notificationCenterExited(pid: 42)
 
-        #expect(present == [["a"], []])
+        #expect(model.offeredChoices(of: card) == nil)
         var detached: [Bool] = []
         monitor.perform(.choice("Allow…"), on: ["a"], from: "Calendar") { detached.append($0) }
         #expect(detached == [false])
+    }
+
+    /// Once stopped, as while Settings removes the Accessibility permission, cards offer no choices and an attempt
+    /// fails, until the monitor starts again. Stopping a monitor that is not running reports nothing, so a status
+    /// such as `.disabled` stays.
+    @Test func noAlertCanBeActedOnOnceStopped() throws {
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        var statuses: [InterceptionStatus] = []
+        let platform = FakePlatform()
+        platform.windowsByPID[42] = [FakeElement.window(FakeElement.alert(id: "a"))]
+        let monitor = NotificationCenterMonitor(
+            platform: platform,
+            interceptor: SystemNotificationInterceptor(
+                listsNotification: { model.lists(notification: $0) }, listsChoices: { model.lists(choicesOf: $0) }
+            ) { model.add($0) },
+            workspaceCenter: NotificationCenter(),
+            onStatus: {
+                statuses.append($0)
+                model.interception = $0
+            }
+        )
+        monitor.stop()
+        #expect(statuses.isEmpty)
+        monitor.start()
+        defer { monitor.stop() }
+        let card = try #require(model.notifications.first)
+        #expect(model.offeredChoices(of: card)?.choices == ["Allow…"])
+
+        monitor.stop()
+        monitor.stop()
+
+        #expect(statuses == [.active, .stopped])
+        #expect(model.offeredChoices(of: card) == nil)
+        var stopped: [Bool] = []
+        monitor.perform(.choice("Allow…"), on: ["a"], from: "Calendar") { stopped.append($0) }
+        #expect(stopped == [false])
+
+        monitor.start()
+        #expect(model.offeredChoices(of: card)?.choices == ["Allow…"])
     }
 
     @Test func reportsMissingNotificationCenterAndRetries() {
@@ -809,6 +894,33 @@ struct NotificationCenterMonitorTests {
         #expect(!harness.monitor.isOpeningHistory)
         #expect(harness.monitor.isSweeping)
         #expect(results == [false])
+    }
+
+    /// A panel the user opens from the clock while a request that gave up watches for its own stays the user's:
+    /// the sweeps carry on and move nothing, and the clock is not pressed to close it.
+    @Test func leavesAPanelTheUserOpensAfterTheRequestGaveUpAlone() throws {
+        let harness = Harness()
+        let application = FakeElement()
+        harness.platform.applicationsByPID[42] = application
+        let clock = FakeElement()
+        harness.platform.clock = clock
+        harness.monitor.start()
+        defer { harness.monitor.stop() }
+        harness.monitor.perform(.open, on: ["h"], from: "Vivaldi") { _ in }
+        let handler = try #require(harness.platform.handler)
+        harness.now += NotificationHistoryOpener.timeout
+        let window = FakeElement.window()
+        handler(window)
+
+        harness.input.pointerInMenuBar = true
+        harness.input.secondsSince[.mouseDown] = 0.2
+        application.flags["AXExpanded"] = true
+        harness.platform.windowsByPID[42] = [window]
+        handler(window)
+        #expect(window.moves.isEmpty)
+        #expect(clock.performed == [kAXPressAction])
+        #expect(!harness.monitor.isOpeningHistory)
+        #expect(harness.monitor.isSweeping)
     }
 
     /// NotificationCenter exiting abandons the history request; its panel went with it, so the clock is not

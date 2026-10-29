@@ -670,7 +670,8 @@ struct SystemNotificationInterceptorTests {
     /// The sidebar's model, as far as the interceptor sees it.
     final class AlertList {
         var notifications: [SidebarNotification] = []
-        var present: [Set<String>] = []
+        /// Each set of notifications reported as offering their choices no more.
+        var unavailable: [Set<String>] = []
 
         func lists(_ identifier: String) -> Bool {
             notifications.contains { $0.nativeIdentifiers.contains(identifier) }
@@ -701,7 +702,7 @@ struct SystemNotificationInterceptorTests {
                 // What the apps declared, by app name, matched like `DeclaredChoices` does.
                 declared[String(app.dropFirst("bundle.".count))].flatMap { Set($0.map(\.title)) == Set(titles) ? $0 : nil }
             },
-            onPresentChoices: { list.present.append($0) }
+            onUnavailableChoices: { list.unavailable.append($0) }
         ) { list.notifications.append($0) }
     }
 
@@ -775,7 +776,7 @@ struct SystemNotificationInterceptorTests {
         #expect(notification.source == SystemNotificationInterceptor.systemSource)
         #expect(notification.nativeChoices == SidebarNotification.NativeChoices(identifier: "privacy", choices: ["Allow…"]))
         #expect(!notification.shownByMacOS)
-        #expect(list.present == [["privacy"]])
+        #expect(list.unavailable.isEmpty)
     }
 
     /// The setting that leaves interactive notifications to macOS covers only those the sidebar cannot offer.
@@ -809,10 +810,11 @@ struct SystemNotificationInterceptorTests {
         #expect(interceptor.sweep(windows: [window], application: nil) == .pending)
         #expect(alert.performed.last == "Name:Close\nTarget:0x0\nSelector:(null)")
         #expect(window.position == SystemNotificationInterceptor.offScreen)
-        #expect(list.present == [["a"], []])
 
         #expect(interceptor.sweep(windows: [FakeElement.window()], application: nil) == .settled)
         #expect(list.notifications.isEmpty)
+        // The alert left after a step from the sidebar, without a card to offer anything.
+        #expect(list.unavailable.isEmpty)
     }
 
     /// A banner is hidden but left open while its card exists, so that the card can open it, and closed once
@@ -828,8 +830,6 @@ struct SystemNotificationInterceptorTests {
         #expect(window.position == SystemNotificationInterceptor.offScreen)
         #expect(banner.performed.isEmpty)
         #expect(list.notifications.map(\.nativeIdentifiers) == [["b"]])
-        // Only alerts with choices make a card offer them.
-        #expect(list.present.isEmpty)
 
         list.notifications = []
         #expect(interceptor.sweep(windows: [window], application: nil) == .pending)
@@ -855,7 +855,7 @@ struct SystemNotificationInterceptorTests {
 
         #expect(interceptor.sweep(windows: [window], application: nil) == .settled)
         #expect(window.moves == [SystemNotificationInterceptor.offScreen])
-        #expect(list.present == [["a"]])
+        #expect(list.unavailable.isEmpty)
         #expect(list.notifications.flatMap(\.nativeIdentifiers) == ["b", "a"])
 
         #expect(interceptor.perform(.choice("Allow…"), on: ["a"], in: [window]) == .performed)
@@ -938,7 +938,6 @@ struct SystemNotificationInterceptorTests {
 
         interceptor.sweep(windows: [window], application: nil)
         #expect(window.position == .zero)
-        #expect(list.present.isEmpty)
         #expect(list.notifications == [listed])
 
         list.notifications = []
@@ -962,7 +961,6 @@ struct SystemNotificationInterceptorTests {
         leftToMacOS.value = false
         interceptor.sweep(windows: [window], application: nil)
         #expect(window.moves.isEmpty)
-        #expect(list.present.isEmpty)
 
         list.notifications = []
         interceptor.sweep(windows: [window], application: nil)
@@ -982,7 +980,6 @@ struct SystemNotificationInterceptorTests {
         interceptor.sweep(windows: [window], application: nil)
         #expect(window.position == SystemNotificationInterceptor.offScreen)
         #expect(alert.performed.isEmpty)
-        #expect(list.present.isEmpty)
         #expect(list.notifications.count == 1)
 
         list.notifications = []
@@ -990,20 +987,32 @@ struct SystemNotificationInterceptorTests {
         #expect(alert.performed == ["Name:Close\nTarget:0x0\nSelector:(null)"])
     }
 
-    /// A choice such as Reply can turn the alert into one with a text field, which only works on screen.
-    @Test func returnsAnAlertToMacOSWhenItGainsAControl() {
+    /// A choice such as Reply can turn the alert into one with a text field, which only works on screen, and a
+    /// banner can come to hold a control only macOS presents: either returns to macOS, and its card stops offering
+    /// its choices until the control goes and the notification is hidden again.
+    @Test func returnsANotificationToMacOSWhenItGainsAControl() {
         let list = AlertList()
-        let interceptor = interceptor(for: list)
+        let interceptor = interceptor(for: list, declared: ["Notif Probe": [Self.reply]])
         let alert = FakeElement.alert(id: "a", choices: ["Reply"])
-        let window = FakeElement.window(alert)
-        interceptor.sweep(windows: [window], application: nil)
+        let banner = FakeElement.replyBanner(id: "r")
+        let alertWindow = FakeElement.window(alert)
+        let bannerWindow = FakeElement.window(banner)
+        interceptor.sweep(windows: [alertWindow, bannerWindow], application: nil)
 
         alert.childElements.append(FakeElement([kAXRoleAttribute: kAXTextFieldRole]))
-        interceptor.sweep(windows: [window], application: nil)
+        banner.childElements.append(FakeElement([kAXRoleAttribute: kAXPopUpButtonRole]))
+        interceptor.sweep(windows: [alertWindow, bannerWindow], application: nil)
 
-        #expect(window.position == .zero)
+        #expect(alertWindow.position == .zero)
+        #expect(bannerWindow.position == .zero)
         #expect(alert.performed.isEmpty)
-        #expect(list.present == [["a"], []])
+        #expect(list.unavailable == [["a", "r"]])
+
+        alert.childElements.removeLast()
+        banner.childElements.removeLast()
+        interceptor.sweep(windows: [alertWindow, bannerWindow], application: nil)
+        #expect(alertWindow.position == SystemNotificationInterceptor.offScreen)
+        #expect(list.unavailable == [["a", "r"], []])
     }
 
     @Test func leavesAlertsFromAppsLeftToMacOSAlone() {
@@ -1093,7 +1102,7 @@ struct SystemNotificationInterceptorTests {
 
         #expect(list.notifications.map(\.nativeChoices) == [SidebarNotification.NativeChoices(identifier: "r", choices: [Self.reply]), nil])
         #expect(list.notifications.map(\.shownByMacOS) == [false, true])
-        #expect(list.present == [["r"]])
+        #expect(list.unavailable.isEmpty)
         #expect(window.position == .zero)
 
         #expect(interceptor.perform(.reply(choice: "Reply", text: "On my way", send: "Send"), on: ["r"], in: [window]) == .performed)
@@ -1102,29 +1111,51 @@ struct SystemNotificationInterceptorTests {
     }
 
     /// A banner with choices that leaves the screen on its own times out into the history, whose entry offers
-    /// the same choices, so its card keeps them; it loses them once the history turns out not to hold it, or
-    /// once its card is gone. One the sidebar acted on, and an alert, which never times out, do not keep them.
+    /// the same choices, so its card keeps them; it loses them once the history turns out not to hold it. An
+    /// alert never times out, so one that leaves on its own is gone; one the sidebar acted on has no card left to
+    /// offer anything. Only notifications whose cards offer choices are reported, and only while they do.
     @Test func keepsTheChoicesOfBannersThatTimeOutIntoTheHistory() {
         let list = AlertList()
         let interceptor = interceptor(for: list, declared: ["Notif Probe": [Self.reply]])
         let window = FakeElement.window(
             FakeElement.replyBanner(id: "kept"), FakeElement.replyBanner(id: "forgotten"), FakeElement.replyBanner(id: "answered"),
-            FakeElement.alert(id: "alert")
+            FakeElement.alert(id: "alert"), FakeElement.alert(id: "chosen"), FakeElement.banner(id: "plain")
         )
         interceptor.sweep(windows: [window], application: nil)
-        #expect(list.present == [["kept", "forgotten", "answered", "alert"]])
+        #expect(list.unavailable.isEmpty)
         interceptor.perform(.reply(choice: "Reply", text: "hi", send: "Send"), on: ["answered"], in: [window])
+        interceptor.perform(.choice("Allow…"), on: ["chosen"], in: [window])
 
         interceptor.sweep(windows: [FakeElement.window()], application: nil)
-        #expect(list.present.last == ["kept", "forgotten"])
+        #expect(list.unavailable == [["alert"]])
 
-        interceptor.forgetChoices(of: "forgotten")
-        interceptor.forgetChoices(of: "unknown")
-        #expect(list.present.last == ["kept"])
+        interceptor.choicesGone(of: "forgotten")
+        interceptor.choicesGone(of: "plain")
+        interceptor.choicesGone(of: "unknown")
+        #expect(list.unavailable == [["alert"], ["alert", "forgotten"]])
 
-        list.notifications.removeAll { $0.nativeIdentifiers == ["kept"] }
+        list.notifications.removeAll { $0.nativeIdentifiers == ["alert"] }
         interceptor.sweep(windows: [FakeElement.window()], application: nil)
-        #expect(list.present.last == [])
+        #expect(list.unavailable.last == ["forgotten"])
+    }
+
+    /// A sweep that misses an alert, such as one whose accessibility calls time out, takes it for gone; the next
+    /// sweep that finds it offering its choices gives them back to its card.
+    @Test func offersTheChoicesOfAnAlertASweepMissedAgain() {
+        let list = AlertList()
+        let interceptor = interceptor(for: list)
+        let alert = FakeElement.alert(id: "a")
+        let window = FakeElement.window(alert)
+        interceptor.sweep(windows: [window], application: nil)
+
+        interceptor.sweep(windows: [], application: nil)
+        #expect(list.unavailable == [["a"]])
+
+        interceptor.sweep(windows: [window], application: nil)
+        #expect(list.unavailable == [["a"], []])
+        #expect(window.position == SystemNotificationInterceptor.offScreen)
+        #expect(alert.performed.isEmpty)
+        #expect(list.notifications.count == 1)
     }
 
     /// After a reply is sent from the card, the notification shows its field while it leaves, which reads as
@@ -1178,7 +1209,7 @@ struct SystemNotificationInterceptorTests {
             listsNotification: { list.lists($0) },
             listsChoices: { list.listsChoices($0) },
             declaredChoices: { app, _ in declared.value[app] },
-            onPresentChoices: { list.present.append($0) }
+            onUnavailableChoices: { list.unavailable.append($0) }
         ) { list.notifications.append($0) }
         let window = FakeElement.window(FakeElement.replyBanner(id: "r"))
         interceptor.sweep(windows: [window], application: nil)
@@ -1187,18 +1218,32 @@ struct SystemNotificationInterceptorTests {
         interceptor.sweep(windows: [window], application: nil)
 
         #expect(window.position == SystemNotificationInterceptor.offScreen)
-        #expect(list.present == [["r"]])
+        #expect(list.unavailable.isEmpty)
     }
 
-    @Test func detachingLeavesNoAlertToActOn() {
+    /// An alert left to macOS for its actions menu, whose card the notification database later gave the menu's
+    /// choices, is handed over to that card and hidden, its header included among the choices it keeps; performing
+    /// one of the menu's items is a named action on the hidden alert.
+    @Test func handsOverAnAlertWhoseCardGainedItsChoices() {
         let list = AlertList()
         let interceptor = interceptor(for: list)
-        interceptor.sweep(windows: [FakeElement.window(FakeElement.alert(id: "a"))], application: nil)
+        let alert = FakeElement.alert(id: "menu", app: "alerter", choices: ["Tomorrow", "Later today", "Now", "When?"])
+        let window = FakeElement.window(alert)
+        interceptor.sweep(windows: [window], application: nil)
+        #expect(window.moves.isEmpty)
+        #expect(list.notifications.map(\.shownByMacOS) == [true])
 
-        interceptor.detach()
-        interceptor.detach()
+        let card = list.notifications[0]
+        list.notifications = [card.offering(.init(identifier: "menu", choices: ["Now", "Later today", "Tomorrow"]))]
+        interceptor.sweep(windows: [window], application: nil)
+        #expect(window.position == SystemNotificationInterceptor.offScreen)
+        #expect(list.notifications.count == 1)
 
-        #expect(list.present == [["a"], []])
+        #expect(interceptor.perform(.choice("Later today"), on: ["menu"], in: [window]) == .performed)
+        #expect(alert.performed == ["Name:Later today\nTarget:0x0\nSelector:(null)"])
+        list.notifications = []
+        interceptor.sweep(windows: [FakeElement.window()], application: nil)
+        #expect(list.unavailable.isEmpty)
     }
 
     /// The notifications' window goes back to the origin from off-screen or beside the sidebar. NotificationCenter's

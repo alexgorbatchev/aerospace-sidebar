@@ -74,7 +74,7 @@ extension SidebarSettings {
         public var body = ""
         public var action = Action.severity(.high)
 
-        enum CodingKeys: String, CodingKey {
+        enum CodingKeys: String, CodingKey, CaseIterable {
             case source, title, subtitle, body, action
         }
 
@@ -87,7 +87,7 @@ extension SidebarSettings {
         }
 
         public init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let container = try decoder.strictContainer(keyedBy: CodingKeys.self)
             for field in Field.allCases {
                 self[field] = try container.decodeIfPresent(String.self, forKey: CodingKeys(rawValue: field.rawValue)!) ?? ""
             }

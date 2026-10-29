@@ -8,13 +8,14 @@ import os
 /// Notifications that need interaction (`NotificationBanners.needsInteraction`) stay visible as
 /// macOS presents them and are reported with `shownByMacOS`, unless the settings list them without
 /// their buttons instead. The others are hidden but left open while their card exists, so that a click on
-/// the card can open them as a click in macOS would (`open(_:in:)`), and closed once their card is gone; a
+/// the card can open them as a click in macOS would (`perform(_:on:in:)`), and closed once their card is gone; a
 /// banner that times out meanwhile moves to Notification Center's history like any other. Notifications whose
 /// choices the sidebar can offer (`NotificationBanners.choices`: what their app declared, or an alert's few
 /// named actions) are hidden whatever the settings say, listed with their choices and performed through
-/// `perform(_:on:in:)`, unless a card already lists them without their choices. A banner with choices that
-/// leaves the screen on its own keeps them, since its history entry offers the same actions. Notifications
-/// without an identifier cannot be told apart later, so they are
+/// `perform(_:on:in:)`, unless a card already lists them without their choices. Their cards offer the choices
+/// until the interceptor learns that the notification no longer does (`onUnavailableChoices`): a banner that
+/// leaves the screen on its own keeps them, since its history entry offers the same actions, while an alert
+/// never goes to the history. Notifications without an identifier cannot be told apart later, so they are
 /// closed. Notifications whose texts do not read are left as macOS shows them until a later pass reads them,
 /// unless the sidebar already keeps them hidden for a card or is closing them.
 ///
@@ -80,7 +81,7 @@ public final class SystemNotificationInterceptor {
     private let listsNotification: @MainActor (String) -> Bool
     private let listsChoices: @MainActor (String) -> Bool
     private let declaredChoices: @MainActor (_ bundleIdentifier: String, _ titles: [String]) -> [NativeChoice]?
-    private let onPresentChoices: @MainActor (Set<String>) -> Void
+    private let onUnavailableChoices: @MainActor (Set<String>) -> Void
     private let nativeOrigin: @MainActor () -> CGPoint
     private let now: () -> Date
     private let identities: NotificationIdentities
@@ -91,17 +92,14 @@ public final class SystemNotificationInterceptor {
     private var handedOver: Set<String> = []
     /// What the sidebar last did to a handed-over notification, and when, by identifier.
     private var hiddenSteps: [String: (step: HiddenStep, at: Date)] = [:]
-    /// Listed notifications found by the current sweep, those of them that offer choices, and unlisted ones
-    /// it is closing.
+    /// Listed notifications found by the current sweep, and unlisted ones it is closing.
     private var sweptHidden: Set<String> = []
-    private var sweptChoices: Set<String> = []
     private var closingHidden: Set<String> = []
-    /// The listed alerts with choices that the last complete sweep reported.
-    private var presentChoices: Set<String> = []
-    /// Banners handed over with choices, and those of them that left the screen on their own, so their history
-    /// entries offer the choices; a choice that finds no entry forgets it (`forgetChoices(of:)`).
-    private var bannersWithChoices: Set<String> = []
-    private var historyChoices: Set<String> = []
+    /// Alerts kept hidden with the choices their cards offer. Alerts never go to the history, so one that leaves
+    /// the screen without a step from the sidebar is gone.
+    private var alertsWithChoices: Set<String> = []
+    /// Notifications whose cards offer their choices although they no longer can (`onUnavailableChoices`).
+    private var unavailableChoices: Set<String> = []
     /// Every notification identifier the current sweep found, handed over or not.
     private var sweptIdentifiers: Set<String> = []
     /// NotificationCenter's words in its current language; set when attaching to it.
@@ -115,11 +113,13 @@ public final class SystemNotificationInterceptor {
     ///     they are hidden and listed like the others, without their buttons. Alerts whose choices the
     ///     sidebar offers are hidden either way.
     ///   - listsNotification: Whether the sidebar still has a card for the notification with this identifier.
-    ///   - listsChoices: Whether one of those cards offers the choices of the alert with this identifier.
+    ///   - listsChoices: Whether one of those cards lists the choices of the notification with this identifier.
     ///   - declaredChoices: What the app with a bundle identifier declared for a notification whose choices
     ///     NotificationCenter titles so (`DeclaredChoices`); nil when it declared nothing under those titles.
-    ///   - onPresentChoices: Receives the identifiers of the listed alerts with choices that still exist, after
-    ///     each sweep that changes them.
+    ///   - onUnavailableChoices: Receives the identifiers of the notifications whose cards offer their choices
+    ///     although the notifications no longer offer them, whenever that set changes: an alert that left the
+    ///     screen on its own, one that returned to macOS because it holds a control only macOS presents, and
+    ///     one whose choice found it nowhere (`choicesGone(of:)`). One found offering them again leaves the set.
     ///   - nativeOrigin: Where a window holding a notification left to macOS is placed, so that the
     ///     sidebar does not cover it.
     public init(
@@ -131,7 +131,7 @@ public final class SystemNotificationInterceptor {
         listsNotification: @escaping @MainActor (String) -> Bool = { _ in false },
         listsChoices: @escaping @MainActor (String) -> Bool = { _ in false },
         declaredChoices: @escaping @MainActor (_ bundleIdentifier: String, _ titles: [String]) -> [NativeChoice]? = { _, _ in nil },
-        onPresentChoices: @escaping @MainActor (Set<String>) -> Void = { _ in },
+        onUnavailableChoices: @escaping @MainActor (Set<String>) -> Void = { _ in },
         nativeOrigin: @escaping @MainActor () -> CGPoint = { .zero },
         onNotification: @escaping @MainActor (SidebarNotification) -> Void
     ) {
@@ -143,7 +143,7 @@ public final class SystemNotificationInterceptor {
         self.listsNotification = listsNotification
         self.listsChoices = listsChoices
         self.declaredChoices = declaredChoices
-        self.onPresentChoices = onPresentChoices
+        self.onUnavailableChoices = onUnavailableChoices
         self.nativeOrigin = nativeOrigin
         self.onNotification = onNotification
     }
@@ -162,9 +162,9 @@ public final class SystemNotificationInterceptor {
             return .settled
         }
         sweptHidden = []
-        sweptChoices = []
         closingHidden = []
         sweptIdentifiers = []
+        let reported = unavailableChoices
         let outcome: Outcome = windows.map(process(window:)).contains(.pending) ? .pending : .settled
         // A notification missing from a sweep is gone (a banner that timed out is in the history now), or it
         // needs interaction (Reply opened an alert's text field) and is left to macOS. Should a sweep miss one
@@ -172,27 +172,26 @@ public final class SystemNotificationInterceptor {
         let remaining = handedOver.intersection(sweptHidden.union(closingHidden))
         for identifier in handedOver.subtracting(remaining) {
             let returnedToMacOS = sweptIdentifiers.contains(identifier)
-            // A banner the sidebar did nothing to timed out into the history, where its choices still work.
-            if bannersWithChoices.remove(identifier) != nil, hiddenSteps[identifier] == nil, !returnedToMacOS {
-                historyChoices.insert(identifier)
+            // A banner that timed out keeps its choices in the history. An alert never goes there, and one back with
+            // macOS holds a control that works only on screen; should either turn up again with its choices, the
+            // sweep that finds it offers them again.
+            if returnedToMacOS || (alertsWithChoices.contains(identifier) && hiddenSteps[identifier] == nil) {
+                unavailableChoices.insert(identifier)
             }
             logDeparture(of: identifier, returnedToMacOS: returnedToMacOS)
         }
         handedOver = remaining
-        historyChoices = historyChoices.filter(listsNotification)
-        publishPresentChoices(sweptChoices.union(historyChoices))
+        alertsWithChoices.formIntersection(remaining)
+        reportUnavailableChoices(since: reported)
         return outcome
     }
 
-    /// No NotificationCenter is attached, so no notification can be acted on.
-    public func detach() {
-        publishPresentChoices([])
-    }
-
-    /// The notification's choices no longer work: its history entry was not found.
-    public func forgetChoices(of identifier: String) {
-        guard historyChoices.remove(identifier) != nil else { return }
-        publishPresentChoices(presentChoices.subtracting([identifier]))
+    /// A choice on the notification found it neither on screen, hidden, nor in the history: it is gone, and its
+    /// card stops offering its choices.
+    public func choicesGone(of identifier: String) {
+        let reported = unavailableChoices
+        unavailableChoices.insert(identifier)
+        reportUnavailableChoices(since: reported)
     }
 
     /// Performs `action` on the first of `identifiers`, newest first, that is in `windows`, as the same action on
@@ -221,16 +220,19 @@ public final class SystemNotificationInterceptor {
         return performed ? .performed : .refused
     }
 
-    private func publishPresentChoices(_ identifiers: Set<String>) {
-        guard identifiers != presentChoices else { return }
-        presentChoices = identifiers
-        onPresentChoices(identifiers)
+    /// Reports the notifications whose cards offer choices they no longer have when they differ from those
+    /// `reported` before; those no card offers choices for any more drop out.
+    private func reportUnavailableChoices(since reported: Set<String>) {
+        unavailableChoices = unavailableChoices.filter(listsChoices)
+        guard unavailableChoices != reported else { return }
+        onUnavailableChoices(unavailableChoices)
     }
 
     /// Expands stacks and hides or closes the notifications in one window, reporting new ones. The window is
     /// moved off-screen unless it holds a notification left to macOS (an interactive one, while those stay
     /// native, or one from an app left to macOS); then it is moved to `nativeOrigin`. Only the window
-    /// `restore(_:)` moves back is processed, so a window the sidebar moves never stays hidden.
+    /// `restore(_:)` moves back is processed, so a window the sidebar moves never stays hidden. Listed
+    /// notifications found offering their choices leave `unavailableChoices`.
     @discardableResult
     func process(window: any AccessibilityElement) -> Outcome {
         guard NotificationBanners.isNotificationWindow(window) else { return .settled }
@@ -282,6 +284,10 @@ public final class SystemNotificationInterceptor {
                 if choices != nil || !needsInteraction || step == .replied,
                    let hiddenOutcome = handOver(item, kind: kind, identifier: identifier, content: content, choices: choices) {
                     if hiddenOutcome == .pending { outcome = .pending }
+                    if choices != nil, listsChoices(identifier) {
+                        unavailableChoices.remove(identifier)
+                        if kind == .alert { alertsWithChoices.insert(identifier) }
+                    }
                     continue
                 }
             }
@@ -311,8 +317,9 @@ public final class SystemNotificationInterceptor {
     }
 
     /// The choices the sidebar offers for a notification, unless a card already lists it without them: one the
-    /// notification database listed first, or one listed as shown by macOS while its app was left to macOS.
-    /// That card cannot offer them, so the notification is handled like any other interactive one.
+    /// notification database listed first from a record that names no choices, or one listed as shown by macOS
+    /// that the database has not given choices since. That card cannot offer them, so the notification is
+    /// handled like any other interactive one.
     /// A card that offers them keeps them while they remain named actions only, whatever the database says now.
     private func offeredChoices(of notification: any AccessibilityElement, identifier: String, appName: String) -> [NativeChoice]? {
         if listsNotification(identifier) {
@@ -336,11 +343,16 @@ public final class SystemNotificationInterceptor {
         choices: [NativeChoice]?
     ) -> Outcome? {
         if listsNotification(identifier) {
-            // A card restored from the saved list counts too, so the notification closes when that card goes.
+            // A card restored from the saved list counts too, so the notification closes when that card goes, and
+            // so does a card that now offers the choices the notification database named for it.
             identities.insert(identifier)
-            handedOver.insert(identifier)
+            if handedOver.insert(identifier).inserted {
+                Self.logger.info("""
+                    \(String(describing: kind), privacy: .public) \(identifier, privacy: .public): hidden for the card that \
+                    lists it\(choices.map { " with its choices \($0.map(\.title))" } ?? "", privacy: .public)
+                    """)
+            }
             sweptHidden.insert(identifier)
-            keepChoices(choices, of: identifier, kind: kind)
             return .settled
         }
         if handedOver.contains(identifier) {
@@ -363,7 +375,6 @@ public final class SystemNotificationInterceptor {
         handedOver.insert(identifier)
         if listsNotification(identifier) {
             sweptHidden.insert(identifier)
-            keepChoices(choices, of: identifier, kind: kind)
         }
         let handling = choices.map { "hidden with its choices \($0.map(\.title))" } ?? "hidden until its card goes"
         let actions = notification.actionNames.map(NotificationBanners.actionName)
@@ -372,14 +383,6 @@ public final class SystemNotificationInterceptor {
             \(handling, privacy: .public); actions \(actions, privacy: .public)
             """)
         return .settled
-    }
-
-    /// Notes that a listed notification still offers its choices.
-    private func keepChoices(_ choices: [NativeChoice]?, of identifier: String, kind: NotificationBanners.Kind) {
-        guard choices != nil else { return }
-        sweptChoices.insert(identifier)
-        historyChoices.remove(identifier)
-        if kind == .banner { bannersWithChoices.insert(identifier) }
     }
 
     /// Records how a handed-over notification left NotificationCenter's banners, or returned to macOS because

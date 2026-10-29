@@ -134,12 +134,12 @@ struct SidebarModelTests {
         #expect(model.notifications.map(\.nativeChoices?.identifier) == ["b", "a"])
     }
 
-    func alertModel(present: Set<String> = ["a"]) -> (SidebarModel, RecordingPerformer, RecordingNativeNotifications, SidebarNotification) {
+    func alertModel() -> (SidebarModel, RecordingPerformer, RecordingNativeNotifications, SidebarNotification) {
         let performer = RecordingPerformer()
         let alerts = RecordingNativeNotifications()
         let model = SidebarModel(performer: performer, store: InMemoryStore())
         model.nativeNotifications = alerts
-        model.presentChoices = present
+        model.interception = .active
         let notification = SidebarNotification(
             source: "Calendar", title: "Standup", bundleIdentifier: "com.apple.iCal", action: .activateApp(name: "Calendar"),
             nativeChoices: .init(identifier: "a", choices: ["Snooze", "Join"]), nativeIdentifiers: ["a"]
@@ -159,20 +159,80 @@ struct SidebarModelTests {
         #expect(alerts.releases == 1)
     }
 
-    /// Choices exist only while the alert does, and a refused choice keeps the card.
+    /// A refused choice keeps the card, and a notification known to have lost its choices offers none.
     @Test func keepsTheCardWhenAChoiceCannotBePerformed() {
         let (model, _, alerts, notification) = alertModel()
 
         model.choose("Delete", for: notification.id)
         alerts.succeeds = false
         model.choose("Join", for: notification.id)
-        model.presentChoices = []
+        model.unavailableChoices = ["a"]
         alerts.succeeds = true
         model.choose("Join", for: notification.id)
 
         #expect(model.offeredChoices(of: notification) == nil)
         #expect(alerts.performed == ["Join a"])
         #expect(model.notifications.count == 1)
+    }
+
+    /// A card offers its notification's choices unless they are known gone; never while notifications are not
+    /// intercepted, nor for an app whose notifications are switched off, which NotificationCenter keeps nowhere to
+    /// act on.
+    @Test func offersChoicesUnlessTheyCannotWork() {
+        let (model, _, _, notification) = alertModel()
+        #expect(model.offeredChoices(of: notification) == notification.nativeChoices)
+        #expect(model.offeredChoices(of: SidebarNotification(source: "cli", title: "Plain")) == nil)
+
+        model.unavailableChoices = ["other"]
+        #expect(model.offeredChoices(of: notification) == notification.nativeChoices)
+
+        for status in [InterceptionStatus.starting, .disabled, .stopped, .needsAccessibility, .notificationCenterUnavailable] {
+            model.interception = status
+            #expect(model.offeredChoices(of: notification) == nil)
+        }
+        model.interception = .active
+
+        model.notificationsAreOff = { $0 == "com.apple.iCal" }
+        #expect(model.offeredChoices(of: notification) == nil)
+        model.notificationsAreOff = { $0 == "com.example.other" }
+        #expect(model.offeredChoices(of: notification) == notification.nativeChoices)
+    }
+
+    /// The notification database can name the choices of a notification after its card was listed without them;
+    /// that card then offers them where it is, no longer as shown by macOS. Cards with choices, cards standing for
+    /// several notifications and notifications without a card are left as they are.
+    @Test func offersChoicesTheDatabaseNamedOnTheCardThatLacksThem() throws {
+        let store = InMemoryStore()
+        let alerts = RecordingNativeNotifications()
+        let model = SidebarModel(performer: RecordingPerformer(), store: store)
+        model.nativeNotifications = alerts
+        model.interception = .active
+        model.add(SidebarNotification(source: "alerter", title: "When?", shownByMacOS: true, nativeIdentifiers: ["menu"]))
+        for identifier in ["old", "new"] {
+            model.add(SidebarNotification(source: "Vivaldi", title: "Alex", nativeIdentifiers: [identifier]))
+        }
+        model.add(SidebarNotification(source: "Calendar", title: "Standup", nativeChoices: .init(identifier: "a", choices: ["Join"]), nativeIdentifiers: ["a"]))
+        let before = model.notifications
+        let menu = try #require(before.last)
+        let choices: [NativeChoice] = ["Now", "Later today", "Tomorrow"]
+
+        #expect(!model.offer(choices, forNotification: "missing"))
+        #expect(!model.offer(choices, forNotification: "new"))
+        #expect(!model.offer(choices, forNotification: "a"))
+        #expect(model.notifications == before)
+
+        #expect(model.offer(choices, forNotification: "menu"))
+        let offered = try #require(model.notifications.last)
+        #expect(model.notifications.map(\.id) == before.map(\.id))
+        #expect(offered.id == menu.id && offered.receivedAt == menu.receivedAt && offered.title == menu.title)
+        #expect(!offered.shownByMacOS)
+        #expect(model.offeredChoices(of: offered) == .init(identifier: "menu", choices: choices))
+        #expect(store.load() == model.notifications)
+        #expect(alerts.releases == 0)
+        #expect(!model.offer(["Later"], forNotification: "menu"))
+
+        model.choose("Later today", for: offered.id)
+        #expect(alerts.performed == ["Later today menu"])
     }
 
     /// A choice that asks for text is answered with the text and the app's send button, never as a plain
@@ -182,7 +242,7 @@ struct SidebarModelTests {
         let alerts = RecordingNativeNotifications()
         let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
         model.nativeNotifications = alerts
-        model.presentChoices = ["r"]
+        model.interception = .active
         model.add(SidebarNotification(source: "Slack", title: "Ada", nativeChoices: .init(identifier: "r", choices: [reply, "Later"]), nativeIdentifiers: ["r"]))
         let card = model.notifications[0]
 
@@ -323,12 +383,16 @@ struct SidebarModelTests {
         #expect(!model.lists(choicesOf: "a"))
     }
 
+    /// A card restored after a relaunch stands for its notification, and offers its choices once notifications are
+    /// intercepted again: nothing saved tells whether they still work.
     @Test func listsAlertsRestoredFromTheSavedList() {
         let saved = SidebarNotification(source: "s", title: "t", nativeChoices: .init(identifier: "a", choices: ["Allow…"]), nativeIdentifiers: ["a"])
         let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore([saved]))
 
         #expect(model.lists(notification: "a"))
         #expect(model.offeredChoices(of: saved) == nil)
+        model.interception = .active
+        #expect(model.offeredChoices(of: saved) == saved.nativeChoices)
     }
 
     @Test func applyingHistoryLimitsDropsWhatTheyNoLongerAllow() {

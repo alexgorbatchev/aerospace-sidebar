@@ -10,7 +10,6 @@ struct NativeChoicesTests {
     init() throws {
         fixture = try NotificationDatabaseFixture()
         try fixture.create()
-        try fixture.execute("CREATE TABLE categories (app_id INTEGER PRIMARY KEY, categories BLOB)")
     }
 
     /// Slack's category, as usernoted stores it on macOS 26.
@@ -25,10 +24,14 @@ struct NativeChoicesTests {
         "acts": [["id": "approve", "op": 0, "ti": "Approve"], ["id": "reject", "op": 2, "ti": "Reject"], ["id": "later", "op": 0, "ti": "Later"]],
     ]
 
-    func registerCategories(_ categories: [[String: Any]], app: Int = 1) throws {
-        let data = try PropertyListSerialization.data(fromPropertyList: categories, format: .binary, options: 0)
-        try fixture.execute("INSERT INTO categories VALUES (\(app), x'\(data.map { String(format: "%02x", $0) }.joined())')")
-    }
+    /// The actions alerter's `--actions "Now,Later today,Tomorrow" --dropdown-label "When?"` carries in its record:
+    /// the menu's items, and its action button as the menu's header.
+    static let menuActions: [[String: Any]] = [
+        ["id": "ACTION", "op": 0, "ti": "When?"],
+        ["id": "0", "op": 64, "ti": "Now"],
+        ["id": "1", "op": 64, "ti": "Later today"],
+        ["id": "2", "op": 66, "ti": "Tomorrow"],
+    ]
 
     @Test func readsTitlesTextInputsAndDestructiveActions() {
         let choices = NativeChoice.choices(declaredBy: (Self.slackCategory["acts"] as! [[String: Any]]) + (Self.threeChoices["acts"] as! [[String: Any]]))
@@ -41,8 +44,16 @@ struct NativeChoicesTests {
         ])
     }
 
+    /// An actions menu's header only closes the notification unanswered; without a menu, the action button is the
+    /// one choice. Actions without a title name no accessibility action.
+    @Test func leavesAnActionsMenusHeaderOut() {
+        #expect(NativeChoice.choices(declaredBy: Self.menuActions) == ["Now", "Later today", NativeChoice(title: "Tomorrow", isDestructive: true)])
+        #expect(NativeChoice.choices(declaredBy: [["id": "ACTION", "op": 0, "ti": "Approve"]]) == ["Approve"])
+        #expect(NativeChoice.choices(declaredBy: [["id": "ACTION", "op": 0], ["id": "other", "ti": ""]]).isEmpty)
+    }
+
     @Test func readsTheCategoriesAnAppRegistered() throws {
-        try registerCategories([Self.slackCategory, Self.threeChoices, ["acts": []]])
+        try fixture.declare([Self.slackCategory, Self.threeChoices, ["acts": []]])
 
         let declared = try fixture.database.declaredChoices(ofApp: "COM.apple.ScriptEditor2")
 
@@ -100,11 +111,33 @@ struct NativeChoicesTests {
 
     /// The database's categories reach the cache; without Full Disk Access every app declared none.
     @Test func readsDeclaredChoicesFromTheDatabase() throws {
-        try registerCategories([Self.slackCategory])
+        try fixture.declare([Self.slackCategory])
         let declared = DeclaredChoices(database: fixture.database)
         #expect(declared.choices(ofApp: "com.apple.ScriptEditor2", titled: ["Reply"])?.first?.textInput?.placeholder == "Message")
 
         let unreadable = DeclaredChoices(database: NotificationDatabase(url: URL(fileURLWithPath: "/nonexistent/db")))
         #expect(unreadable.choices(ofApp: "com.apple.ScriptEditor2", titled: ["Reply"]) == nil)
+    }
+
+    /// A record names an NSUserNotification's own actions, or the category its app declared for it, read when asked
+    /// for, so a category declared after an earlier read counts. A category the app did not declare, or one without
+    /// actions, names none, and so does a record without either.
+    @Test func readsTheChoicesARecordNames() throws {
+        let start = Date(timeIntervalSinceReferenceDate: 799_000_000)
+        try fixture.insert(title: "Menu", delivered: start + 1, actions: Self.menuActions)
+        try fixture.insert(title: "Declared", delivered: start + 2, category: "three")
+        try fixture.insert(title: "Undeclared", delivered: start + 3, category: "missing")
+        try fixture.insert(title: "Empty", delivered: start + 4, category: "empty")
+        try fixture.insert(title: "Untitled", delivered: start + 5, category: "", actions: [["id": "ACTION", "op": 0]])
+        try fixture.insert(title: "Plain", delivered: start + 6)
+        let records = try fixture.database.notifications(deliveredAfter: start, by: start + 10)
+        #expect(records.map(\.category) == [nil, "three", "missing", "empty", nil, nil])
+        #expect(throws: NotificationDatabase.Failure.self) { try fixture.database.choices(ofNotification: records[1]) }
+
+        try fixture.declare([Self.threeChoices, ["id": "empty", "acts": []]])
+
+        #expect(try records.map { try fixture.database.choices(ofNotification: $0)?.map(\.title) } == [
+            ["Now", "Later today", "Tomorrow"], ["Approve", "Reject", "Later"], nil, nil, nil, nil,
+        ])
     }
 }

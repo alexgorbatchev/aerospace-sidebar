@@ -5,12 +5,13 @@ import Testing
 
 @MainActor
 struct NotificationHistoryOpenerTests {
-    /// NotificationCenter, its windows and the menu bar clock. The clock opens the panel only when a test
-    /// says so, as macOS does a moment after the press.
+    /// NotificationCenter, its windows, the menu bar clock and the user's input. The clock opens the panel only
+    /// when a test says so, as macOS does a moment after the press.
     @MainActor
     final class History {
         let application = FakeElement()
         let clock = FakeElement([kAXIdentifierAttribute: SystemAccessibility.clockIdentifier], actions: [kAXPressAction])
+        let input = FakeUserInput()
         var windows: [FakeElement] = [FakeElement.window()]
         var now = Date(timeIntervalSince1970: 0)
         /// Whether each request was performed, and what each came to.
@@ -18,8 +19,9 @@ struct NotificationHistoryOpenerTests {
         var outcomes: [SystemNotificationInterceptor.PerformOutcome] = []
         var opener: NotificationHistoryOpener!
 
-        init() {
-            opener = NotificationHistoryOpener(now: { [unowned self] in now })
+        /// `reader` stands in for `input` when a test reads the user's input in its own way.
+        init(input reader: RecentUserInput? = nil) {
+            opener = NotificationHistoryOpener(now: { [unowned self] in now }, input: reader ?? input.reader)
         }
 
         /// Shows the panel with `entries` in its one window, which stays where NotificationCenter put it.
@@ -47,6 +49,18 @@ struct NotificationHistoryOpenerTests {
         @discardableResult
         func step(clock: FakeElement? = nil, hasClock: Bool = true) -> Bool {
             opener.step(windows: windows, application: application, clock: hasClock ? (clock ?? self.clock) : nil)
+        }
+
+        /// Starts a request that gives up before its panel opens, which then watches for the panel.
+        func giveUp(_ identifiers: [String] = ["b"]) {
+            _ = start(identifiers)
+            step()
+            now += NotificationHistoryOpener.timeout
+            step()
+        }
+
+        func adoptLatePanel() -> Bool {
+            opener.adoptLatePanel(windows: windows, application: application)
         }
     }
 
@@ -189,6 +203,132 @@ struct NotificationHistoryOpenerTests {
         #expect(history.clock.performed == [kAXPressAction, kAXPressAction])
     }
 
+    /// A panel found open during the watch right after the user clicked in a menu bar (the clock), pressed a key
+    /// (a keyboard shortcut) or scrolled (the trackpad swipe in from the edge) is the user's: it is neither hidden
+    /// nor closed, and the watch is over, so it stays the user's once the input is old.
+    @Test(arguments: RecentUserInput.Kind.allCases)
+    func leavesAPanelTheUserOpensDuringTheWatchAlone(by kind: RecentUserInput.Kind) {
+        let history = History()
+        history.giveUp()
+        #expect(history.results == [false])
+
+        history.input.pointerInMenuBar = kind == .mouseDown
+        history.input.secondsSince[kind] = NotificationHistoryOpener.userInputWindow / 2
+        history.openPanel(FakeElement.banner(id: "b"))
+        #expect(!history.adoptLatePanel())
+        #expect(!history.opener.isOpening)
+
+        history.input.secondsSince = [:]
+        #expect(!history.adoptLatePanel())
+        #expect(history.windows[0].moves.isEmpty)
+        #expect(history.clock.performed == [kAXPressAction])
+    }
+
+    /// A click outside the menu bars, such as on a card, and input older than `userInputWindow` tell nothing:
+    /// the late panel is the request's, and closed.
+    @Test func closesALatePanelAfterInputThatDidNotOpenIt() {
+        func adopts(after input: (FakeUserInput) -> Void) -> Bool {
+            let history = History()
+            history.giveUp()
+            input(history.input)
+            history.openPanel()
+            return history.adoptLatePanel()
+        }
+
+        #expect(adopts { $0.secondsSince[.mouseDown] = 0 })
+        #expect(adopts {
+            $0.pointerInMenuBar = true
+            for kind in RecentUserInput.Kind.allCases {
+                $0.secondsSince[kind] = NotificationHistoryOpener.userInputWindow
+            }
+        })
+    }
+
+    /// Only a panel a request waits for after giving up, its own or an earlier one's, may be the user's: a request
+    /// that pressed the clock itself hides the panel that opens and closes it whatever the user just did.
+    @Test func hidesThePanelItOpenedWhateverTheInput() {
+        let history = History()
+        _ = history.start(["b"])
+        history.step()
+        history.input.pointerInMenuBar = true
+        for kind in RecentUserInput.Kind.allCases {
+            history.input.secondsSince[kind] = 0
+        }
+        let entry = FakeElement.banner(id: "b")
+        history.openPanel(entry)
+
+        #expect(history.step())
+        #expect(history.windows[0].position == SystemNotificationInterceptor.offScreen)
+        #expect(entry.performed == [kAXPressAction])
+        #expect(history.clock.performed == [kAXPressAction, kAXPressAction])
+    }
+
+    /// The Return that sends a card's reply went to the sidebar, so the reply request it starts during the watch
+    /// still takes the late panel for its own: hidden, replied from and closed. A key press that went elsewhere
+    /// after it, such as a keyboard shortcut, makes the panel the user's, which is replied from where it is.
+    @Test(arguments: [false, true])
+    func judgesALatePanelAfterTheSidebarsOwnReturn(shortcutAfterwards: Bool) throws {
+        var uptime: TimeInterval = 100
+        var lastKeyDown = -TimeInterval.infinity
+        let received = ReceivedInput()
+        let history = History(input: RecentUserInput(
+            secondsSince: { kind in
+                RecentUserInput.secondsSince(
+                    kind,
+                    uptime: uptime,
+                    sessionAge: { $0 == .keyDown ? uptime - lastKeyDown : .infinity },
+                    receivedAt: received.latest(_:)
+                )
+            },
+            isPointerInMenuBar: { false }
+        ))
+        history.giveUp(["a"])
+
+        // The sidebar receives the Return a moment after the window server records it.
+        lastKeyDown = uptime
+        received.record(try RecentUserInputTests.returnKey(), at: uptime + 0.005)
+        if shortcutAfterwards {
+            lastKeyDown += 0.1
+        }
+        let entry = FakeElement.replyBanner(id: "b", app: "Vivaldi")
+        _ = history.start(["b"], action: .reply(choice: "Reply", text: "On my way", send: "Send"))
+        history.step()
+        uptime += 0.3
+        history.now += 0.3
+        history.openPanel(entry)
+        history.step()
+
+        #expect(entry.string("sent") == "On my way")
+        if shortcutAfterwards {
+            #expect(history.windows[0].moves.isEmpty)
+            #expect(history.clock.performed == [kAXPressAction])
+        } else {
+            #expect(history.windows[0].position == SystemNotificationInterceptor.offScreen)
+            #expect(history.clock.performed == [kAXPressAction, kAXPressAction])
+        }
+    }
+
+    /// An entry whose press closes the panel itself is not followed by a press of the clock, which would open the
+    /// panel again; the window stays hidden, and the request ends `closeGrace` after.
+    @Test func doesNotReopenAPanelThePressClosed() {
+        let history = History()
+        _ = history.start(["b"])
+        history.step()
+        let entry = FakeElement.banner(id: "b")
+        entry.onPerform = { _ in history.closePanel() }
+        history.openPanel(entry)
+
+        #expect(history.step())
+        #expect(entry.performed == [kAXPressAction])
+        #expect(history.results == [true])
+        #expect(history.clock.performed == [kAXPressAction])
+        #expect(history.step())
+        #expect(history.windows[0].position == SystemNotificationInterceptor.offScreen)
+        history.now += NotificationHistoryOpener.closeGrace
+        #expect(!history.step())
+        #expect(history.clock.performed == [kAXPressAction])
+    }
+
     /// While an earlier request may still get its panel, the next one does not press the clock again, which
     /// would close that panel as it opens; it uses the panel once it opens.
     @Test func waitsForTheEarlierRequestsPanel() {
@@ -208,6 +348,25 @@ struct NotificationHistoryOpenerTests {
         #expect(history.windows[0].position == SystemNotificationInterceptor.offScreen)
         #expect(history.results == [false, true])
         #expect(history.clock.performed == [kAXPressAction, kAXPressAction])
+    }
+
+    /// A request waiting for an earlier request's panel judges a panel it finds open like the watch does: one the
+    /// user just opened from the clock is used where it is, and neither hidden nor closed.
+    @Test func usesAPanelTheUserOpensWhileWaitingForTheEarlierRequests() {
+        let history = History()
+        history.giveUp(["a"])
+
+        #expect(history.start(["b"]))
+        #expect(history.step())
+        history.input.pointerInMenuBar = true
+        history.input.secondsSince[.mouseDown] = 0.2
+        let entry = FakeElement.banner(id: "b")
+        history.openPanel(entry)
+        #expect(!history.step())
+        #expect(entry.performed == [kAXPressAction])
+        #expect(history.windows[0].moves.isEmpty)
+        #expect(history.results == [false, true])
+        #expect(history.clock.performed == [kAXPressAction])
     }
 
     /// A panel that opens just before the search runs out of time is still closed: closing gets its own
@@ -368,6 +527,57 @@ struct NotificationHistoryOpenerTests {
         #expect(history.results == [false, false, false, true, false])
         #expect(history.clock.performed.count == 7)
         #expect(!history.opener.adoptLatePanel(windows: history.windows, application: history.application))
+    }
+
+    /// Abandoning a request that waits for a late panel, whether it gave up or waits for an earlier request's,
+    /// leaves a panel the user just opened alone.
+    @Test func leavesTheUsersPanelAloneWhenAbandoned() {
+        let history = History()
+        func cancel() {
+            history.opener.cancel(windows: history.windows, application: history.application, clock: history.clock)
+        }
+        history.giveUp()
+        history.input.secondsSince[.keyDown] = 0
+        history.openPanel()
+        cancel()
+        #expect(history.clock.performed == [kAXPressAction])
+
+        history.closePanel()
+        history.input.secondsSince = [:]
+        history.giveUp()
+        _ = history.start(["c"])
+        history.step()
+        history.input.secondsSince[.scroll] = 0
+        history.openPanel()
+        cancel()
+        #expect(history.clock.performed == [kAXPressAction, kAXPressAction])
+        #expect(history.outcomes == [.refused, .refused, .refused])
+    }
+
+    /// Recent input spares only a panel the abandoned request still waits to find: one an inheriting request has
+    /// taken for its own, or one a request opened with its own press, is closed whatever the user just did.
+    @Test func closesItsOwnPanelWhenAbandonedWhateverTheInput() {
+        func cancel(_ history: History) {
+            history.opener.cancel(windows: history.windows, application: history.application, clock: history.clock)
+        }
+        let inheriting = History()
+        inheriting.giveUp(["a"])
+        _ = inheriting.start(["b"])
+        inheriting.step()
+        inheriting.openPanel()
+        inheriting.step()
+        #expect(inheriting.windows[0].position == SystemNotificationInterceptor.offScreen)
+        inheriting.input.secondsSince[.keyDown] = 0
+        cancel(inheriting)
+        #expect(inheriting.clock.performed == [kAXPressAction, kAXPressAction])
+
+        let pressing = History()
+        _ = pressing.start(["b"])
+        pressing.step()
+        pressing.input.secondsSince[.keyDown] = 0
+        pressing.openPanel()
+        cancel(pressing)
+        #expect(pressing.clock.performed == [kAXPressAction, kAXPressAction])
     }
 
     /// A choice or reply is performed on the entry as on a banner. Its completion runs once the request is

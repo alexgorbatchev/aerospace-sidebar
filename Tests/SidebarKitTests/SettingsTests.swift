@@ -81,6 +81,47 @@ struct SettingsFileTests {
         }
     }
 
+    /// A misspelled key or table would otherwise be ignored and leave its setting at the default.
+    @Test(arguments: [
+        ("[notification]\nreplace_system = false\n", "unknown key notification; expected sidebar, notifications, history, font, or rules"),
+        ("replace_system = false\n", "unknown key replace_system; expected sidebar, notifications, history, font, or rules"),
+        ("[notifications]\nreplace_sytem = false\n", "notifications: unknown key replace_sytem; expected replace_system, actionable_left_to_macos, or apps_left_to_macos"),
+        ("[sidebar]\nwdth = 300\nsid = \"left\"\n", "sidebar: unknown keys sid and wdth; expected side or width"),
+        ("sidebar.wide = 300\n", "sidebar: unknown key wide; expected side or width"),
+        ("[history]\nmax = 50\n", "history: unknown key max; expected retention_hours or max_count"),
+        ("[font]\nfamily = \"Menlo\"\n", "font: unknown key family; expected name or size"),
+    ])
+    func rejectsUnknownKeys(toml: String, message: String) throws {
+        let directory = try TemporaryDirectory()
+        try directory.write(toml, to: "config.toml")
+
+        #expect {
+            try SettingsFile(url: directory.url.appendingPathComponent("config.toml")).load()
+        } throws: { error in
+            SettingsStore.describe(error) == message
+        }
+    }
+
+    /// Every key the app writes is one it reads back, with every table and pattern set.
+    @Test func writtenConfigLoadsAgain() throws {
+        let directory = try TemporaryDirectory()
+        let file = SettingsFile(url: directory.url.appendingPathComponent("config.toml"))
+        let settings = SidebarSettings(
+            sidebar: .init(side: .left, width: 420),
+            notifications: .init(replaceSystem: false, actionableLeftToMacOS: false, appsLeftToMacOS: ["zoom.us"]),
+            history: .init(retentionHours: 48, maxCount: 500),
+            font: .init(name: "Menlo", size: 14),
+            rules: [SidebarSettings.Rule(source: "^Slack$", title: "deploy", subtitle: "prod", body: "failed", action: .hide)]
+        )
+        let store = SettingsStore(file: file)
+
+        store.update { $0 = settings }
+        store.reload()
+
+        #expect(store.loadError == nil)
+        #expect(try file.load() == settings)
+    }
+
     @Test func matchesAppsLeftToMacOSCaseInsensitively() {
         let notifications = SidebarSettings.Notifications(appsLeftToMacOS: ["Zoom.us"])
 
@@ -211,6 +252,27 @@ struct SettingsStoreTests {
         store.reload()
         #expect(store.settings.history.retentionHours == 6)
         #expect(store.loadError?.contains("retention_hours") == true)
+    }
+
+    /// A rule with a misspelled pattern key would hide every notification from its source; the store refuses
+    /// the file instead, at launch and on reload.
+    @Test func refusesAFileWithAnUnknownKey() throws {
+        let rule = SidebarSettings.Rule(source: "Slack", title: "deploy failed", action: .hide)
+        let typo = "[[rules]]\nsource = \"Slack\"\ntitel = \"deploy failed\"\naction = \"hide\"\n"
+        let message = "rules[0]: unknown key titel; expected source, title, subtitle, body, or action"
+        try directory.write(typo, to: "config.toml")
+
+        let launched = SettingsStore(file: file)
+
+        #expect(launched.settings == SidebarSettings())
+        #expect(launched.loadError == message)
+
+        launched.update { $0.rules = [rule] }
+        try directory.write(typo, to: "config.toml")
+        launched.reload()
+
+        #expect(launched.settings.rules == [rule])
+        #expect(launched.loadError == message)
     }
 
     @Test func watchingAppliesExternalEdits() async throws {

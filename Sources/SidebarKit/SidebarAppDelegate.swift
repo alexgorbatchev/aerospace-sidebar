@@ -39,7 +39,9 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     private var pruneTimer: Timer?
     private let makeController: @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor (SettingsGroup) -> Void, _ setUp: @escaping @MainActor (PermissionFlowPane, CGRect?) -> Void) -> SidebarPanelController
     private let makeMonitor: @MainActor (SidebarModel, SettingsStore, NotificationIdentities, NotificationDatabase) -> NotificationCenterMonitor
-    private let makeDatabaseMonitor: @MainActor (SidebarModel, NotificationIdentities, NotificationDatabase) -> NotificationDatabaseMonitor
+    private let makeDatabaseMonitor: @MainActor (
+        SidebarModel, NotificationIdentities, NotificationDatabase, _ onChoices: @escaping @MainActor (_ identifier: String, _ choices: [NativeChoice]) -> Void
+    ) -> NotificationDatabaseMonitor
     private let makeServer: @MainActor (SidebarModel, AppIconFont) -> ControlServer
     private let makeOnboarding: @MainActor (NotificationDatabase) -> OnboardingModel
     private let makeAppNotifications: @MainActor (SidebarModel) -> AppNotificationsModel
@@ -76,8 +78,10 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         makeMonitor: @escaping @MainActor (SidebarModel, SettingsStore, NotificationIdentities, NotificationDatabase) -> NotificationCenterMonitor = {
             SidebarAppDelegate.makeMonitor(model: $0, settings: $1, identities: $2, declaredChoices: DeclaredChoices(database: $3))
         },
-        makeDatabaseMonitor: @escaping @MainActor (SidebarModel, NotificationIdentities, NotificationDatabase) -> NotificationDatabaseMonitor = {
-            SidebarAppDelegate.makeDatabaseMonitor(model: $0, identities: $1, database: $2)
+        makeDatabaseMonitor: @escaping @MainActor (
+            SidebarModel, NotificationIdentities, NotificationDatabase, _ onChoices: @escaping @MainActor (_ identifier: String, _ choices: [NativeChoice]) -> Void
+        ) -> NotificationDatabaseMonitor = {
+            SidebarAppDelegate.makeDatabaseMonitor(model: $0, identities: $1, database: $2, onChoices: $3)
         },
         makeServer: @escaping @MainActor (SidebarModel, AppIconFont) -> ControlServer = { SidebarAppDelegate.makeServer(model: $0, icons: $1) },
         makeAeroSpaceSync: @MainActor (SettingsStore) -> AeroSpaceSync = SidebarAppDelegate.makeAeroSpaceSync,
@@ -122,7 +126,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         self.monitor = monitor
         model.nativeNotifications = monitor
         model.notificationsAreOff = { [appNotifications] in appNotifications.notificationsAreOff(for: $0) }
-        let databaseMonitor = makeDatabaseMonitor(model, identities, notificationDatabase)
+        let databaseMonitor = makeDatabaseMonitor(model, identities, notificationDatabase) { [weak self] in self?.offer($1, forNotification: $0) }
         self.databaseMonitor = databaseMonitor
         settings.observe { [weak self, model] settings in
             self?.sidebarChanged(to: settings.sidebar)
@@ -189,6 +193,17 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         }
         monitor?.checkPermission()
         databaseMonitor?.checkAccess()
+    }
+
+    /// Lets the card that lists a native notification without its choices offer those the notification database
+    /// named for it, then sweeps, so that the notification, an alert still on screen, is handed over to the card
+    /// and hidden. A notification from an app left to macOS stays there.
+    private func offer(_ choices: [NativeChoice], forNotification identifier: String) {
+        let leavesToMacOS = settings.settings.notifications.leavesToMacOS
+        guard !model.notifications.contains(where: { $0.nativeIdentifiers.contains(identifier) && leavesToMacOS($0.source) }),
+              model.offer(choices, forNotification: identifier)
+        else { return }
+        monitor?.refresh()
     }
 
     /// Brings AeroSpace's reserved strip in line with the sidebar and moves native notifications out from
@@ -261,7 +276,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
                 listsNotification: { model.lists(notification: $0) },
                 listsChoices: { model.lists(choicesOf: $0) },
                 declaredChoices: { declaredChoices.choices(ofApp: $0, titled: $1) },
-                onPresentChoices: { model.presentChoices = $0 },
+                onUnavailableChoices: { model.unavailableChoices = $0 },
                 nativeOrigin: {
                     guard let visibleFrame = targetVisibleFrame() else { return .zero }
                     return CGPoint(x: -SidebarLayout(settings.settings.sidebar).coverage(ofRightEdgeOf: visibleFrame), y: 0)
@@ -272,15 +287,19 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
+    /// - Parameter onChoices: Receives the choices a database record names for a notification listed before,
+    ///   whose card may lack them.
     public static func makeDatabaseMonitor(
         model: SidebarModel,
         identities: NotificationIdentities,
         database: NotificationDatabase,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        onChoices: @escaping @MainActor (_ identifier: String, _ choices: [NativeChoice]) -> Void = { _, _ in }
     ) -> NotificationDatabaseMonitor {
         NotificationDatabaseMonitor(
             database: database, identities: identities, defaults: defaults,
             onStatus: { model.database = $0 },
+            onChoices: onChoices,
             onNotification: { model.add($0) }
         )
     }

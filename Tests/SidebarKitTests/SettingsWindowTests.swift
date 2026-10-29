@@ -211,6 +211,23 @@ struct SettingsEditorTests {
         #expect(editor.status == nil)
     }
 
+    /// A file with an unknown key does not load, so Save warns first and a second Save writes the settings
+    /// without that key.
+    @Test func replacesAFileWithAnUnknownKey() throws {
+        let editor = SettingsEditor(store: store)
+        editor.draft.history.maxCount = 300
+        try directory.write("[notifications]\nreplace_sytem = false\n", to: "config.toml")
+        store.reload()
+
+        #expect(!editor.save())
+        #expect(editor.status == "config.toml is invalid (notifications: unknown key replace_sytem; expected replace_system, actionable_left_to_macos, or apps_left_to_macos). Save again to replace it with these settings, or Cancel to fix it by hand.")
+
+        #expect(editor.save())
+        #expect(store.loadError == nil)
+        #expect(try store.file.load() == SidebarSettings(history: .init(maxCount: 300)))
+        #expect(try !String(contentsOf: store.file.url, encoding: .utf8).contains("replace_sytem"))
+    }
+
     /// Once the file loads again, the warning about replacing it is gone.
     @Test func dropsTheWarningOnceTheFileLoadsAgain() throws {
         let editor = SettingsEditor(store: store)

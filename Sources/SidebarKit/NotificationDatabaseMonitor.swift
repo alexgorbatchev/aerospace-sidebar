@@ -21,7 +21,13 @@ public enum NotificationDatabaseStatus: Equatable, Sendable {
 /// the sidebar was not running, or still waiting when it quit, are listed at the next launch; the first
 /// launch starts from the newest delivered record rather than importing the whole history. Without Full Disk
 /// Access the database cannot be read, and the monitor tries again every `accessRetryInterval` seconds;
-/// access taken away while reading shows when the next read fails, or at once through `checkAccess()`.
+/// access taken away while reading shows when the next read fails, or at once through `checkAccess()`. A read
+/// that fails otherwise is tried once more after `readRetryDelay`.
+///
+/// A record names the choices its notification offers (`NotificationDatabase.choices(ofNotification:)`). A
+/// listed record's card offers them; for a record already listed, they go to `onChoices`, since its card may
+/// lack them: NotificationCenter shows an NSUserNotification's actions menu with its header as one more choice,
+/// and its titles can match several of an app's categories.
 @MainActor
 public final class NotificationDatabaseMonitor {
     nonisolated static let logger = Logger(category: "database")
@@ -49,21 +55,30 @@ public final class NotificationDatabaseMonitor {
     private let grace: TimeInterval
     private let appName: @MainActor (String) -> String?
     private let now: () -> Date
+    private let readRetryDelay: TimeInterval
     private let onStatus: @MainActor (NotificationDatabaseStatus) -> Void
+    private let onChoices: @MainActor (_ identifier: String, _ choices: [NativeChoice]) -> Void
     private let onNotification: @MainActor (SidebarNotification) -> Void
     private var watcher: FileWatcher?
     private var retryTimer: Timer?
+    private var readRetryTimer: Timer?
     private var deliveryTimer: Timer?
     private var pending: [(notification: DeliveredNotification, readAt: Date)] = []
+    /// The records within the last read whose choices were read, so that each record's are read once.
+    private var choicesRead: Set<String> = []
     /// When the newest record read was delivered.
     private var newestDelivery: Date?
-    private var lastError: NotificationDatabase.Failure?
+    /// The failure logged last; cleared by a read that succeeds, so the same failure is logged again later.
+    private(set) var lastError: NotificationDatabase.Failure?
 
     /// - Parameters:
     ///   - grace: How long a new record waits for its banner before it is listed. macOS writes a record 5–7 s
     ///     after delivering it, while a banner is reported within about a second, so a short grace suffices.
     ///   - appName: The display name of the app with a bundle identifier, or nil for none installed.
+    ///   - readRetryDelay: How long after a read that failed other than for missing access it is tried once
+    ///     more. The write that woke it is spent, so its record would otherwise wait for an unrelated later write.
     ///   - onStatus: Called with each change of `status`.
+    ///   - onChoices: Receives the choices a record names for a notification listed before, by its identifier.
     public init(
         database: NotificationDatabase,
         identities: NotificationIdentities,
@@ -71,7 +86,9 @@ public final class NotificationDatabaseMonitor {
         grace: TimeInterval = 1,
         appName: @escaping @MainActor (String) -> String? = InstalledApps.name,
         now: @escaping () -> Date = Date.init,
+        readRetryDelay: TimeInterval = 1,
         onStatus: @escaping @MainActor (NotificationDatabaseStatus) -> Void = { _ in },
+        onChoices: @escaping @MainActor (_ identifier: String, _ choices: [NativeChoice]) -> Void = { _, _ in },
         onNotification: @escaping @MainActor (SidebarNotification) -> Void
     ) {
         self.database = database
@@ -80,12 +97,15 @@ public final class NotificationDatabaseMonitor {
         self.grace = grace
         self.appName = appName
         self.now = now
+        self.readRetryDelay = readRetryDelay
         self.onStatus = onStatus
+        self.onChoices = onChoices
         self.onNotification = onNotification
     }
 
     isolated deinit {
         retryTimer?.invalidate()
+        readRetryTimer?.invalidate()
         deliveryTimer?.invalidate()
     }
 
@@ -99,6 +119,8 @@ public final class NotificationDatabaseMonitor {
         watcher = nil
         retryTimer?.invalidate()
         retryTimer = nil
+        readRetryTimer?.invalidate()
+        readRetryTimer = nil
         deliveryTimer?.invalidate()
         deliveryTimer = nil
         pending = []
@@ -118,6 +140,9 @@ public final class NotificationDatabaseMonitor {
 
     /// Whether the monitor is waiting for Full Disk Access.
     var isWaitingForAccess: Bool { retryTimer != nil }
+
+    /// Whether a read that failed waits to be tried once more.
+    var isWaitingToRetryRead: Bool { readRetryTimer != nil }
 
     /// Starts reading once the database opens, or tries again later.
     func open() {
@@ -146,8 +171,10 @@ public final class NotificationDatabaseMonitor {
     }
 
     /// Queues the records delivered since the last read that are neither listed, reported by a banner nor
-    /// queued already. Nothing is read before `open()` sets the read position.
-    func readNewRecords() {
+    /// queued already, and reports the choices of those listed before. Nothing is read before `open()` sets the
+    /// read position. A read that fails other than for missing access is tried once more after `readRetryDelay`,
+    /// unless it was that retry.
+    func readNewRecords(isRetry: Bool = false) {
         let readAt = now()
         guard var position = readPosition else { return }
         // A clock that runs forward stays ahead of the read position and the newest record read. Once it is set
@@ -167,19 +194,26 @@ public final class NotificationDatabaseMonitor {
             // when access is back.
             if error.isAccessDenied {
                 retryLater()
+            } else if !isRetry {
+                retryRead()
             }
             return
         }
         status = .reading
+        lastError = nil
+        choicesRead.formIntersection(records.map(\.identifier))
         guard let newest = records.last?.deliveredAt else { return }
         newestDelivery = max(newestDelivery ?? newest, newest)
         defer { advance() }
         // Reads look back, so most records were read before: those listed or reported by a banner are in
         // `identities`, those waiting for their banner in `pending`.
-        let new = records.filter { record in
-            record.bundleIdentifier != Self.permissionRequestApp && !identities.contains(record.identifier)
-                && !pending.contains { $0.notification.identifier == record.identifier }
+        let candidates = records.filter { record in
+            record.bundleIdentifier != Self.permissionRequestApp && !pending.contains { $0.notification.identifier == record.identifier }
         }
+        for record in candidates where identities.contains(record.identifier) {
+            reportChoices(of: record)
+        }
+        let new = candidates.filter { !identities.contains($0.identifier) }
         guard let last = new.last else { return }
         // How late the read is after delivery, and after macOS wrote the log, shows whether a delay comes
         // from macOS or from watching the file.
@@ -203,8 +237,17 @@ public final class NotificationDatabaseMonitor {
         let cutoff = time.addingTimeInterval(-grace)
         let ready = pending.filter { $0.readAt <= cutoff }.map(\.notification)
         pending.removeAll { $0.readAt <= cutoff }
-        for notification in ready where identities.insert(notification.identifier) {
-            Self.logger.info("Listing \(notification.identifier, privacy: .public), which showed no banner")
+        for notification in ready {
+            // A banner reported it meanwhile.
+            guard identities.insert(notification.identifier) else {
+                reportChoices(of: notification)
+                continue
+            }
+            let choices = self.choices(of: notification)
+            Self.logger.info("""
+                Listing \(notification.identifier, privacy: .public), which showed no banner\
+                \(choices.map { " with its choices \($0.map(\.title))" } ?? "", privacy: .public)
+                """)
             let name = appName(notification.bundleIdentifier)
             onNotification(SidebarNotification(
                 source: name ?? SystemNotificationInterceptor.systemSource,
@@ -213,12 +256,32 @@ public final class NotificationDatabaseMonitor {
                 body: notification.body,
                 bundleIdentifier: name == nil ? nil : notification.bundleIdentifier,
                 action: name.map { .activateApp(name: $0) },
+                nativeChoices: choices.map { SidebarNotification.NativeChoices(identifier: notification.identifier, choices: $0) },
                 nativeIdentifiers: [notification.identifier],
                 receivedAt: notification.deliveredAt
             ))
         }
         advance()
         scheduleDelivery()
+    }
+
+    /// Hands the choices a record names for a notification listed before to `onChoices`, whose card may lack them.
+    private func reportChoices(of record: DeliveredNotification) {
+        guard let choices = self.choices(of: record) else { return }
+        Self.logger.info("Record \(record.identifier, privacy: .public) names the choices \(choices.map(\.title), privacy: .public)")
+        onChoices(record.identifier, choices)
+    }
+
+    /// The choices a record names, read once per record: reads look back, so they meet each record several times.
+    /// Nil when it names none, or when they cannot be read, which is logged.
+    private func choices(of record: DeliveredNotification) -> [NativeChoice]? {
+        guard choicesRead.insert(record.identifier).inserted else { return nil }
+        do {
+            return try database.choices(ofNotification: record)
+        } catch {
+            Self.logger.error("Cannot read the choices of \(record.identifier, privacy: .public): \(error.description, privacy: .public)")
+            return nil
+        }
     }
 
     private func scheduleDelivery() {
@@ -250,10 +313,23 @@ public final class NotificationDatabaseMonitor {
         }
     }
 
+    /// Reads once more after `readRetryDelay`, unless a retry is waiting already.
+    private func retryRead() {
+        guard readRetryTimer == nil else { return }
+        readRetryTimer = Timer.scheduledTimer(withTimeInterval: readRetryDelay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.readRetryTimer = nil
+                self?.readNewRecords(isRetry: true)
+            }
+        }
+    }
+
     /// Stops watching the database and tries to open it again every `accessRetryInterval` seconds.
     private func retryLater() {
         watcher?.stop()
         watcher = nil
+        readRetryTimer?.invalidate()
+        readRetryTimer = nil
         guard retryTimer == nil else { return }
         retryTimer = Timer.scheduledTimer(withTimeInterval: Self.accessRetryInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.open() }

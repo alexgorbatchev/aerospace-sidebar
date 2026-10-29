@@ -25,8 +25,15 @@ struct SidebarAppDelegateTests {
 
     /// Reads a database in the test's directory, never the real one.
     /// Keeps the read position in the fixture's defaults domain; the delegate hands it the fixture's database.
-    func makeDatabaseMonitor(_ model: SidebarModel, _ identities: NotificationIdentities, _ database: NotificationDatabase) -> NotificationDatabaseMonitor {
-        SidebarAppDelegate.makeDatabaseMonitor(model: model, identities: identities, database: database, defaults: self.database.defaults)
+    func makeDatabaseMonitor(
+        _ model: SidebarModel,
+        _ identities: NotificationIdentities,
+        _ database: NotificationDatabase,
+        _ onChoices: @escaping @MainActor (String, [NativeChoice]) -> Void
+    ) -> NotificationDatabaseMonitor {
+        SidebarAppDelegate.makeDatabaseMonitor(
+            model: model, identities: identities, database: database, defaults: self.database.defaults, onChoices: onChoices
+        )
     }
 
     /// Edits a config in the test's directory, never the real AeroSpace config.
@@ -192,13 +199,17 @@ struct SidebarAppDelegateTests {
         #expect(delegate.model.interception == .active)
         #expect(window.position == SystemNotificationInterceptor.offScreen)
 
-        permissions.whileResetting = { [platform] _ in
+        var whileRemoving: InterceptionStatus?
+        permissions.whileResetting = { [platform, model = delegate.model] _ in
+            // Interception has stopped, so no card offers choices nothing could perform.
+            whileRemoving = model.interception
             platform.trusted = false
             // Without the permission, NotificationCenter's windows no longer move.
             window.keepsMoves = false
         }
         await delegate.onboarding.removeAccessibility()
 
+        #expect(whileRemoving == .stopped)
         #expect(window.position == .zero)
         #expect(delegate.model.interception == .needsAccessibility)
         #expect(delegate.monitor?.isRunning == true)
@@ -328,6 +339,63 @@ struct SidebarAppDelegateTests {
         relaunched.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
 
         #expect(relaunched.model.notifications.map(\.occurrences) == [1])
+    }
+
+    /// An alert left to macOS for its actions menu gets the menu's choices once usernoted writes its record: its
+    /// card offers them in its place, and the alert is handed over to the card and hidden at once, so a choice on
+    /// the card answers it. An alert from an app left to macOS stays there, its card as it was.
+    @Test func recordsGiveCardsTheChoicesOfAlertsLeftToMacOS() throws {
+        try database.create()
+        settings.update { $0.notifications.appsLeftToMacOS = ["Kept"] }
+        let menu = UUID()
+        let kept = UUID()
+        let alert = FakeElement.alert(id: menu.uuidString, app: "alerter", title: "When?", choices: ["Tomorrow", "Later today", "Now", "When?"])
+        let keptAlert = FakeElement.alert(id: kept.uuidString, app: "Kept", title: "Kept", choices: ["Tomorrow", "Later today", "Now", "When?"])
+        let window = FakeElement.window(alert)
+        let keptWindow = FakeElement.window(keptAlert)
+        platform.windowsByPID[42] = [window, keptWindow]
+        let delegate = SidebarAppDelegate(
+            settings: settings,
+            makeModel: { SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), history: $0.history) },
+            icons: .vendored,
+            identities: identities,
+            notificationDatabase: database.database,
+            makeController: { model, settings, _, _ in
+                SidebarPanelController(model: model, settings: settings, targetVisibleFrame: { nil }, notificationCenter: NotificationCenter())
+            },
+            makeMonitor: { [platform] model, settings, identities, _ in
+                SidebarAppDelegate.makeMonitor(
+                    model: model, settings: settings, identities: identities, declaredChoices: .none, platform: platform, targetVisibleFrame: { nil }
+                )
+            },
+            makeDatabaseMonitor: makeDatabaseMonitor,
+            makeServer: { SidebarAppDelegate.makeServer(model: $0, icons: $1, path: ControlServerTests.socketPath()) },
+            makeAeroSpaceSync: makeAeroSpaceSync,
+            makeAppNotifications: { [directory] model in
+                AppNotificationsModel(preferences: NotificationPreferences(home: directory.url), switcher: FakeAppNotificationSwitch()) { model.received }
+            }
+        )
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
+        let model = delegate.model
+        #expect(model.notifications.map(\.shownByMacOS) == [true, true])
+
+        for (identifier, title) in [(menu, "When?"), (kept, "Kept")] {
+            try database.insert(identifier: identifier, title: title, delivered: Date() - 1, actions: NativeChoicesTests.menuActions)
+        }
+        delegate.databaseMonitor?.readNewRecords()
+
+        let card = try #require(model.notifications.first { $0.title == "When?" })
+        let keptCard = try #require(model.notifications.first { $0.title == "Kept" })
+        #expect(!card.shownByMacOS)
+        #expect(model.offeredChoices(of: card)?.choices.map(\.title) == ["Now", "Later today", "Tomorrow"])
+        #expect(window.position == SystemNotificationInterceptor.offScreen)
+        #expect(keptCard.shownByMacOS && keptCard.nativeChoices == nil)
+        #expect(keptWindow.moves.isEmpty)
+
+        model.choose("Later today", for: card.id)
+        #expect(alert.performed == ["Name:Later today\nTarget:0x0\nSelector:(null)"])
+        #expect(model.notifications.map(\.title) == ["Kept"])
     }
 
     @Test func launchSurvivesUnavailableControlSocket() throws {
