@@ -103,6 +103,30 @@ struct PushCommandTests {
         #expect(result.errorOutput.contains("Use either --open or --run, not both."))
     }
 
+    /// Agents read failures as one `ERR: <code>: <detail>` line; the usage block is for people.
+    @Test(arguments: [
+        (["notification", "push", "--title", "t", "--open", "https://a.b", "--run", "ls"], "ERR: usage: Use either --open or --run, not both.\n"),
+        (["notification", "push", "--title", "t", "--open", "example.com"], "ERR: usage: --open needs an absolute URL such as https://example.com\n"),
+        (["notification", "push", "--bogus"], "ERR: usage: Unknown option '--bogus'. Did you mean '--body'?\n"),
+    ])
+    func reportsUsageErrorsOnOneLineForAgents(arguments: [String], message: String) async {
+        let result = await invoke(arguments, agent: true)
+
+        #expect(result.status == 64)
+        #expect(result.errorOutput == message)
+        #expect(result.output.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func reportsUnexpectedErrors(agent: Bool) async {
+        let failure = CocoaError(.fileReadNoSuchFile)
+
+        let result = await invoke(["notification", "push", "--title", "t"], agent: agent, sender: RecordingSender(error: failure))
+
+        #expect(result.status == 1)
+        #expect(result.errorOutput == (agent ? "ERR: failed: " : "Error: ") + failure.localizedDescription + "\n")
+    }
+
     @Test func rejectsRelativeOpenURL() async {
         let result = await invoke(["notification", "push", "--title", "t", "--open", "example.com"])
 
@@ -122,7 +146,21 @@ struct PushCommandTests {
         let result = await invoke(["notification", "push"], agent: agent)
 
         #expect(result.status == 1)
-        #expect(result.errorOutput == (agent ? "ERR: " : "[ERROR] ") + "a notification needs a title or a body\n")
+        #expect(result.errorOutput == (agent ? "ERR: invalid: " : "[ERROR] ") + "a notification needs a title or a body\n")
+    }
+
+    /// A command over its limit is refused before anything is sent, not cut off by the socket.
+    @Test func rejectsOverlongCommandBeforeSending() async {
+        let sender = RecordingSender()
+
+        let result = await invoke(
+            ["notification", "push", "--title", "t", "--run", String(repeating: "x", count: NotificationPayload.maxCommandLength + 1)],
+            agent: true, sender: sender
+        )
+
+        #expect(result.status == 1)
+        #expect(result.errorOutput == "ERR: invalid: command is longer than 4096 characters (or 16384 bytes in UTF-8)\n")
+        #expect(sender.payloads.isEmpty)
     }
 
     @Test(arguments: [
@@ -134,6 +172,12 @@ struct PushCommandTests {
         (.rejected("bad"), true, "ERR: rejected: bad\n"),
         (.unreachable(socketPath: "/var/s.sock", reason: "boom"), false, "[ERROR] Cannot reach the sidebar app: boom.\n"),
         (.unreachable(socketPath: "/var/s.sock", reason: "boom"), true, "ERR: unreachable: /var/s.sock: boom\n"),
+        (.launchFailed("It is damaged."), false, "[ERROR] Cannot launch the sidebar app: It is damaged.\n"),
+        (.launchFailed("It is damaged."), true, "ERR: launch_failed: It is damaged.\n"),
+        (.noReply("late"), false, "[ERROR] The sidebar app did not confirm the notification (late). It may still show it, so sending it again could list it twice.\n"),
+        (.noReply("late"), true, "ERR: no_reply: sent but not confirmed (late); it may still show, do not send it again\n"),
+        (.tooLarge(size: 70000), false, "[ERROR] The notification is too large to send: 70000 bytes encoded, at most 65536.\n"),
+        (.tooLarge(size: 70000), true, "ERR: too_large: request is 70000 bytes encoded, the socket takes at most 65536\n"),
     ])
     func reportsDeliveryFailures(error: CLIError, agent: Bool, message: String) async {
         let result = await invoke(["notification", "push", "--title", "t"], agent: agent, sender: RecordingSender(error: error))
@@ -153,6 +197,29 @@ struct PushCommandTests {
 
     @Test func helpThatCannotBeWrittenExitsWithIOError() async {
         #expect(await invoke(["--help"], output: BufferOutput(fails: true)).status == EX_IOERR)
+    }
+
+    /// A consumer that exited before reading, like `| (exit 0)`, leaves a pipe without a reader. Writing to it
+    /// raises SIGPIPE, which would kill the process with status 141; the CLI reports the failed write instead.
+    /// Ignoring the signal applies to the whole process, so the CLI runs in a child process of its own.
+    @Test func reportsOutputToAPipeWithoutReader() async throws {
+        let result = await #expect(processExitsWith: .exitCode(EX_IOERR), observing: [\.standardErrorContent]) {
+            // Start from the disposition that kills the process, whatever the test runner's is.
+            signal(SIGPIPE, SIG_DFL)
+            let pipe = Pipe()
+            try pipe.fileHandleForReading.close()
+            let context = CLIContext(
+                environment: ["AGENT": "1"],
+                output: FileHandleOutput(pipe.fileHandleForWriting),
+                sender: RecordingSender(),
+                isInstalledApp: { _ in false }
+            )
+
+            exit(await SidebarCLI.runProcess(arguments: ["notification", "push", "--title", "t"], context: context))
+        }
+
+        let errorOutput = String(decoding: try #require(result).standardErrorContent, as: UTF8.self)
+        #expect(errorOutput.hasPrefix("ERR: output_write_failed: "))
     }
 }
 
@@ -186,7 +253,7 @@ struct URLCommandTests {
         let result = await invoke(["notification", "url", "--title", "t", "--open", "file:///etc/hosts"], agent: true)
 
         #expect(result.status == 1)
-        #expect(result.errorOutput == "ERR: 'file:///etc/hosts' is not an http or https URL\n")
+        #expect(result.errorOutput == "ERR: invalid: 'file:///etc/hosts' is not an http or https URL\n")
     }
 
     @Test func urlCommandHasNoRunOption() async {

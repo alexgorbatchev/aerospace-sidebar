@@ -187,6 +187,26 @@ struct SidebarPanelControllerTests {
         #expect(!panel.acceptsKeyStatus(during: event(.leftMouseDown, in: other)))
     }
 
+    /// Opening a field to type into makes the panel key, which VoiceOver does without a click: the content asks
+    /// through `requestKeyboard`, and the panel grants itself key status for that one call only.
+    @Test func panelTakesTheKeyboardWhenAFieldOpens() throws {
+        let controller = SidebarPanelController.forTesting(
+            model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
+            settings: settings,
+            targetVisibleFrame: { CGRect(x: 0, y: 0, width: 1440, height: 900) },
+            notificationCenter: NotificationCenter()
+        )
+        let panel = try #require(controller.panel as? SidebarPanel)
+        var granted: [Bool] = []
+        panel.becomeKey = { window in granted.append((window as? SidebarPanel)?.acceptsKeyStatus(during: nil) == true) }
+        let content = try #require(panel.contentView as? NSHostingView<SidebarPanelContent>)
+
+        content.rootView.requestKeyboard()
+
+        #expect(granted == [true])
+        #expect(!panel.acceptsKeyStatus(during: nil))
+    }
+
     @Test func rendersContentInsidePanel() throws {
         let controller = SidebarPanelController.forTesting(
             model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),

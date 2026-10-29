@@ -56,11 +56,14 @@ struct SidebarView: View {
                     ForEach(model.notifications, id: \.viewIdentity) { notification in
                         NotificationCard(
                             notification: notification,
-                            presentAlert: model.presentAlert(of: notification),
+                            offeredChoices: model.offeredChoices(of: notification),
+                            isAnswering: model.answering.contains(notification.id),
+                            clickDescription: model.clickDescription(of: notification),
                             isHovered: hoveredID == notification.id,
                             hover: { hoveredID = Self.hoveredID(hoveredID, card: notification.id, hovering: $0) },
                             activate: { model.activate(notification.id) },
                             choose: { model.choose($0, for: notification.id) },
+                            reply: { model.reply($0, text: $1, for: notification.id) },
                             openLink: { model.openLink($0) },
                             dismiss: { model.dismiss(notification.id) }
                         )
@@ -106,7 +109,7 @@ struct SidebarView: View {
         .animation(Self.motion, value: model.notifications)
         .animation(Self.motion, value: model.interception)
         .animation(Self.motion, value: asksForFullDiskAccess)
-        .animation(Self.motion, value: model.presentAlerts)
+        .animation(Self.motion, value: model.presentChoices)
     }
 
     /// The sidebar's screen edge, where the top buttons and the scroll indicator sit.
@@ -242,12 +245,18 @@ struct EdgeFadeMask: View {
 
 struct NotificationCard: View {
     let notification: SidebarNotification
-    /// The hidden macOS alert the card stands for, while it exists; the card offers its choices.
-    let presentAlert: SidebarNotification.NativeAlert?
+    /// The hidden macOS notification the card stands for, while it exists; the card offers its choices.
+    let offeredChoices: SidebarNotification.NativeChoices?
+    /// One of its choices is being performed; the others wait for it.
+    let isAnswering: Bool
+    /// What a click does (`SidebarModel.clickDescription(of:)`).
+    let clickDescription: String
     let isHovered: Bool
     let hover: (Bool) -> Void
     let activate: () -> Void
     let choose: (String) -> Void
+    /// Sends the text typed for a choice that asks for it, such as Reply.
+    let reply: (_ choice: String, _ text: String) -> Void
     /// Opens a link in the notification's body.
     let openLink: (URL) -> Void
     let dismiss: () -> Void
@@ -285,10 +294,13 @@ struct NotificationCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.appIcon) private var appIcon
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.requestKeyboard) private var requestKeyboard
     /// The dismiss button overhangs the card, so the pointer can rest on it outside the card's hover area.
     @State private var isDismissHovered = false
     /// The card's size with its stack layers, before the hover scale.
     @State private var size = CGSize.zero
+    /// What is typed for a choice that asks for text.
+    @State var draft = ReplyDraft()
 
     /// The dismiss button shows only while the pointer is on the card or on the button itself.
     var showsDismiss: Bool { isHovered || isDismissHovered }
@@ -346,59 +358,80 @@ struct NotificationCard: View {
     /// Layers drawn under the card for notifications received more than once.
     private var stackLayers: Int { min(notification.occurrences - 1, Self.maxStackLayers) }
 
-    private var card: some View {
-        Button(action: activate) {
-            Group {
-                if hasIcon {
-                    // The icon spans the header and the line under it; every line sits beside it.
-                    LeadingIconLayout(spannedLines: 2, lineSpacing: Self.lineSpacing, iconSpacing: Self.iconSpacing) {
-                        icon
-                        content
+    /// Whether a reply is being typed. The card is then no button, so that the field and its send button are
+    /// controls of their own, which VoiceOver reaches; inside a button's label it reaches none.
+    var isComposing: Bool { offeredChoices != nil && draft.choice?.textInput != nil }
+
+    @ViewBuilder private var card: some View {
+        if isComposing {
+            face
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(accessibilitySummary)
+                // The dismiss button shows only under the pointer; the body's links are elements of their own.
+                .accessibilityActions { Button("Dismiss", action: dismiss) }
+        } else {
+            Button(action: activate) {
+                // The card's label and actions describe it; each text would otherwise become an action.
+                face.accessibilityElement(children: .ignore)
+            }
+            // Option-click dismisses the card without acting, like its dismiss button.
+            .buttonStyle(PressableButtonStyle(alternateAction: dismiss))
+            .help(helpText)
+            .accessibilityLabel(accessibilitySummary)
+            .accessibilityActions {
+                if let offeredChoices {
+                    ForEach(offeredChoices.choices, id: \.title) { choice in
+                        // A choice that asks for text opens its field, which the card then shows as a control.
+                        Button(choice.title) {
+                            guard choice.textInput != nil else { return choose(choice.title) }
+                            draft.open(choice)
+                            requestKeyboard()
+                        }
                     }
-                } else {
-                    VStack(alignment: .leading, spacing: Self.lineSpacing) { content }
                 }
-            }
-            // A link click opens the link only; the card's own action needs a click elsewhere on it.
-            .environment(\.openURL, OpenURLAction { url in
-                openLink(url)
-                return .handled
-            })
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(background, in: RoundedRectangle(cornerRadius: Self.cornerRadius))
-            // The tints are translucent; the material keeps a card sliding over another (when one
-            // above it is removed) from showing the other's text through it.
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Self.cornerRadius))
-            .overlay {
-                if let accent {
-                    RoundedRectangle(cornerRadius: Self.cornerRadius)
-                        .strokeBorder(accent, lineWidth: 1)
+                // Links in the text are not separate elements inside the card's button.
+                ForEach(bodyLinks, id: \.self) { url in
+                    Button("Open \(url.host() ?? url.absoluteString)") { openLink(url) }
                 }
+                // The dismiss button shows only under the pointer.
+                Button("Dismiss", action: dismiss)
             }
-            .saberBorder(RoundedRectangle(cornerRadius: Self.cornerRadius), color: saberColor, isActive: isHovered)
-            .opacity(notification.severity == .low ? 0.6 : 1)
-            .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
-            // The card's label and actions describe it; each text would otherwise become an action.
-            .accessibilityElement(children: .ignore)
         }
-        // Option-click dismisses the card without acting, like its dismiss button.
-        .buttonStyle(PressableButtonStyle(alternateAction: dismiss))
-        .help(helpText)
-        .accessibilityLabel(accessibilitySummary)
-        .accessibilityActions {
-            if let presentAlert {
-                ForEach(presentAlert.choices, id: \.self) { choice in
-                    Button(choice) { choose(choice) }
+    }
+
+    /// What the card shows, whether it is a button or a reply is being typed on it.
+    private var face: some View {
+        Group {
+            if hasIcon {
+                // The icon spans the header and the line under it; every line sits beside it.
+                LeadingIconLayout(spannedLines: 2, lineSpacing: Self.lineSpacing, iconSpacing: Self.iconSpacing) {
+                    icon
+                    content
                 }
+            } else {
+                VStack(alignment: .leading, spacing: Self.lineSpacing) { content }
             }
-            // Links in the text are not separate elements inside the card's button.
-            ForEach(bodyLinks, id: \.self) { url in
-                Button("Open \(url.host() ?? url.absoluteString)") { openLink(url) }
-            }
-            // The dismiss button shows only under the pointer.
-            Button("Dismiss", action: dismiss)
         }
+        // A link click opens the link only; the card's own action needs a click elsewhere on it.
+        .environment(\.openURL, OpenURLAction { url in
+            openLink(url)
+            return .handled
+        })
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(background, in: RoundedRectangle(cornerRadius: Self.cornerRadius))
+        // The tints are translucent; the material keeps a card sliding over another (when one
+        // above it is removed) from showing the other's text through it.
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Self.cornerRadius))
+        .overlay {
+            if let accent {
+                RoundedRectangle(cornerRadius: Self.cornerRadius)
+                    .strokeBorder(accent, lineWidth: 1)
+            }
+        }
+        .saberBorder(RoundedRectangle(cornerRadius: Self.cornerRadius), color: saberColor, isActive: isHovered)
+        .opacity(notification.severity == .low ? 0.6 : 1)
+        .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
     }
 
     /// The icon of the app that posted the notification, unless the notification names an icon.
@@ -438,17 +471,15 @@ struct NotificationCard: View {
                 .font(typography.font(.caption2))
                 .foregroundStyle(.secondary)
         }
-        if let presentAlert {
+        if let offeredChoices {
             // Buttons inside the card's button take their own clicks. VoiceOver cannot reach them
             // there: it sees the card as one button, and pressing a nested button through
-            // accessibility runs the card's action. It gets the choices as the card's actions.
-            HStack(spacing: 6) {
-                ForEach(presentAlert.choices, id: \.self) { choice in
-                    ChoiceButton(title: choice) { choose(choice) }
-                }
-            }
-            .padding(.top, 2)
-            .accessibilityHidden(true)
+            // accessibility runs the card's action. It gets the choices as the card's actions, until a
+            // reply is typed and the card is no button.
+            CardChoices(choices: offeredChoices.choices, draft: draft, choose: choose, reply: reply)
+                .disabled(isAnswering)
+                .padding(.top, 2)
+                .accessibilityHidden(!isComposing)
         }
     }
 
@@ -504,11 +535,11 @@ struct NotificationCard: View {
 
     /// What a click does, and that Option-click only dismisses, unless a click does nothing else.
     var helpText: String {
-        if presentAlert != nil {
-            return "Click to open, as clicking the macOS alert would\nOption-click to dismiss"
+        if offeredChoices != nil {
+            return "Click to open, as clicking the macOS notification would\nOption-click to dismiss"
         }
-        guard notification.action != nil else { return notification.clickDescription }
-        return notification.clickDescription + "\nOption-click to dismiss"
+        guard notification.action != nil else { return clickDescription }
+        return clickDescription + "\nOption-click to dismiss"
     }
 
     /// Caption lines under the card's text.

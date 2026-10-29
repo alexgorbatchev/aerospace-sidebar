@@ -31,6 +31,18 @@ struct NotificationHistoryTests {
         #expect(received.stored == model.received)
     }
 
+    /// A notification that arrives late, such as one the database lists seconds after a newer banner, takes its
+    /// place by time, so the history limit drops the oldest one rather than the newer banner.
+    @Test func receivesLateArrivalsInTheirPlace() {
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), history: SidebarSettings.History(maxCount: 2), now: { start })
+
+        model.add(SidebarNotification(source: "Mail", title: "older", receivedAt: start - 20))
+        model.add(SidebarNotification(source: "Slack", title: "newer", receivedAt: start))
+        model.add(SidebarNotification(source: "Calendar", title: "late", receivedAt: start - 10))
+
+        #expect(model.received.map(\.title) == ["newer", "late"])
+    }
+
     /// The history limits apply to what was received too, when it loads, as time passes and when they change.
     @Test func receivedNotificationsFollowTheHistoryLimits() {
         var now = start
@@ -85,6 +97,29 @@ struct NotificationHistoryTests {
         #expect(store.saves == 4)
     }
 
+    /// A notification already older than the retention, such as a database record from before a long quit,
+    /// is neither listed nor received, so it cannot push newer ones past the limit before the next prune.
+    @Test func ignoresNotificationsOlderThanTheRetention() {
+        let store = InMemoryStore()
+        let received = InMemoryStore()
+        let model = SidebarModel(
+            performer: RecordingPerformer(), store: store, receivedStore: received,
+            history: SidebarSettings.History(maxCount: 10), now: { start }
+        )
+        let cutoff = start.addingTimeInterval(-model.history.retention)
+
+        model.add(SidebarNotification(source: "s", title: "fresh", severity: .low, receivedAt: start))
+        for index in 1...10 {
+            model.add(SidebarNotification(source: "s", title: "expired-\(index)", receivedAt: cutoff.addingTimeInterval(-TimeInterval(index))))
+        }
+        model.add(SidebarNotification(source: "s", title: "oldest kept", receivedAt: cutoff))
+
+        #expect(model.notifications.map(\.title) == ["oldest kept", "fresh"])
+        #expect(model.received.map(\.title) == ["fresh", "oldest kept"])
+        #expect(store.saves == 2)
+        #expect(received.saves == 2)
+    }
+
     @Test func pruneDropsExpiredNotifications() {
         var now = start
         let store = InMemoryStore()
@@ -111,7 +146,7 @@ struct NotificationHistoryTests {
             SidebarNotification(source: "Mail", title: "m", bundleIdentifier: "com.apple.mail", action: .activateApp(name: "Mail"),
                                 shownByMacOS: true, receivedAt: start),
             SidebarNotification(source: "URL", title: "u", action: .open(URL(string: "https://a.example")!), receivedAt: start, occurrences: 4),
-            SidebarNotification(source: "macOS", title: "a", nativeAlert: .init(identifier: "A-1", choices: ["Allow…"]),
+            SidebarNotification(source: "macOS", title: "a", nativeChoices: .init(identifier: "A-1", choices: ["Allow…"]),
                                 nativeIdentifiers: ["A-1"], receivedAt: start),
         ]
 
@@ -120,7 +155,7 @@ struct NotificationHistoryTests {
         #expect(store.load() == notifications)
     }
 
-    /// Entries for notifications that are not alerts have no `nativeAlert` key.
+    /// Entries for notifications that are not alerts have no `nativeChoices` key.
     @Test func fileStoreLoadsEntriesSavedWithoutAlerts() throws {
         let directory = try TemporaryDirectory()
         let url = directory.url.appendingPathComponent("notifications.json")
@@ -132,7 +167,27 @@ struct NotificationHistoryTests {
         let loaded = FileNotificationStore(url: url).load()
 
         #expect(loaded.map(\.title) == ["Privacy & Security"])
-        #expect(loaded.map(\.nativeAlert) == [nil])
+        #expect(loaded.map(\.nativeChoices) == [nil])
+    }
+
+    /// An entry that does not read, such as an alert whose choices were saved as plain titles, is left out
+    /// instead of the whole list.
+    @Test func fileStoreLeavesOutEntriesThatDoNotRead() throws {
+        let directory = try TemporaryDirectory()
+        let url = directory.url.appendingPathComponent("notifications.json")
+        try Data("""
+            [{"id": "05E8D885-F2D3-4170-902C-27F064B139F0", "source": "macOS", "title": "unreadable", "subtitle": "",
+              "body": "b", "severity": "normal", "shownByMacOS": false, "nativeIdentifiers": [], "receivedAt": 0, "occurrences": 1,
+              "nativeChoices": {"identifier": "A", "choices": ["Allow…"]}},
+             {"id": "15E8D885-F2D3-4170-902C-27F064B139F0", "source": "macOS", "title": "kept", "subtitle": "",
+              "body": "b", "severity": "normal", "shownByMacOS": false, "nativeIdentifiers": [], "receivedAt": 0, "occurrences": 1,
+              "nativeChoices": {"identifier": "B", "choices": [{"title": "Allow…", "isDestructive": false}]}}]
+            """.utf8).write(to: url)
+
+        let loaded = FileNotificationStore(url: url).load()
+
+        #expect(loaded.map(\.title) == ["kept"])
+        #expect(loaded.first?.nativeChoices?.choices == [NativeChoice(title: "Allow…")])
     }
 
     @Test func fileStoreTreatsMissingOrCorruptFileAsEmpty() throws {

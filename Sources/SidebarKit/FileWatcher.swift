@@ -4,9 +4,10 @@ import Foundation
 /// place, replaced atomically, created or removed.
 ///
 /// Watching the directory catches replacements and creation; watching the file catches writes in place,
-/// which leave the directory untouched. Other files in the directory wake the watcher too, so it compares
-/// the file's inode, size and modification time before reporting. The delay keeps a half-written file
-/// from being read while another tool is still writing it.
+/// which leave the directory untouched. While the directory is missing, its nearest existing ancestor is
+/// watched instead, so creating the directory and then the file is seen. Other files in the directory
+/// wake the watcher too, so it compares the file's inode, size and modification time before reporting.
+/// The delay keeps a half-written file from being read while another tool is still writing it.
 @MainActor
 public final class FileWatcher {
     struct Signature: Equatable {
@@ -33,7 +34,7 @@ public final class FileWatcher {
     public func start() {
         stop()
         signature = Self.signature(of: url)
-        directorySource = makeSource(path: url.deletingLastPathComponent().path, events: .write)
+        watchDirectory()
         watchFile()
     }
 
@@ -46,6 +47,18 @@ public final class FileWatcher {
         pending = nil
     }
 
+    /// Opens the file's directory again, or its nearest existing ancestor while it is missing, since the
+    /// directory may have been created, removed or replaced. A directory created between finding the
+    /// ancestor and opening it raises no event there, so it looks again once the source is open.
+    private func watchDirectory() {
+        var directory: URL
+        repeat {
+            directory = Self.nearestExistingDirectory(of: url)
+            directorySource?.cancel()
+            directorySource = makeSource(path: directory.path, events: [.write, .delete, .rename])
+        } while Self.nearestExistingDirectory(of: url) != directory
+    }
+
     /// Opens the file again, since a replaced or recreated file is a new inode.
     private func watchFile() {
         fileSource?.cancel()
@@ -53,6 +66,7 @@ public final class FileWatcher {
     }
 
     private func changed() {
+        watchDirectory()
         watchFile()
         pending?.cancel()
         pending = Task { [delay] in
@@ -75,6 +89,17 @@ public final class FileWatcher {
         source.setCancelHandler { close(descriptor) }
         source.resume()
         return source
+    }
+
+    /// The file's directory, or its nearest ancestor that exists.
+    static func nearestExistingDirectory(of url: URL) -> URL {
+        var directory = url.deletingLastPathComponent()
+        var isDirectory: ObjCBool = false
+        while !(FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory) && isDirectory.boolValue),
+              directory.pathComponents.count > 1 {
+            directory.deleteLastPathComponent()
+        }
+        return directory
     }
 
     static func signature(of url: URL) -> Signature? {

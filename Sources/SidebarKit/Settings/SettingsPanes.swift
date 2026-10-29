@@ -32,9 +32,11 @@ struct SidebarPane: View {
     }
 }
 
-/// Notifications: which macOS notifications the sidebar takes over.
+/// Notifications: which macOS notifications the sidebar takes over, and the apps whose notifications macOS
+/// keeps from it.
 struct NotificationsPane: View {
     @Bindable var editor: SettingsEditor
+    let appNotifications: AppNotificationsModel
     let close: () -> Void
 
     @Environment(\.typography) private var typography
@@ -48,17 +50,82 @@ struct NotificationsPane: View {
             }
             SettingsHint(text: "Needs Accessibility. Off, only pushed ones are listed.")
             SettingsRow(label: "With buttons") {
-                Toggle("Keep banners with buttons", isOn: $editor.draft.notifications.actionableLeftToMacOS)
+                Toggle("Keep banners with buttons cards cannot offer", isOn: $editor.draft.notifications.actionableLeftToMacOS)
                     .toggleStyle(.checkbox)
                     .fixedSize()
             }
-            SettingsHint(text: "Off, cards keep only choices such as Allow…")
+            SettingsHint(text: "Cards offer most buttons with Full Disk Access.")
             SettingsRow(label: "Keep banners for") {
                 TextField("Keep banners for", text: $editor.appsLeftToMacOSText, prompt: Text("zoom.us, Calendar"))
                     .labelsHidden()
                     .frame(width: SettingsMetrics.fieldWidth * typography.scale)
             }
             SettingsHint(text: "Comma-separated app names, also listed here.")
+            SwitchedOffAppsRows(model: appNotifications)
+        }
+        // Notifications are switched on and off in System Settings while this window is open.
+        .refreshingWhileShown(appNotifications.refresh)
+    }
+}
+
+/// The apps that notified lately with their notifications switched off in System Settings, each with Allow,
+/// which switches them back on there. Its buttons act immediately, like the AeroSpace rows.
+struct SwitchedOffAppsRows: View {
+    let model: AppNotificationsModel
+
+    @Environment(\.typography) private var typography
+    @Environment(\.appIcon) private var appIcon
+
+    var body: some View {
+        SettingsRow(label: "Switched off") {
+            if model.appsWithNotificationsOff.isEmpty {
+                HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.columnSpacing) {
+                    Image(systemName: model.canTell ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(model.canTell ? .green : .secondary)
+                        .accessibilityHidden(true)
+                    Text(model.canTell ? "None" : "Unknown")
+                }
+            } else {
+                VStack(alignment: .leading, spacing: SettingsMetrics.rowSpacing) {
+                    ForEach(model.appsWithNotificationsOff) { app in
+                        row(app)
+                    }
+                }
+                // The grid would otherwise squeeze the rows to fit, truncating their buttons.
+                .fixedSize()
+            }
+        }
+        if !model.canTell {
+            SettingsHint(text: "Needs Full Disk Access to read macOS's notification settings.")
+        } else if model.appsWithNotificationsOff.isEmpty {
+            SettingsHint(text: "Apps that notify with notifications off in macOS show here.")
+        } else {
+            SettingsHint(text: "Notification Center never shows their notifications.")
+            SettingsHint(text: "Their cards can switch to the app but not open the message.")
+            SettingsHint(text: "Allow switches them on in System Settings › Notifications.")
+        }
+        SettingsHint(text: model.message, wraps: true)
+    }
+
+    private func row(_ app: AppNotificationsModel.App) -> some View {
+        let iconSize = typography.size * 1.4
+        let descent = typography.size * 0.25
+        return HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.columnSpacing) {
+            if let icon = appIcon(app.bundleIdentifier) {
+                Image(nsImage: icon)
+                    .resizable()
+                    .frame(width: iconSize, height: iconSize)
+                    // Its bottom just below the text's baseline, as an icon in a line of text sits.
+                    .alignmentGuide(.firstTextBaseline) { $0[.bottom] - descent }
+                    .accessibilityHidden(true)
+            }
+            Text(app.name)
+                .help(app.bundleIdentifier)
+            Button("Allow", font: typography.font(.body)) {
+                Task { await model.allow(app) }
+            }
+            .disabled(model.allowing != nil)
+            .accessibilityLabel("Allow notifications from \(app.name)")
         }
     }
 }

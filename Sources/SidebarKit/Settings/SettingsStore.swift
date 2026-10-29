@@ -54,14 +54,18 @@ public final class SettingsStore {
         notifyIfFontChanged(from: before)
     }
 
-    /// Changes settings and writes `config.toml`.
+    /// Changes settings and writes `config.toml`. Settings the file does not hold, because a save failed or
+    /// the file does not load, are written even when the change leaves them as they are, so `saveError`
+    /// tells whether they are on disk.
     public func update(_ change: (inout SidebarSettings) -> Void) {
         var updated = settings
         change(&updated)
-        guard updated != settings else { return }
+        guard updated != settings || saveError != nil || loadError != nil else { return }
         do {
             try file.save(updated)
             saveError = nil
+            // The file now holds these settings, whatever made it invalid before.
+            loadError = nil
         } catch {
             saveError = Self.describe(error)
             Self.logger.error("Cannot save settings: \(self.saveError ?? "", privacy: .public)")

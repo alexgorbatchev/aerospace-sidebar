@@ -31,9 +31,17 @@ public struct AeroSpaceConfig: Equatable, Sendable {
         public var main: Int? { monitors.first { $0.pattern == "main" }?.value }
 
         /// The strip the `monitor.main` entry reserves beyond the fallback; nil when it reserves none.
+        /// AeroSpace uses the first entry whose pattern matches a monitor, and an earlier pattern (a name,
+        /// an index, `secondary`) can match the main monitor too, so this is a strip the gap may reserve.
         public var reservedWidth: Int? {
             guard let main, main > fallback else { return nil }
             return main - fallback
+        }
+
+        /// The strip the gap reserves on the main monitor whatever the other patterns match:
+        /// `reservedWidth` when the `monitor.main` entry comes first, where no other entry can win.
+        public var certainReservedWidth: Int? {
+            monitors.first?.pattern == "main" ? reservedWidth : nil
         }
     }
 

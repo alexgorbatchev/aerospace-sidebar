@@ -24,7 +24,7 @@ struct SidebarAppDelegateTests {
     }
 
     /// Reads a database in the test's directory, never the real one.
-    /// Keeps the record id in the fixture's defaults domain; the delegate hands it the fixture's database.
+    /// Keeps the read position in the fixture's defaults domain; the delegate hands it the fixture's database.
     func makeDatabaseMonitor(_ model: SidebarModel, _ identities: NotificationIdentities, _ database: NotificationDatabase) -> NotificationDatabaseMonitor {
         SidebarAppDelegate.makeDatabaseMonitor(model: model, identities: identities, database: database, defaults: self.database.defaults)
     }
@@ -34,7 +34,11 @@ struct SidebarAppDelegateTests {
         .fake(store: settings, home: directory.url, cli: cli)
     }
 
-    func makeDelegate(socketPath: String = ControlServerTests.socketPath(), sender: String? = "Safari") -> SidebarAppDelegate {
+    /// - Parameter activation: Hands activation over; by default to no app and deactivates nothing, so nothing on
+    ///   the desktop changes.
+    func makeDelegate(
+        socketPath: String = ControlServerTests.socketPath(), sender: String? = "Safari", activation: ActivationYielder? = nil
+    ) -> SidebarAppDelegate {
         SidebarAppDelegate(
             settings: settings,
             makeModel: { SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), history: $0.history) },
@@ -51,7 +55,7 @@ struct SidebarAppDelegateTests {
                     setUp: setUp
                 )
             },
-            makeMonitor: { [platform] model, settings, identities in
+            makeMonitor: { [platform] model, settings, identities, _ in
                 NotificationCenterMonitor(
                     platform: platform,
                     interceptor: SystemNotificationInterceptor(
@@ -69,10 +73,22 @@ struct SidebarAppDelegateTests {
             makeServer: { SidebarAppDelegate.makeServer(model: $0, icons: $1, path: socketPath) },
             makeAeroSpaceSync: makeAeroSpaceSync,
             makeOnboarding: { [permissions] _ in OnboardingModel(permissions: permissions, loginItems: FakeLoginItems()) },
-            makeSettingsWindow: { store, aeroSpace, onboarding, model in
-                SettingsWindowController.forTesting(store: store, onboarding: onboarding, aeroSpace: aeroSpace, history: { model.received })
+            makeAppNotifications: { [directory] model in
+                AppNotificationsModel(
+                    preferences: NotificationPreferences(home: directory.url), switcher: FakeAppNotificationSwitch()
+                ) { model.received }
             },
-            urlSender: { sender }
+            makeSettingsWindow: { store, aeroSpace, onboarding, appNotifications, model in
+                SettingsWindowController.forTesting(
+                    store: store, onboarding: onboarding, appNotifications: appNotifications, aeroSpace: aeroSpace,
+                    history: { model.received }
+                )
+            },
+            urlSender: { sender },
+            activation: activation ?? ActivationYielder(
+                workspaceCenter: NotificationCenter(), frontmostApp: nil, isPointerOverFontPanel: { false },
+                handOver: { _ in false }, deactivate: {}
+            )
         )
     }
 
@@ -106,7 +122,7 @@ struct SidebarAppDelegateTests {
         #expect(response == ControlResponse(error: nil))
         #expect(delegate.model.notifications.map(\.source) == ["aerospace-sidebar", "Mail"])
         #expect(delegate.model.notifications.map(\.icon?.id) == ["ghostty", nil])
-        #expect(delegate.model.alerts === delegate.monitor)
+        #expect(delegate.model.nativeNotifications === delegate.monitor)
 
         delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
         #expect(!FileManager.default.fileExists(atPath: path))
@@ -163,19 +179,52 @@ struct SidebarAppDelegateTests {
     }
 
     /// Removing a permission in Settings takes effect at once, rather than at the next poll or notification.
+    /// Before Accessibility goes, NotificationCenter's hidden window is moved back while the permission still
+    /// allows it: left off-screen, it would hide every later notification.
     @Test func removingAPermissionChecksItAtOnce() async throws {
         try database.create()
         permissions.states = [.accessibility: .granted]
+        let window = FakeElement.window(FakeElement.banner(id: "b"))
+        platform.windowsByPID[42] = [window]
         let delegate = makeDelegate()
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
         #expect(delegate.model.interception == .active)
+        #expect(window.position == SystemNotificationInterceptor.offScreen)
 
-        platform.trusted = false
+        permissions.whileResetting = { [platform] _ in
+            platform.trusted = false
+            // Without the permission, NotificationCenter's windows no longer move.
+            window.keepsMoves = false
+        }
         await delegate.onboarding.removeAccessibility()
 
+        #expect(window.position == .zero)
         #expect(delegate.model.interception == .needsAccessibility)
+        #expect(delegate.monitor?.isRunning == true)
         #expect(delegate.model.database == .reading)
+    }
+
+    /// When macOS keeps the permission, interception attaches again and hides what it hid before; while
+    /// interception is off, removing the permission leaves it off.
+    @Test func removingAccessibilityThatStaysKeepsIntercepting() async throws {
+        permissions.states = [.accessibility: .granted]
+        permissions.resetResult = CommandResult(status: 1, output: "tccutil: Failed to reset Accessibility")
+        let window = FakeElement.window(FakeElement.banner(id: "b"))
+        platform.windowsByPID[42] = [window]
+        let delegate = makeDelegate()
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
+
+        await delegate.onboarding.removeAccessibility()
+        #expect(delegate.model.interception == .active)
+        #expect(window.moves == [SystemNotificationInterceptor.offScreen, .zero, SystemNotificationInterceptor.offScreen])
+        #expect(delegate.onboarding.message?.hasPrefix("Cannot remove AerospaceSidebar from Accessibility") == true)
+
+        settings.update { $0.notifications.replaceSystem = false }
+        await delegate.onboarding.removeAccessibility()
+        #expect(delegate.monitor?.isRunning == false)
+        #expect(delegate.model.interception == .disabled)
     }
 
     @Test func settingsTurnInterceptionOffAndOnAndApplyHistory() throws {
@@ -259,7 +308,7 @@ struct SidebarAppDelegateTests {
             makeController: { model, settings, _, _ in
                 SidebarPanelController(model: model, settings: settings, targetVisibleFrame: { nil }, notificationCenter: NotificationCenter())
             },
-            makeMonitor: { [platform] model, settings, identities in
+            makeMonitor: { [platform] model, settings, identities, _ in
                 NotificationCenterMonitor(
                     platform: platform,
                     interceptor: SystemNotificationInterceptor(
@@ -283,7 +332,7 @@ struct SidebarAppDelegateTests {
 
     @Test func launchSurvivesUnavailableControlSocket() throws {
         let path = ControlServerTests.socketPath()
-        let occupant = ControlServer(path: path) { _ in ControlResponse(error: nil) }
+        let occupant = ControlServer(path: path) { _ in }
         try occupant.start()
         defer { occupant.stop() }
         let delegate = makeDelegate(socketPath: path)
@@ -305,7 +354,7 @@ struct SidebarAppDelegateTests {
             makeController: { model, settings, _, _ in
                 SidebarPanelController(model: model, settings: settings, targetVisibleFrame: { nil }, notificationCenter: NotificationCenter())
             },
-            makeMonitor: { [platform] model, _, _ in
+            makeMonitor: { [platform] model, _, _, _ in
                 NotificationCenterMonitor(platform: platform, interceptor: SystemNotificationInterceptor { model.add($0) },
                                           workspaceCenter: NotificationCenter(), onStatus: { _ in })
             },
@@ -350,15 +399,38 @@ struct SidebarAppDelegateTests {
         #expect(cli.calls.isEmpty)
 
         settings.update { $0.sidebar = SidebarSettings.Sidebar(side: .left, width: 400) }
-        for _ in 0..<200 where cli.calls.count < 2 {
+        for _ in 0..<200 where cli.calls.count < 3 {
             try await Task.sleep(for: .milliseconds(10))
         }
 
-        #expect(cli.calls == [["reload-config", "--dry-run", "--no-gui"], ["reload-config", "--no-gui"]])
+        #expect(cli.calls == [AeroSpaceSetup.check, AeroSpaceSetup.check, ["reload-config", "--no-gui"]])
         let config = try String(contentsOf: directory.url.appendingPathComponent(".aerospace.toml"), encoding: .utf8)
         #expect(config.hasPrefix("[gaps]\n" + [
             AeroSpaceConfigEditor.blockStart, "outer.left = [{ monitor.main = 400 }, 0]", "outer.right = 5", AeroSpaceConfigEditor.blockEnd,
         ].joined(separator: "\n")))
+    }
+
+    /// Opening a URL activates the app; it hands activation back to the app the user was in.
+    @Test func becomingActiveHandsActivationBack() throws {
+        let previous = try #require(NSWorkspace.shared.runningApplications.first {
+            $0.processIdentifier != getpid() && $0.activationPolicy == .regular
+        })
+        let handedOver = HandedOver()
+        let delegate = makeDelegate(activation: ActivationYielder(
+            workspaceCenter: NotificationCenter(), frontmostApp: previous, isPointerOverFontPanel: { false },
+            handOver: {
+                handedOver.apps.append($0.processIdentifier)
+                return true
+            },
+            deactivate: { handedOver.deactivations += 1 }
+        ))
+
+        delegate.application(NSApplication.shared, open: [try SidebarRequest.pushNotification(NotificationPayload(title: "t")).url()])
+        delegate.applicationDidBecomeActive(Notification(name: NSApplication.didBecomeActiveNotification))
+
+        #expect(delegate.model.notifications.map(\.title) == ["t"])
+        #expect(handedOver.apps == [previous.processIdentifier])
+        #expect(handedOver.deactivations == 0)
     }
 
     @Test func urlsWithoutKnownSenderAreLabeledURL() throws {
@@ -376,11 +448,12 @@ struct SidebarAppDelegateTests {
     @Test func defaultFactoriesBuildWithoutStarting() {
         let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
 
-        let monitor = SidebarAppDelegate.makeMonitor(model: model, settings: settings)
+        let monitor = SidebarAppDelegate.makeMonitor(model: model, settings: settings, declaredChoices: DeclaredChoices(database: database.database))
         let databaseMonitor = SidebarAppDelegate.makeDatabaseMonitor(model: model, identities: NotificationIdentities(), database: database.database)
         let window = SettingsWindowController(
             store: settings,
             onboarding: SidebarAppDelegate.makeOnboarding(notificationDatabase: database.database),
+            appNotifications: SidebarAppDelegate.makeAppNotifications(model: model, home: directory.url),
             aeroSpace: SidebarAppDelegate.makeAeroSpaceSync(settings: settings),
             history: { model.received }
         )

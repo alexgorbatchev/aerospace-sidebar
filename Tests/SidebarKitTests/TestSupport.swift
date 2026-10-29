@@ -19,6 +19,8 @@ final class FakeElement: AccessibilityElement {
     var moves: [CGPoint] = []
     /// Whether `setPosition` changes `position`; NotificationCenter may keep a window where it is.
     var keepsMoves = true
+    /// Whether `setValue` changes `kAXValueAttribute`.
+    var acceptsValues = true
 
     init(
         _ attributes: [String: String] = [:],
@@ -51,6 +53,12 @@ final class FakeElement: AccessibilityElement {
         return true
     }
 
+    func setValue(_ text: String) -> Bool {
+        guard acceptsValues else { return false }
+        attributes[kAXValueAttribute] = text
+        return true
+    }
+
     /// A banner as NotificationCenter exposes it on macOS 26.
     static func banner(id: String? = "banner-1", app: String = "Mail", title: String = "Subject", body: String = "Text") -> FakeElement {
         var attributes = [kAXSubroleAttribute: "AXNotificationCenterBanner", kAXDescriptionAttribute: "\(app), \(title), \(body)"]
@@ -79,6 +87,39 @@ final class FakeElement: AccessibilityElement {
         return alert
     }
 
+    /// A banner whose app declared a choice that asks for text, as NotificationCenter shows it on macOS 26.6.
+    /// Performing the choice reports failure but opens a text area and an action named `send` (Show Details
+    /// becomes Hide Details), Hide Details closes them again, and the send action delivers the text, kept as
+    /// the banner's `sent` attribute, and removes the banner. Every action reports failure, as Reply does.
+    static func replyBanner(id: String = "reply-1", app: String = "Notif Probe", choice: String = "Reply", send: String = "Send") -> FakeElement {
+        func named(_ name: String) -> String { "Name:\(name)\nTarget:0x0\nSelector:(null)" }
+        let banner = banner(id: id, app: app, title: "Question", body: "Answer me")
+        let texts = banner.childElements
+        let closed = ["AXPress", named("Show Details"), named(choice), named("Close")]
+        let field = FakeElement([kAXRoleAttribute: kAXTextAreaRole])
+        banner.actions = closed
+        banner.actionSucceeds = false
+        banner.onPerform = { banner in
+            switch banner.performed.last {
+            case named(choice):
+                banner.actions = ["AXPress", named("Hide Details"), named(send), named("Close")]
+                banner.childElements = texts + [
+                    FakeElement([kAXRoleAttribute: kAXMenuButtonRole, kAXDescriptionAttribute: "More Actions…"]),
+                    FakeElement([kAXRoleAttribute: kAXScrollAreaRole], children: [field]),
+                    FakeElement([kAXRoleAttribute: kAXButtonRole, kAXTitleAttribute: send]),
+                ]
+            case named("Hide Details"):
+                banner.actions = closed
+                banner.childElements = texts
+            case named(send):
+                banner.attributes["sent"] = field.string(kAXValueAttribute)
+                banner.actions = []
+            default: break
+            }
+        }
+        return banner
+    }
+
     /// NotificationCenter's "Notification Center" window as macOS 26 lays it out.
     static func window(_ banners: FakeElement..., position: CGPoint = .zero) -> FakeElement {
         FakeElement(
@@ -87,35 +128,41 @@ final class FakeElement: AccessibilityElement {
             position: position
         )
     }
+
+    /// Another window of NotificationCenter's, such as one of the desktop widgets, which may sit on another
+    /// display.
+    static func widgetWindow(position: CGPoint) -> FakeElement {
+        FakeElement([kAXRoleAttribute: kAXWindowRole, kAXSubroleAttribute: kAXStandardWindowSubrole], position: position)
+    }
 }
 
 @MainActor
 final class RecordingPerformer: NotificationActionPerforming {
     var actions: [SidebarNotification.ClickAction] = []
+    /// The bundle identifier passed with each of `actions`.
+    var bundleIdentifiers: [String?] = []
 
-    func perform(_ action: SidebarNotification.ClickAction) {
+    func perform(_ action: SidebarNotification.ClickAction, bundleIdentifier: String?) {
         actions.append(action)
+        bundleIdentifiers.append(bundleIdentifier)
     }
 }
 
 @MainActor
-final class RecordingAlerts: NativeNotificationControlling {
+final class RecordingNativeNotifications: NativeNotificationControlling {
     var performed: [String] = []
     var succeeds = true
     var releases = 0
-    /// Completions of `open` calls, held back instead of called while set.
+    /// Completions of `perform` calls, held back instead of called while set.
     var heldCompletions: [@MainActor (Bool) -> Void]?
 
-    func perform(_ action: AlertAction, onAlert identifier: String) -> Bool {
+    func perform(_ action: NativeAction, on identifiers: [String], from source: String, completion: @escaping @MainActor (Bool) -> Void) {
+        let notifications = identifiers.joined(separator: " ")
         switch action {
-        case .open: performed.append("open \(identifier)")
-        case .choice(let name): performed.append("\(name) \(identifier)")
+        case .open: performed.append("open \(notifications) from \(source)")
+        case .choice(let name): performed.append("\(name) \(notifications)")
+        case .reply(let choice, let text, let send): performed.append("\(choice) \(notifications): \(text) [\(send)]")
         }
-        return succeeds
-    }
-
-    func open(_ identifiers: [String], from source: String, completion: @escaping @MainActor (Bool) -> Void) {
-        performed.append("open \(identifiers.joined(separator: " ")) from \(source)")
         if heldCompletions != nil {
             heldCompletions?.append(completion)
         } else {
@@ -298,6 +345,8 @@ final class FakePermissions: PermissionGuiding {
     var sourceFrames: [CGRect?] = []
     var resets: [PermissionFlowPane] = []
     var resetResult = CommandResult(status: 0, output: "")
+    /// Runs while `tccutil` would, before `reset` returns.
+    var whileResetting: @MainActor (PermissionFlowPane) -> Void = { _ in }
 
     func state(of pane: PermissionFlowPane) -> PermissionAuthorizationState { states[pane] ?? .notGranted }
 
@@ -308,6 +357,7 @@ final class FakePermissions: PermissionGuiding {
 
     func reset(_ pane: PermissionFlowPane) async -> CommandResult {
         resets.append(pane)
+        whileResetting(pane)
         if resetResult.status == 0 {
             states[pane] = nil
         }
@@ -330,4 +380,42 @@ extension AeroSpaceSync {
             copy: { _ in }
         )
     }
+}
+
+/// Records which apps it was asked to switch on, never touching System Settings, and answers `result`.
+@MainActor
+final class FakeAppNotificationSwitch: AppNotificationSwitching {
+    var result = AppNotificationSwitchResult.switchedOn
+    var requests: [(bundleIdentifier: String, name: String)] = []
+    /// Runs while the request is in flight, before it returns.
+    var whileSwitching: @MainActor () async -> Void = {}
+
+    func allowNotifications(bundleIdentifier: String, name: String) async -> AppNotificationSwitchResult {
+        requests.append((bundleIdentifier, name))
+        await whileSwitching()
+        return result
+    }
+}
+
+extension AppNotificationsModel {
+    /// Reads settings that do not exist, so no app counts as switched off, and switches nothing on.
+    static func fake(received: @escaping @MainActor () -> [SidebarNotification] = { [] }) -> AppNotificationsModel {
+        AppNotificationsModel(
+            preferences: NotificationPreferences(url: URL(fileURLWithPath: "/nonexistent/group.com.apple.usernoted.plist")),
+            switcher: FakeAppNotificationSwitch(),
+            received: received
+        )
+    }
+}
+
+/// A choice without text input written as its title, as fixtures list an alert's choices.
+extension NativeChoice: ExpressibleByStringLiteral {
+    public init(stringLiteral title: String) {
+        self.init(title: title)
+    }
+}
+
+extension DeclaredChoices {
+    /// Apps that declared nothing, for tests whose notifications offer no declared choices.
+    static var none: DeclaredChoices { DeclaredChoices { _ in [:] } }
 }

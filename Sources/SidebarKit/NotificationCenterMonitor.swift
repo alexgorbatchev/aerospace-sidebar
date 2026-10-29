@@ -40,7 +40,9 @@ public protocol AccessibilityPlatform {
 ///
 /// While `NotificationHistoryOpener` opens a notification from the history, its steps replace the sweeps,
 /// which would otherwise move the panel's window back on screen, and run every `historyStepInterval`, so
-/// that the panel is off-screen before it is seen; sweeping resumes once the panel is closed.
+/// that the panel is off-screen before it is seen; sweeping resumes once the panel is closed. A panel that
+/// opens after its request gave up is handed back to the opener by the next sweep, which would otherwise move
+/// it on screen and leave it open.
 @MainActor
 public final class NotificationCenterMonitor {
     nonisolated public static let notificationCenterBundleID = "com.apple.notificationcenterui"
@@ -70,6 +72,8 @@ public final class NotificationCenterMonitor {
     private var exitWatch: AnyObject?
     private var reattachTimer: Timer?
     private var reattachDelay: TimeInterval
+    /// Set while NotificationCenter's language could not be read; each sweep tries again.
+    private var labelsPending = false
     public private(set) var isRunning = false
 
     /// - Parameters:
@@ -177,7 +181,8 @@ public final class NotificationCenterMonitor {
         }
         lastEvent = now()
         sweep()
-        guard sweepTimer == nil else { return }
+        // The sweep may have handed a late panel back to the history opener, whose steps replace the sweeps.
+        guard sweepTimer == nil, !historyOpener.isOpening else { return }
         sweepTimer = Timer.scheduledTimer(withTimeInterval: Self.sweepInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.sweepAgain() }
         }
@@ -199,10 +204,21 @@ public final class NotificationCenterMonitor {
 
     var isSweeping: Bool { sweepTimer != nil }
 
+    /// Sweeps NotificationCenter's windows, unless the history panel opened after the request that asked for
+    /// it gave up: the history opener then closes it unseen, and its steps replace the sweeps until it is done.
     @discardableResult
     private func sweep() -> SystemNotificationInterceptor.Outcome {
         guard let attachedPID else { return .settled }
-        return interceptor.sweep(windows: platform.windows(ofProcess: attachedPID), application: platform.application(ofProcess: attachedPID))
+        let windows = platform.windows(ofProcess: attachedPID)
+        let application = platform.application(ofProcess: attachedPID)
+        if labelsPending {
+            readLabels(from: application)
+        }
+        if historyOpener.adoptLatePanel(windows: windows, application: application) {
+            stepHistoryUntilDone()
+            return .settled
+        }
+        return interceptor.sweep(windows: windows, application: application)
     }
 
     private func stopSweeping() {
@@ -285,35 +301,55 @@ public final class NotificationCenterMonitor {
         reattachDelay = initialReattachDelay
         SystemNotificationInterceptor.logger.info("Attached to NotificationCenter (pid \(pid, privacy: .public))")
         attachedPID = pid
-        let language = platform.application(ofProcess: pid)?.string("AXPreferredLanguage")
-        interceptor.labels = NotificationCenterLabels.load(language: language)
-        historyOpener.labels = interceptor.labels
+        readLabels(from: platform.application(ofProcess: pid))
         interceptor.restore(platform.windows(ofProcess: pid))
         notificationCenterChanged()
         onStatus(.active)
     }
+
+    /// Uses NotificationCenter's words in the language it reports. A read that fails, such as one that times
+    /// out while NotificationCenter is slow after a wake, keeps the words read before, since English ones would
+    /// misjudge every notification on another system language, and sweeps read it again until it succeeds.
+    private func readLabels(from application: (any AccessibilityElement)?) {
+        guard let language = application?.string("AXPreferredLanguage") else {
+            if !labelsPending {
+                SystemNotificationInterceptor.logger.notice("Cannot read NotificationCenter's language; trying again at the next sweep")
+            }
+            labelsPending = true
+            return
+        }
+        labelsPending = false
+        interceptor.labels = NotificationCenterLabels.load(language: language)
+        historyOpener.labels = interceptor.labels
+    }
 }
 
 extension NotificationCenterMonitor: NativeNotificationControlling {
-    @discardableResult
-    public func perform(_ action: AlertAction, onAlert identifier: String) -> Bool {
-        guard let attachedPID else { return false }
-        return interceptor.perform(action, onAlert: identifier, in: platform.windows(ofProcess: attachedPID))
-    }
-
-    /// Presses the notification where NotificationCenter shows or hides it, else opens it from the history
-    /// (`NotificationHistoryOpener`). One history request runs at a time; another fails meanwhile.
-    public func open(_ identifiers: [String], from source: String, completion: @escaping @MainActor (Bool) -> Void) {
+    /// Performs `action` on the first of `identifiers` where NotificationCenter shows or hides it, else in the
+    /// history (`NotificationHistoryOpener`). History requests run one at a time; one started meanwhile waits its
+    /// turn. A choice the history no longer holds is forgotten (`SystemNotificationInterceptor.forgetChoices(of:)`),
+    /// so its card stops offering it.
+    public func perform(
+        _ action: NativeAction,
+        on identifiers: [String],
+        from source: String,
+        completion: @escaping @MainActor (Bool) -> Void
+    ) {
         guard let attachedPID else { return completion(false) }
-        if interceptor.open(identifiers, in: platform.windows(ofProcess: attachedPID)) {
-            return completion(true)
+        switch interceptor.perform(action, on: identifiers, in: platform.windows(ofProcess: attachedPID)) {
+        case .performed: return completion(true)
+        case .refused: return completion(false)
+        case .absent: break
         }
-        guard historyOpener.start(identifiers, from: source, completion: completion) else { return completion(false) }
-        stopSweeping()
-        stepHistory()
-        guard historyOpener.isOpening, historyTimer == nil else { return }
-        historyTimer = Timer.scheduledTimer(withTimeInterval: Self.historyStepInterval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.stepHistory() }
+        let began = historyOpener.start(action, on: identifiers, from: source) { [weak self] outcome in
+            if outcome == .absent, action != .open {
+                identifiers.forEach { self?.interceptor.forgetChoices(of: $0) }
+            }
+            completion(outcome == .performed)
+        }
+        // A request that waits begins from the steps of the one running.
+        if began {
+            stepHistoryUntilDone()
         }
     }
 
@@ -325,6 +361,16 @@ extension NotificationCenterMonitor: NativeNotificationControlling {
 
     var isOpeningHistory: Bool { historyOpener.isOpening }
 
+    /// Steps the history request now and every `historyStepInterval` until it is done, instead of sweeping.
+    private func stepHistoryUntilDone() {
+        stopSweeping()
+        stepHistory()
+        guard historyOpener.isOpening, historyTimer == nil else { return }
+        historyTimer = Timer.scheduledTimer(withTimeInterval: Self.historyStepInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stepHistory() }
+        }
+    }
+
     /// Advances the history request; once it is done, sweeping resumes.
     func stepHistory() {
         guard let attachedPID else { return stopOpeningHistory() }
@@ -334,15 +380,24 @@ extension NotificationCenterMonitor: NativeNotificationControlling {
             clock: platform.menuBarClock()
         )
         guard !working else { return }
-        stopOpeningHistory()
+        stopSteppingHistory()
         notificationCenterChanged()
     }
 
-    /// Stops stepping, and abandons a request that is still running.
-    private func stopOpeningHistory() {
+    private func stopSteppingHistory() {
         historyTimer?.invalidate()
         historyTimer = nil
-        historyOpener.cancel()
+    }
+    /// Stops stepping, and abandons the history requests, waiting ones included. While NotificationCenter is
+    /// attached, the panel the running request opened is closed, so that a stop, which moves NotificationCenter's
+    /// windows back on screen, does not leave it open there.
+    private func stopOpeningHistory() {
+        stopSteppingHistory()
+        historyOpener.cancel(
+            windows: attachedPID.map { platform.windows(ofProcess: $0) } ?? [],
+            application: attachedPID.flatMap { platform.application(ofProcess: $0) },
+            clock: platform.menuBarClock()
+        )
     }
 }
 
@@ -383,6 +438,7 @@ public struct SystemAccessibility: AccessibilityPlatform {
     public func watchExit(of pid: pid_t, handler: @escaping @MainActor () -> Void) -> AnyObject? {
         ProcessExitWatch(pid: pid, handler: handler)
     }
+
 
     /// Control Center hosts the clock on macOS 26; later versions moved it to the menu bar agent, under a
     /// group without actions (OmniWM, dwarvesf/hidden), so it is looked for one level down too.
@@ -431,12 +487,16 @@ final class ProcessExitWatch {
 @MainActor
 final class AXNotificationObservation {
     /// Every banner and alert reports a layout change; `kAXFocusedWindowChanged` reports the history panel
-    /// opening and closing (vorssaint-utils).
+    /// opening and closing (vorssaint-utils). `kAXWindowMoved` reports NotificationCenter moving its window
+    /// back to the origin as the panel closes (measured on macOS 26.6), so the window is hidden again at once
+    /// rather than at the next timed step or sweep. The sidebar's own moves report it too; the sweep or step
+    /// that follows finds the window where it belongs and moves nothing.
     private static let notifications = [
         kAXWindowCreatedNotification,
         kAXValueChangedNotification,
         kAXLayoutChangedNotification,
         kAXFocusedWindowChangedNotification,
+        kAXWindowMovedNotification,
     ]
 
     private let observer: AXObserver
@@ -512,5 +572,9 @@ struct AXElement: AccessibilityElement {
         var point = point
         guard let value = AXValueCreate(.cgPoint, &point) else { return false }
         return AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value) == .success
+    }
+
+    func setValue(_ text: String) -> Bool {
+        AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, text as CFString) == .success
     }
 }

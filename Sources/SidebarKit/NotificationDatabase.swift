@@ -3,8 +3,6 @@ import SQLite3
 
 /// A notification as macOS recorded it in its notification database.
 public struct DeliveredNotification: Equatable, Sendable {
-    /// Increases with every notification the database records.
-    public let recordID: Int64
     /// The notification's UUID, the same one NotificationCenter shows as the notification's `AXIdentifier`.
     public let identifier: String
     public let bundleIdentifier: String
@@ -23,8 +21,8 @@ public struct DeliveredNotification: Equatable, Sendable {
 /// as AriSweedler/dotfiles' notif-center and OmniWM read it on macOS 26:
 /// - `app`: `app_id`, `identifier` (the bundle identifier).
 /// - `record`: `rec_id`, `app_id`, `uuid` (16 bytes), `delivered_date` (seconds since 2001, empty or in
-///   the future for notifications scheduled but not yet delivered), and `data`, a binary property list
-///   whose `req` dictionary holds `titl`, `subt` and `body`.
+///   the future for notifications scheduled but not yet delivered, which usernoted fills in when it delivers
+///   them), and `data`, a binary property list whose `req` dictionary holds `titl`, `subt` and `body`.
 public struct NotificationDatabase: Sendable {
     public enum Failure: Error, Equatable, CustomStringConvertible {
         /// macOS refused access because Full Disk Access is not granted; SQLite reports `SQLITE_AUTH`
@@ -65,39 +63,46 @@ public struct NotificationDatabase: Sendable {
         url.deletingLastPathComponent().appendingPathComponent(url.lastPathComponent + "-wal")
     }
 
-    /// The newest record's id, or 0 when the database is empty.
-    public func latestRecordID() throws(Failure) -> Int64 {
-        let connection = try Connection(url: url)
-        let statement = try connection.prepare("SELECT COALESCE(MAX(rec_id), 0) FROM record")
-        return try statement.step() ? statement.int64(0) : 0
-    }
-
-    /// Notifications recorded after `recordID` and delivered by `now`, oldest first. Notifications without
-    /// a title or body are skipped.
-    public func notifications(after recordID: Int64, deliveredBy now: Date) throws(Failure) -> [DeliveredNotification] {
+    /// When the newest notification delivered by `now` was delivered, or nil when none was.
+    public func latestDelivery(by now: Date) throws(Failure) -> Date? {
         let connection = try Connection(url: url)
         let statement = try connection.prepare("""
-            SELECT record.rec_id, record.uuid, app.identifier, record.data, record.delivered_date
-            FROM record JOIN app ON app.app_id = record.app_id
-            WHERE record.rec_id > ? AND record.delivered_date > 0 AND record.delivered_date <= ?
-            ORDER BY record.rec_id
+            SELECT MAX(delivered_date) FROM record WHERE delivered_date > 0 AND delivered_date <= ?
             """)
-        statement.bind(recordID, at: 1)
+        statement.bind(now.timeIntervalSinceReferenceDate, at: 1)
+        guard try statement.step(), !statement.isNull(0) else { return nil }
+        return Date(timeIntervalSinceReferenceDate: statement.double(0))
+    }
+
+    /// Notifications delivered after `start` and by `now`, oldest delivery first. Notifications without a title
+    /// or body are skipped.
+    ///
+    /// Records are selected by delivery date because their ids say nothing about it: `rec_id` has no
+    /// `AUTOINCREMENT`, so usernoted gives a new record the id of a newest record it deleted, and a scheduled
+    /// notification's record exists, with its id, long before usernoted delivers it.
+    public func notifications(deliveredAfter start: Date, by now: Date) throws(Failure) -> [DeliveredNotification] {
+        let connection = try Connection(url: url)
+        let statement = try connection.prepare("""
+            SELECT record.uuid, app.identifier, record.data, record.delivered_date
+            FROM record JOIN app ON app.app_id = record.app_id
+            WHERE record.delivered_date > 0 AND record.delivered_date > ? AND record.delivered_date <= ?
+            ORDER BY record.delivered_date, record.rec_id
+            """)
+        statement.bind(start.timeIntervalSinceReferenceDate, at: 1)
         statement.bind(now.timeIntervalSinceReferenceDate, at: 2)
         var notifications: [DeliveredNotification] = []
         while try statement.step() {
-            let request = Self.request(in: statement.blob(3))
+            let request = Self.request(in: statement.blob(2))
             let title = request["titl"] as? String ?? ""
             let body = request["body"] as? String ?? ""
-            guard let identifier = Self.uuid(statement.blob(1)), !(title.isEmpty && body.isEmpty) else { continue }
+            guard let identifier = Self.uuid(statement.blob(0)), !(title.isEmpty && body.isEmpty) else { continue }
             notifications.append(DeliveredNotification(
-                recordID: statement.int64(0),
                 identifier: identifier,
-                bundleIdentifier: statement.text(2) ?? "",
+                bundleIdentifier: statement.text(1) ?? "",
                 title: title,
                 subtitle: request["subt"] as? String ?? "",
                 body: body,
-                deliveredAt: Date(timeIntervalSinceReferenceDate: statement.double(4))
+                deliveredAt: Date(timeIntervalSinceReferenceDate: statement.double(3))
             ))
         }
         return notifications
@@ -121,7 +126,7 @@ public struct NotificationDatabase: Sendable {
 }
 
 /// A read-only SQLite connection.
-private final class Connection {
+final class Connection {
     let handle: OpaquePointer
 
     init(url: URL) throws(NotificationDatabase.Failure) {
@@ -149,7 +154,7 @@ private final class Connection {
     }
 }
 
-private final class Statement {
+final class Statement {
     let connection: Connection
     let handle: OpaquePointer
 
@@ -160,10 +165,6 @@ private final class Statement {
 
     deinit {
         sqlite3_finalize(handle)
-    }
-
-    func bind(_ value: Int64, at index: Int32) {
-        sqlite3_bind_int64(handle, index, value)
     }
 
     func bind(_ value: Double, at index: Int32) {
@@ -179,8 +180,8 @@ private final class Statement {
         }
     }
 
-    func int64(_ column: Int32) -> Int64 { sqlite3_column_int64(handle, column) }
     func double(_ column: Int32) -> Double { sqlite3_column_double(handle, column) }
+    func isNull(_ column: Int32) -> Bool { sqlite3_column_type(handle, column) == SQLITE_NULL }
 
     func text(_ column: Int32) -> String? {
         sqlite3_column_text(handle, column).map { String(cString: $0) }

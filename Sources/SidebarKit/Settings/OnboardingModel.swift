@@ -16,6 +16,10 @@ public final class OnboardingModel {
     public private(set) var message: String?
     /// Called after a permission was removed, so whatever depends on it can check it now.
     @ObservationIgnored public var onPermissionsChanged: @MainActor () -> Void = {}
+    /// Called just before the Accessibility permission is removed, while it still lets the sidebar move
+    /// NotificationCenter's windows back on screen: without it, a window left off-screen would hide every
+    /// later notification until NotificationCenter restarts.
+    @ObservationIgnored public var willRemoveAccessibility: @MainActor () -> Void = {}
 
     @ObservationIgnored private let permissions: any PermissionGuiding
     @ObservationIgnored private let loginItems: any LoginItemService
@@ -43,6 +47,7 @@ public final class OnboardingModel {
     /// Takes AerospaceSidebar off the Accessibility list, for example after an update macOS no longer
     /// recognizes.
     public func removeAccessibility() async {
+        willRemoveAccessibility()
         await remove(.accessibility, name: "Accessibility")
     }
 

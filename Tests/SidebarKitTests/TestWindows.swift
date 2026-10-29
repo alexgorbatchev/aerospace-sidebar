@@ -68,6 +68,7 @@ extension SettingsWindowController {
     static func forTesting(
         store: SettingsStore,
         onboarding: OnboardingModel = .fake(),
+        appNotifications: AppNotificationsModel = .fake(),
         aeroSpace: AeroSpaceSync,
         fontChooser: FontChooser = FontChooser(),
         workspaceCenter: NotificationCenter = NotificationCenter(),
@@ -76,8 +77,8 @@ extension SettingsWindowController {
         history: @escaping @MainActor () -> [SidebarNotification] = { [] }
     ) -> SettingsWindowController {
         SettingsWindowController(
-            store: store, onboarding: onboarding, aeroSpace: aeroSpace, fontChooser: fontChooser,
-            workspaceCenter: workspaceCenter, sidebarScreenFrame: sidebarScreenFrame, panelType: TestPanel.self,
+            store: store, onboarding: onboarding, appNotifications: appNotifications, aeroSpace: aeroSpace,
+            fontChooser: fontChooser, workspaceCenter: workspaceCenter, sidebarScreenFrame: sidebarScreenFrame, panelType: TestPanel.self,
             history: history, reveal: { _ in }, terminate: terminate
         )
     }

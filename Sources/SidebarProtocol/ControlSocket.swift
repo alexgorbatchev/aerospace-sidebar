@@ -14,6 +14,26 @@ public struct ControlResponse: Codable, Equatable, Sendable {
     }
 }
 
+/// Why `UnixSocket.exchange` failed, by how far the request got. Only a request that never reached the
+/// server may be sent again: once it has been sent in full, the server may have handled it.
+public enum ExchangeError: Error, Equatable, Sendable {
+    /// The encoded request is larger than the server reads (`UnixSocket.maxMessageSize`); nothing was sent.
+    case tooLarge(size: Int)
+    /// Connecting failed, so nothing was sent.
+    case notConnected(SocketError)
+    /// Sending failed partway, so the server never read the whole request.
+    case notSent(SocketError)
+    /// The whole request was sent but no reply came back, such as when the server did not answer in time.
+    case noReply(String)
+
+    /// Nothing listens on the path: no socket file (`ENOENT`), or one with no listener behind it (`ECONNREFUSED`),
+    /// as when the app is not running.
+    public var meansNoListener: Bool {
+        guard case .notConnected(let error) = self else { return false }
+        return [ENOENT, ECONNREFUSED].contains(error.code)
+    }
+}
+
 public struct SocketError: Error, Equatable, Sendable, CustomStringConvertible {
     public let operation: String
     public let code: Int32
@@ -98,17 +118,33 @@ public enum UnixSocket {
     }
 
     /// Sends one request and waits for the reply, on a Dispatch thread (see `onBlockingQueue`).
+    /// - Throws: `ExchangeError`, which tells whether the server may have received the request.
     public static func exchange(
         _ request: ControlRequest,
         path: String,
         timeout: timeval = clientTimeout
     ) async throws -> ControlResponse {
-        try await onBlockingQueue {
-            let descriptor = try connect(to: path, timeout: timeout)
+        let data = try JSONEncoder().encode(request)
+        guard data.count <= maxMessageSize else { throw ExchangeError.tooLarge(size: data.count) }
+        return try await onBlockingQueue {
+            let descriptor: Int32
+            do throws(SocketError) {
+                descriptor = try connect(to: path, timeout: timeout)
+            } catch {
+                throw ExchangeError.notConnected(error)
+            }
             defer { close(descriptor) }
-            try writeAll(JSONEncoder().encode(request), to: descriptor)
+            do throws(SocketError) {
+                try writeAll(data, to: descriptor)
+            } catch {
+                throw ExchangeError.notSent(error)
+            }
             shutdown(descriptor, SHUT_WR)
-            return try JSONDecoder().decode(ControlResponse.self, from: readAll(from: descriptor))
+            do {
+                return try JSONDecoder().decode(ControlResponse.self, from: readAll(from: descriptor))
+            } catch {
+                throw ExchangeError.noReply(String(describing: error))
+            }
         }
     }
 

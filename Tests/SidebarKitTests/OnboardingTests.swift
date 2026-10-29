@@ -41,6 +41,26 @@ struct OnboardingModelTests {
         #expect(!sut.accessibilityGranted && sut.fullDiskAccess != .granted)
     }
 
+    /// Removing Accessibility first lets interception move NotificationCenter's windows back while the
+    /// permission still allows it; removing Full Disk Access needs no warning. Either removal is reported.
+    @Test func announcesRemovingAccessibilityBeforeItIsGone() async {
+        permissions.states = [.accessibility: .granted, .fullDiskAccess: .granted]
+        let sut = model()
+        var announced: [[PermissionFlowPane]] = []
+        var changes = 0
+        sut.willRemoveAccessibility = { [permissions] in announced.append(permissions.resets) }
+        sut.onPermissionsChanged = { changes += 1 }
+
+        await sut.removeFullDiskAccess()
+        await sut.removeAccessibility()
+
+        #expect(announced == [[.fullDiskAccess]])
+        #expect(permissions.resets == [.fullDiskAccess, .accessibility])
+        #expect(changes == 2)
+        #expect(!sut.accessibilityGranted)
+        #expect(sut.message == "Removed AerospaceSidebar from Accessibility.")
+    }
+
     @Test func managesLoginItem() {
         let sut = model()
 

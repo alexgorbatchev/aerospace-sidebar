@@ -12,6 +12,8 @@ public protocol AccessibilityElement {
     @discardableResult func perform(_ action: String) -> Bool
     var position: CGPoint? { get }
     @discardableResult func setPosition(_ point: CGPoint) -> Bool
+    /// Sets `AXValue`, such as the text in a text field.
+    @discardableResult func setValue(_ text: String) -> Bool
 }
 
 /// Text read from one NotificationCenter banner.
@@ -22,7 +24,8 @@ public struct BannerContent: Equatable, Sendable {
     public var subtitle = ""
     public var body = ""
 
-    var isEmpty: Bool { title.isEmpty && body.isEmpty }
+    /// Whether no text was read, so there is nothing to list; a notification may carry only a subtitle.
+    var isEmpty: Bool { title.isEmpty && subtitle.isEmpty && body.isEmpty }
 }
 
 /// Reads, expands and dismisses NotificationCenter notifications through the accessibility tree.
@@ -91,6 +94,13 @@ public enum NotificationBanners {
 
     public static func kind(of element: any AccessibilityElement) -> Kind? {
         element.string(kAXSubroleAttribute).flatMap { kinds[$0] }
+    }
+
+    /// Whether `window` is the "Notification Center" window, which holds every notification and the history
+    /// panel. NotificationCenter also hosts the desktop widgets, whose windows sit on other displays at
+    /// origins of their own and are never moved.
+    public static func isNotificationWindow(_ window: any AccessibilityElement) -> Bool {
+        window.string(kAXSubroleAttribute) == kAXSystemDialogSubrole
     }
 
     /// Notification elements under `root`, without descending into a notification.
@@ -163,6 +173,19 @@ public enum NotificationBanners {
         return first == content.title ? "" : first
     }
 
+    /// Whether the notification is macOS asking whether an app may post notifications. Its Close answers
+    /// Don't Allow, which switches the app's notifications off, so the sidebar never hides or closes one.
+    /// Either its body or its title is enough: leaving a notification to macOS by mistake costs little.
+    public static func isPermissionRequest(_ content: BannerContent, labels: NotificationCenterLabels = .english) -> Bool {
+        if labels.permissionBodies.contains(content.body) { return true }
+        return labels.permissionTitles.contains { format in
+            let parts = format.components(separatedBy: "%@")
+            guard parts.count == 2 else { return false }
+            return content.title.count > parts[0].count + parts[1].count
+                && content.title.hasPrefix(parts[0]) && content.title.hasSuffix(parts[1])
+        }
+    }
+
     /// Whether the notification offers a choice that only macOS can present: an action other than
     /// opening or closing it, a reply field, or a control other than a close, Show or Show Details button.
     public static func needsInteraction(_ banner: any AccessibilityElement, labels: NotificationCenterLabels = .english) -> Bool {
@@ -171,25 +194,107 @@ public enum NotificationBanners {
         return containsControl(banner, plainActions: plainActions, actionButtons: [])
     }
 
-    /// The choices an alert offers as named actions, such as "Allow…", in NotificationCenter's order. A
-    /// named action works wherever the alert's window is, so the sidebar can offer it while the alert is
-    /// hidden. Nil for banners, which leave on their own, for alerts without choices or with more than
-    /// `maxChoices`, which may include an actions menu's header, and for alerts that also hold a control
-    /// other than a button for one of those choices or a plain action, such as a reply field or an Options
-    /// menu, which only works on screen.
-    public static func choices(of alert: any AccessibilityElement, labels: NotificationCenterLabels = .english) -> [String]? {
-        guard kind(of: alert) == .alert else { return nil }
+    /// The choices a notification offers as named actions, such as "Allow…" or "Reply", in NotificationCenter's
+    /// order, which is the reverse of the order its app declared them in. A named action works wherever the
+    /// notification's window is, so the sidebar can offer it while the notification is hidden, and in the
+    /// history panel. Nil for stacks, for notifications without choices, and for those that also hold a
+    /// control other than a button for one of those choices or a plain action, such as an open reply field
+    /// or an Options menu, which only works on screen.
+    public static func namedChoices(of notification: any AccessibilityElement, labels: NotificationCenterLabels = .english) -> [String]? {
+        guard let kind = kind(of: notification), kind != .stack else { return nil }
         let plainActions = plainActions(labels)
-        let choices = alert.actionNames.map(actionName).filter { !plainActions.contains($0) }
-        guard !choices.isEmpty, choices.count <= maxChoices else { return nil }
-        // Hovering an alert shows its choices as buttons too; those duplicate the named actions.
+        let choices = notification.actionNames.map(actionName).filter { !plainActions.contains($0) }
+        guard !choices.isEmpty else { return nil }
+        // Hovering a notification shows its choices as buttons too; those duplicate the named actions.
         let named = Set(choices)
-        guard !containsControl(alert, plainActions: plainActions.union(named), actionButtons: named) else { return nil }
+        guard !containsControl(notification, plainActions: plainActions.union(named), actionButtons: named) else { return nil }
         return choices
     }
 
+    /// The choices the sidebar offers for a notification's `namedChoices`, in the app's order: the actions its app
+    /// declared under those titles (`declared`, which knows which ask for text and which are destructive).
+    /// Without them, an alert's choices are offered as plain titles when it has at most `maxChoices`; nil for
+    /// banners, and for alerts with more choices, which may include an actions menu's header.
+    public static func choices(
+        of notification: any AccessibilityElement,
+        labels: NotificationCenterLabels = .english,
+        declared: ([String]) -> [NativeChoice]? = { _ in nil }
+    ) -> [NativeChoice]? {
+        guard let titles = namedChoices(of: notification, labels: labels) else { return nil }
+        if let declared = declared(titles) { return declared }
+        guard kind(of: notification) == .alert, titles.count <= maxChoices else { return nil }
+        // NotificationCenter lists them the other way round, NSUserNotification's as well (measured with alerter).
+        return titles.reversed().map { NativeChoice(title: $0) }
+    }
+
     private static func plainActions(_ labels: NotificationCenterLabels) -> Set<String> {
-        standardActions.union([labels.close, labels.show, labels.showDetails])
+        standardActions.union([labels.close, labels.show, labels.showDetails, labels.hideDetails])
+    }
+
+    /// Performs `action` on a notification, on screen, hidden or in the history panel: presses it to open it,
+    /// performs one of its choices, or answers a choice that asks for text. False when it does not offer the
+    /// choice, or neither reports success nor changes. NotificationCenter reports failure for a choice that
+    /// opens a text field (Reply) although the field is open before the call returns, which changes the
+    /// notification's actions (Show Details becomes Hide Details); a notification that is gone reports none.
+    public static func perform(_ action: NativeAction, on notification: any AccessibilityElement, labels: NotificationCenterLabels = .english) -> Bool {
+        switch action {
+        case .open:
+            return notification.perform(kAXPressAction)
+        case .choice(let title):
+            guard let raw = namedAction(title, of: notification) else { return false }
+            return performChanging(raw, on: notification)
+        case .reply(let title, let text, let send):
+            return reply(title, text: text, send: send, on: notification, labels: labels)
+        }
+    }
+
+    /// Answers a choice that asks for text the way a user would: performing the choice opens a text field and a
+    /// send action named after the app's send button (`send`, or the one action the field adds when the app
+    /// named none), then the field is filled and sent. Each step takes effect before its call returns
+    /// (measured on macOS 26.6), so nothing waits between them. A reply that fails closes the field again:
+    /// while one is open, NotificationCenter holds back every new notification.
+    private static func reply(
+        _ title: String,
+        text: String,
+        send: String,
+        on notification: any AccessibilityElement,
+        labels: NotificationCenterLabels
+    ) -> Bool {
+        guard let raw = namedAction(title, of: notification) else { return false }
+        let before = Set(notification.actionNames.map(actionName))
+        notification.perform(raw)
+        let opened = notification.actionNames.map(actionName)
+        let added = opened.filter { !before.contains($0) && !plainActions(labels).contains($0) }
+        let sendName = send.isEmpty ? (added.count == 1 ? added.first : nil) : (opened.contains(send) ? send : nil)
+        guard let field = textField(in: notification), let sendName, let sendRaw = namedAction(sendName, of: notification),
+              field.setValue(text), performChanging(sendRaw, on: notification)
+        else {
+            if let hide = namedAction(labels.hideDetails, of: notification) { notification.perform(hide) }
+            return false
+        }
+        return true
+    }
+
+    /// Performs an action that counts as done when NotificationCenter reports success or the notification's
+    /// actions change.
+    private static func performChanging(_ raw: String, on notification: any AccessibilityElement) -> Bool {
+        let before = notification.actionNames
+        return notification.perform(raw) || notification.actionNames != before
+    }
+
+    /// The raw name of the notification's action called `name`.
+    private static func namedAction(_ name: String, of notification: any AccessibilityElement) -> String? {
+        notification.actionNames.first { actionName($0) == name }
+    }
+
+    /// The text field a notification shows while a reply is being written: an `AXTextArea` inside a scroll
+    /// area on macOS 26.
+    static func textField(in element: any AccessibilityElement, depth: Int = 4) -> (any AccessibilityElement)? {
+        for child in element.children {
+            if let role = child.string(kAXRoleAttribute), role == kAXTextAreaRole || role == kAXTextFieldRole { return child }
+            if depth > 0, let field = textField(in: child, depth: depth - 1) { return field }
+        }
+        return nil
     }
 
     /// `AXUIElementCopyActionNames` reports custom actions as "Name:<title>\nTarget:…\nSelector:…".

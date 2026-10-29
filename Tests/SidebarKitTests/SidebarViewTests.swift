@@ -43,16 +43,20 @@ struct SidebarViewTests {
         #expect(model.notifications.isEmpty)
     }
 
-    func card(_ notification: SidebarNotification, hovered: Bool) -> NotificationCard {
+    func card(_ notification: SidebarNotification, hovered: Bool, draft: ReplyDraft = ReplyDraft()) -> NotificationCard {
         NotificationCard(
             notification: notification,
-            presentAlert: model.presentAlert(of: notification),
+            offeredChoices: model.offeredChoices(of: notification),
+            isAnswering: model.answering.contains(notification.id),
+            clickDescription: model.clickDescription(of: notification),
             isHovered: hovered,
             hover: { _ in },
             activate: { model.activate(notification.id) },
             choose: { model.choose($0, for: notification.id) },
+            reply: { model.reply($0, text: $1, for: notification.id) },
             openLink: { model.openLink($0) },
-            dismiss: { model.dismiss(notification.id) }
+            dismiss: { model.dismiss(notification.id) },
+            draft: draft
         )
     }
 
@@ -81,14 +85,14 @@ struct SidebarViewTests {
 
     @Test func helpMentionsOptionClickOnlyWhenAClickDoesMore() throws {
         model.add(SidebarNotification(source: "cli", title: "Plain"))
-        model.add(SidebarNotification(source: "macOS", title: "Privacy", nativeAlert: .init(identifier: "a", choices: ["Allow…"])))
-        model.presentAlerts = ["a"]
+        model.add(SidebarNotification(source: "macOS", title: "Privacy", nativeChoices: .init(identifier: "a", choices: ["Allow…"])))
+        model.presentChoices = ["a"]
 
         let plain = try #require(model.notifications.first { $0.title == "Plain" })
         let alert = try #require(model.notifications.first { $0.title == "Privacy" })
 
         #expect(card(plain, hovered: false).helpText == "Click to dismiss")
-        #expect(card(alert, hovered: false).helpText == "Click to open, as clicking the macOS alert would\nOption-click to dismiss")
+        #expect(card(alert, hovered: false).helpText == "Click to open, as clicking the macOS notification would\nOption-click to dismiss")
     }
 
     @Test func dismissButtonShowsOnlyWhileTheCardIsHovered() throws {
@@ -233,13 +237,13 @@ struct SidebarViewTests {
 
     /// A card offers its alert's choices only while the alert exists.
     @Test func offersTheChoicesOfAPresentAlert() throws {
-        let alerts = RecordingAlerts()
-        model.alerts = alerts
-        model.add(SidebarNotification(source: "macOS", title: "Privacy & Security", nativeAlert: .init(identifier: "a", choices: ["Allow…", "Later"])))
+        let alerts = RecordingNativeNotifications()
+        model.nativeNotifications = alerts
+        model.add(SidebarNotification(source: "macOS", title: "Privacy & Security", nativeChoices: .init(identifier: "a", choices: ["Allow…", "Later"])))
 
         #expect(throws: (any Error).self) { try view().inspect().find(button: "Allow…") }
 
-        model.presentAlerts = ["a"]
+        model.presentChoices = ["a"]
         // The card's label holds the buttons the pointer clicks; its accessibility actions repeat them.
         let label = try view().inspect().find(NotificationCard.self).find(ViewType.Button.self).labelView()
         #expect(try label.find(button: "Later").labelView().text().attributes().font() == Typography(SidebarSettings.Font()).font(.callout))
@@ -250,16 +254,62 @@ struct SidebarViewTests {
         #expect(model.notifications.isEmpty)
     }
 
+    /// While a reply is typed the card is no button, so that VoiceOver reaches the field and its send button;
+    /// VoiceOver opens the field with the card's action for the choice.
+    @Test func turnsIntoAComposerWhileAReplyIsTyped() throws {
+        let reply = NativeChoice(title: "Reply", textInput: NativeChoice.TextInput(placeholder: "Message", sendTitle: "Send"))
+        let alerts = RecordingNativeNotifications()
+        model.nativeNotifications = alerts
+        model.add(SidebarNotification(source: "Slack", title: "Ada", nativeChoices: .init(identifier: "r", choices: [reply, "Later"]), nativeIdentifiers: ["r"]))
+        model.presentChoices = ["r"]
+        let notification = model.notifications[0]
+        let draft = ReplyDraft()
+
+        let button = card(notification, hovered: false, draft: draft)
+        #expect(!button.isComposing)
+        #expect(try button.inspect().find(CardChoices.self).accessibilityHidden())
+        try button.inspect().find(ViewType.Button.self).accessibilityActions().find(button: "Reply").tap()
+        #expect(draft.choice == reply)
+        #expect(alerts.performed.isEmpty)
+
+        let composer = card(notification, hovered: false, draft: draft)
+        #expect(composer.isComposing)
+        #expect(try !composer.inspect().find(CardChoices.self).accessibilityHidden())
+        draft.text = "On my way"
+        try composer.inspect().find(button: "Send").tap()
+
+        #expect(alerts.performed == ["Reply r: On my way [Send]"])
+        #expect(model.notifications.isEmpty)
+    }
+
+    /// VoiceOver can dismiss a card while a reply is typed on it; the dismiss button shows only under the pointer.
+    @Test func composerKeepsItsDismissAction() throws {
+        let reply = NativeChoice(title: "Reply", textInput: NativeChoice.TextInput(placeholder: "Message", sendTitle: "Send"))
+        let alerts = RecordingNativeNotifications()
+        model.nativeNotifications = alerts
+        model.add(SidebarNotification(source: "Slack", title: "Ada", nativeChoices: .init(identifier: "r", choices: [reply]), nativeIdentifiers: ["r"]))
+        model.presentChoices = ["r"]
+        let draft = ReplyDraft()
+        draft.open(reply)
+
+        let composer = try card(model.notifications[0], hovered: false, draft: draft).inspect()
+        try composer.find(where: { (try? $0.accessibilityActions().find(button: "Dismiss")) != nil })
+            .accessibilityActions().find(button: "Dismiss").tap()
+
+        #expect(model.notifications.isEmpty)
+        #expect(alerts.performed.isEmpty)
+    }
+
     /// VoiceOver sees a card as one button: its label reads what the card shows, and its actions offer the
     /// alert's choices and Dismiss, whose buttons VoiceOver cannot press inside the card.
     @Test func voiceOverReadsCardsAndReachesTheirButtons() throws {
-        let alerts = RecordingAlerts()
-        model.alerts = alerts
-        model.add(SidebarNotification(source: "macOS", title: "Privacy & Security", body: "Allow it?", nativeAlert: .init(identifier: "a", choices: ["Allow…", "Later"])))
+        let alerts = RecordingNativeNotifications()
+        model.nativeNotifications = alerts
+        model.add(SidebarNotification(source: "macOS", title: "Privacy & Security", body: "Allow it?", nativeChoices: .init(identifier: "a", choices: ["Allow…", "Later"])))
         for _ in 0..<2 {
             model.add(SidebarNotification(source: "Calendar", title: "Standup", severity: .high, shownByMacOS: true))
         }
-        model.presentAlerts = ["a"]
+        model.presentChoices = ["a"]
         let privacy = try #require(model.notifications.first { $0.title == "Privacy & Security" })
         let standup = try #require(model.notifications.first { $0.title == "Standup" })
 
@@ -316,11 +366,14 @@ struct SidebarViewTests {
         func card(hovered: Bool) throws -> InspectableView<ViewType.ClassifiedView> {
             try NotificationCard(
                 notification: SidebarNotification(source: "s", title: "t"),
-                presentAlert: nil,
+                offeredChoices: nil,
+                isAnswering: false,
+                clickDescription: "Click to dismiss",
                 isHovered: hovered,
                 hover: { _ in },
                 activate: {},
                 choose: { _ in },
+                reply: { _, _ in },
                 openLink: { _ in },
                 dismiss: {}
             ).inspect()
@@ -341,7 +394,8 @@ struct SidebarViewTests {
     }
 
     @Test func laterCardsDrawAboveEarlierOnesSoTheyCoverRemovals() throws {
-        let start = Date(timeIntervalSince1970: 1_000_000)
+        // The model runs on the real clock and keeps only notifications within the retention.
+        let start = Date()
         model.add(SidebarNotification(source: "s", title: "old-normal", receivedAt: start))
         model.add(SidebarNotification(source: "s", title: "new-normal", receivedAt: start.addingTimeInterval(1)))
         model.add(SidebarNotification(source: "s", title: "old-critical", severity: .critical, receivedAt: start.addingTimeInterval(-3600)))

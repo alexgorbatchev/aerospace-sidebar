@@ -151,6 +151,46 @@ struct SettingsStoreTests {
         #expect(!store.settings.notifications.replaceSystem)
     }
 
+    /// Settings a failed save left unwritten are written by the next update, although it changes nothing.
+    @Test func writesSettingsAFailedSaveLeftUnwritten() throws {
+        let store = SettingsStore(file: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: directory.url.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.url.path) }
+        store.update { $0.history.maxCount = 300 }
+        #expect(store.saveError != nil)
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.url.path)
+        store.update { $0.history.maxCount = 300 }
+
+        #expect(store.saveError == nil)
+        #expect(try file.load().history.maxCount == 300)
+    }
+
+    @Test func savingReplacesAnInvalidFile() throws {
+        try directory.write("[history\n", to: "config.toml")
+        let store = SettingsStore(file: file)
+        #expect(store.loadError != nil)
+
+        store.update { $0.history.maxCount = 300 }
+
+        #expect(store.loadError == nil)
+        #expect(try file.load().history.maxCount == 300)
+    }
+
+    /// A file that does not load holds none of the settings in effect, so saving them unchanged writes them.
+    @Test func savingUnchangedSettingsReplacesAnInvalidFile() throws {
+        let store = SettingsStore(file: file)
+        store.update { $0.history.maxCount = 300 }
+        try directory.write("[history\n", to: "config.toml")
+        store.reload()
+        #expect(store.loadError != nil)
+
+        store.update { _ in }
+
+        #expect(store.loadError == nil)
+        #expect(try file.load().history.maxCount == 300)
+    }
+
     @Test func invalidFileAtLaunchUsesDefaultsAndReportsIt() throws {
         try directory.write("[history\n", to: "config.toml")
 

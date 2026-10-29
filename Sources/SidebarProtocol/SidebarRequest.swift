@@ -32,7 +32,7 @@ public enum NotificationSeverity: String, Codable, CaseIterable, Comparable, Sen
 public enum NotificationAction: Codable, Equatable, Sendable {
     /// Opens the URL with its default handler.
     case open(URL)
-    /// Runs `command` with the user's login shell (`$SHELL -lc`) in `workingDirectory`.
+    /// Runs `command` with the user's login shell from the user database (`-lc`) in `workingDirectory`.
     case run(command: String, workingDirectory: String)
 }
 
@@ -43,6 +43,13 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
     public static let maxBodyLength = 4096
     public static let maxIconLength = 64
     public static let maxBundleIdentifierLength = 255
+    public static let maxOpenURLLength = 8192
+    public static let maxCommandLength = 4096
+    public static let maxWorkingDirectoryLength = Int(PATH_MAX)
+    /// UTF-8 bytes a field may take per character of its limit: four, the most one code point takes. A character
+    /// can stack any number of code points, such as a letter with combining marks, so a character count alone
+    /// bounds neither the text kept nor the request carrying it.
+    public static let maxBytesPerCharacter = 4
 
     public let title: String
     public let subtitle: String
@@ -56,7 +63,8 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
     public let bundleIdentifier: String?
     public let action: NotificationAction?
 
-    /// - Throws: `SidebarRequestError` when both title and body are empty or a field exceeds its limit.
+    /// - Throws: `SidebarRequestError` when both title and body are empty or a field, the action's included,
+    ///   exceeds its limit in characters or `maxBytesPerCharacter` times that in UTF-8 bytes.
     public init(
         title: String = "",
         subtitle: String = "",
@@ -69,13 +77,19 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
         guard !title.isEmpty || !body.isEmpty else {
             throw .emptyNotification
         }
+        let actionFields: [(String, String, Int)] = switch action {
+        case nil: []
+        case .open(let url): [("open", url.absoluteString, Self.maxOpenURLLength)]
+        case .run(let command, let workingDirectory):
+            [("command", command, Self.maxCommandLength), ("workingDirectory", workingDirectory, Self.maxWorkingDirectoryLength)]
+        }
         for (field, value, limit) in [
             ("title", title, Self.maxTitleLength),
             ("subtitle", subtitle, Self.maxSubtitleLength),
             ("body", body, Self.maxBodyLength),
             ("icon", icon ?? "", Self.maxIconLength),
             ("bundleIdentifier", bundleIdentifier ?? "", Self.maxBundleIdentifierLength),
-        ] where value.count > limit {
+        ] + actionFields where value.utf8.count > limit * Self.maxBytesPerCharacter || value.count > limit {
             throw .fieldTooLong(field: field, limit: limit)
         }
         self.title = title
@@ -122,7 +136,8 @@ extension SidebarRequestError: CustomStringConvertible {
             "unsupported URL scheme \(scheme.map { "'\($0)'" } ?? "(none)"), expected '\(SidebarApp.urlScheme)'"
         case .unknownRoute(let route): "unknown route '\(route)', expected 'notification/push'"
         case .emptyNotification: "a notification needs a title or a body"
-        case .fieldTooLong(let field, let limit): "\(field) is longer than \(limit) characters"
+        case .fieldTooLong(let field, let limit):
+            "\(field) is longer than \(limit) characters (or \(limit * NotificationPayload.maxBytesPerCharacter) bytes in UTF-8)"
         case .invalidOpenURL(let value): "'\(value)' is not an http or https URL"
         case .invalidSeverity(let value):
             "'\(value)' is not a severity, expected \(NotificationSeverity.allCases.map(\.rawValue).joined(separator: ", "))"

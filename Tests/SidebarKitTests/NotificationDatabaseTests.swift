@@ -80,45 +80,51 @@ struct NotificationDatabaseTests {
         fixture = try NotificationDatabaseFixture()
     }
 
-    @Test func readsDeliveredNotificationsAfterARecord() throws {
+    /// Records come by delivery, whatever order they were added in; a scheduled one only once it is due, and
+    /// one without a delivery date or any text never.
+    @Test func readsNotificationsDeliveredAfterADate() throws {
         try fixture.create()
-        try fixture.insert(title: "Old")
-        let identifier = try fixture.insert(title: "New", subtitle: "Sub", body: "Text")
-        try fixture.insert(title: "Scheduled", delivered: now.addingTimeInterval(60))
+        let start = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        try fixture.insert(title: "Old", delivered: start)
+        let scheduled = try fixture.insert(title: "Scheduled", delivered: now.addingTimeInterval(60))
+        let later = try fixture.insert(app: 2, title: "Later", delivered: start + 20)
+        let new = try fixture.insert(title: "New", subtitle: "Sub", body: "Text", delivered: start + 10)
         try fixture.insert(title: "Undelivered", delivered: nil)
-        try fixture.insert(title: "", body: "")
-        try fixture.insert(data: Data("not a property list".utf8))
-        try fixture.insert(app: 2, title: "Elsewhere")
+        try fixture.insert(title: "Unset", delivered: Date(timeIntervalSinceReferenceDate: 0))
+        try fixture.insert(title: "", body: "", delivered: start + 30)
+        try fixture.insert(delivered: start + 30, data: Data("not a property list".utf8))
 
-        let notifications = try fixture.database.notifications(after: 1, deliveredBy: now)
-
-        #expect(try fixture.database.latestRecordID() == 7)
-        #expect(notifications == [
+        #expect(try fixture.database.notifications(deliveredAfter: start, by: now) == [
             DeliveredNotification(
-                recordID: 2, identifier: identifier.uuidString, bundleIdentifier: "com.apple.ScriptEditor2",
-                title: "New", subtitle: "Sub", body: "Text", deliveredAt: Date(timeIntervalSinceReferenceDate: 800_000_000)
+                identifier: new.uuidString, bundleIdentifier: "com.apple.ScriptEditor2",
+                title: "New", subtitle: "Sub", body: "Text", deliveredAt: start + 10
             ),
             DeliveredNotification(
-                recordID: 7, identifier: notifications.last?.identifier ?? "", bundleIdentifier: "com.example.missing",
-                title: "Elsewhere", subtitle: "", body: "Body", deliveredAt: Date(timeIntervalSinceReferenceDate: 800_000_000)
+                identifier: later.uuidString, bundleIdentifier: "com.example.missing",
+                title: "Later", subtitle: "", body: "Body", deliveredAt: start + 20
             ),
         ])
+        #expect(try fixture.database.notifications(deliveredAfter: .distantPast, by: now).map(\.title) == ["Old", "New", "Later"])
+        let due = try fixture.database.notifications(deliveredAfter: start + 20, by: now.addingTimeInterval(60))
+        #expect(due.map(\.identifier) == [scheduled.uuidString])
+        #expect(try fixture.database.latestDelivery(by: now) == start + 30)
+        #expect(try fixture.database.latestDelivery(by: now.addingTimeInterval(60)) == now.addingTimeInterval(60))
     }
 
     @Test func emptyDatabaseHasNoRecords() throws {
         try fixture.create()
 
-        #expect(try fixture.database.latestRecordID() == 0)
-        #expect(try fixture.database.notifications(after: 0, deliveredBy: now).isEmpty)
+        #expect(try fixture.database.latestDelivery(by: now) == nil)
+        #expect(try fixture.database.notifications(deliveredAfter: .distantPast, by: now).isEmpty)
     }
 
     @Test func reportsAnUnreadableDatabase() throws {
-        #expect(throws: NotificationDatabase.Failure.self) { try fixture.database.latestRecordID() }
-        #expect(throws: NotificationDatabase.Failure.self) { try fixture.database.notifications(after: 0, deliveredBy: now) }
+        #expect(throws: NotificationDatabase.Failure.self) { try fixture.database.latestDelivery(by: now) }
+        #expect(throws: NotificationDatabase.Failure.self) { try fixture.database.notifications(deliveredAfter: .distantPast, by: now) }
 
         try FileManager.default.createDirectory(at: fixture.database.url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data().write(to: fixture.database.url)
-        let error = try #require(throws: NotificationDatabase.Failure.self) { try fixture.database.latestRecordID() }
+        let error = try #require(throws: NotificationDatabase.Failure.self) { try fixture.database.latestDelivery(by: now) }
         #expect(error.description.hasPrefix("Cannot read the notification database: "))
     }
 
@@ -157,20 +163,21 @@ struct NotificationDatabaseMonitorTests {
         ) { harness.received.append($0) }
     }
 
-    /// The first launch starts after the newest record; later records wait out the grace period, and those
-    /// a banner already reported are skipped.
+    /// The first launch starts after the newest delivered record; later records wait out the grace period,
+    /// and those a banner already reported are skipped.
     @Test func listsRecordsNoBannerReported() throws {
         try fixture.create()
-        try fixture.insert(title: "History")
         let harness = Harness()
+        let delivered = harness.now - 5
+        try fixture.insert(title: "History", delivered: delivered - 5)
         let monitor = makeMonitor(harness)
         monitor.start()
         defer { monitor.stop() }
         #expect(monitor.status == .reading)
 
-        let focus = try fixture.insert(title: "During Focus", subtitle: "Sub")
-        identities.insert(try fixture.insert(title: "Shown as a banner").uuidString)
-        let system = try fixture.insert(app: 2, title: "From macOS")
+        let focus = try fixture.insert(title: "During Focus", subtitle: "Sub", delivered: delivered)
+        identities.insert(try fixture.insert(title: "Shown as a banner", delivered: delivered).uuidString)
+        let system = try fixture.insert(app: 2, title: "From macOS", delivered: delivered + 1)
         monitor.readNewRecords()
         monitor.deliverPending()
         #expect(harness.received.isEmpty)
@@ -185,7 +192,26 @@ struct NotificationDatabaseMonitorTests {
         // A card opens its notification from the history, which knows it by the record's UUID.
         #expect(harness.received.map(\.nativeIdentifiers) == [[focus.uuidString], [system.uuidString]])
         #expect(harness.received.first?.subtitle == "Sub")
-        #expect(harness.received.first?.receivedAt == Date(timeIntervalSinceReferenceDate: 800_000_000))
+        #expect(harness.received.first?.receivedAt == delivered)
+    }
+
+    /// macOS's request to let an app post notifications is its question, not a notification: a card for it
+    /// would answer it when clicked, so it is never listed.
+    @Test func skipsPermissionRequests() throws {
+        try fixture.create()
+        try fixture.execute("INSERT INTO app VALUES (3, '\(NotificationDatabaseMonitor.permissionRequestApp)')")
+        let harness = Harness()
+        let monitor = makeMonitor(harness, grace: 0)
+        monitor.start()
+        defer { monitor.stop() }
+
+        let request = try fixture.insert(app: 3, title: "“Slack” Notifications")
+        try fixture.insert(title: "After")
+        monitor.readNewRecords()
+        monitor.deliverPending()
+
+        #expect(harness.received.map(\.title) == ["After"])
+        #expect(identities.insert(request.uuidString))
     }
 
     /// Records added while the sidebar was not running are listed at the next launch.
@@ -203,20 +229,193 @@ struct NotificationDatabaseMonitorTests {
         #expect(harness.received.map(\.title) == ["While quit"])
     }
 
-    @Test func startsOverWhenTheDatabaseIsRecreated() throws {
+    /// usernoted gives a new record the id of a newest record it deleted (an app withdrew its notification),
+    /// and a rewritten store starts its ids over; records are read by delivery date, so neither hides one.
+    @Test func listsRecordsWhateverTheirIDs() throws {
         try fixture.create()
-        fixture.defaults.set(NSNumber(value: 50), forKey: NotificationDatabaseMonitor.recordIDKey)
-        try fixture.insert(title: "Before")
         let harness = Harness()
         let monitor = makeMonitor(harness, grace: 0)
         monitor.start()
         defer { monitor.stop() }
 
-        try fixture.insert(title: "After")
+        try fixture.insert(title: "Read", delivered: harness.now - 6)
+        try fixture.insert(title: "Withdrawn", delivered: harness.now - 5)
+        monitor.readNewRecords()
+        monitor.deliverPending()
+        harness.now += 10
+        try fixture.execute("DELETE FROM record WHERE rec_id = 2")
+        // Takes id 2 again.
+        try fixture.insert(title: "Reusing its id", delivered: harness.now - 5)
+        monitor.readNewRecords()
+        monitor.deliverPending()
+        harness.now += 10
+        try fixture.execute("DELETE FROM record")
+        try fixture.insert(title: "In a rewritten store", delivered: harness.now - 5)
         monitor.readNewRecords()
         monitor.deliverPending()
 
-        #expect(harness.received.map(\.title) == ["After"])
+        #expect(harness.received.map(\.title) == ["Read", "Withdrawn", "Reusing its id", "In a rewritten store"])
+    }
+
+    /// A scheduled notification's record waits, without a delivery date or with one still ahead, while later
+    /// records are read, and is listed once usernoted delivers it, also when it was the newest record at the
+    /// first launch.
+    @Test func listsScheduledNotificationsOnceDelivered() throws {
+        try fixture.create()
+        let harness = Harness()
+        try fixture.insert(title: "History", delivered: harness.now - 60)
+        let meeting = try fixture.insert(title: "Meeting", delivered: nil)
+        let monitor = makeMonitor(harness, grace: 0)
+        monitor.start()
+        defer { monitor.stop() }
+
+        try fixture.insert(title: "Reminder", delivered: harness.now + 1800)
+        harness.now += 600
+        try fixture.insert(title: "Chat", delivered: harness.now - 5)
+        monitor.readNewRecords()
+        monitor.deliverPending()
+        harness.now += 3600
+        try fixture.execute("""
+            UPDATE record SET delivered_date = \(harness.now.timeIntervalSinceReferenceDate - 5)
+            WHERE hex(uuid) = '\(meeting.uuidString.replacingOccurrences(of: "-", with: ""))'
+            """)
+        monitor.readNewRecords()
+        monitor.deliverPending()
+
+        #expect(harness.received.map(\.title) == ["Chat", "Reminder", "Meeting"])
+    }
+
+    /// usernoted writes records seconds after delivering them, several at a time, so one can arrive after a
+    /// record delivered later; reads look back far enough to list it, and list every record once.
+    @Test func listsRecordsWrittenAfterLaterOnes() throws {
+        try fixture.create()
+        let harness = Harness()
+        let monitor = makeMonitor(harness, grace: 0)
+        monitor.start()
+        defer { monitor.stop() }
+
+        try fixture.insert(title: "Later", delivered: harness.now - 2)
+        monitor.readNewRecords()
+        monitor.deliverPending()
+        try fixture.insert(title: "Earlier", delivered: harness.now - 8)
+        monitor.readNewRecords()
+        monitor.readNewRecords()
+        monitor.deliverPending()
+        monitor.readNewRecords()
+        monitor.deliverPending()
+
+        #expect(harness.received.map(\.title) == ["Later", "Earlier"])
+    }
+
+    /// A record still waiting for its banner when the monitor stops, or when the app quits or crashes, is
+    /// read again when it starts, also one delivered more than `lookback` before the newest record read with it.
+    @Test func listsRecordsStillWaitingWhenStopped() throws {
+        try fixture.create()
+        let harness = Harness()
+        let monitor = makeMonitor(harness)
+        monitor.start()
+        try fixture.insert(title: "Stopped earlier", delivered: harness.now - 120)
+        try fixture.insert(title: "Stopped", delivered: harness.now - 5)
+        monitor.readNewRecords()
+        monitor.stop()
+
+        monitor.start()
+        harness.now += 3
+        monitor.deliverPending()
+        monitor.stop()
+        #expect(harness.received.map(\.title) == ["Stopped earlier", "Stopped"])
+
+        harness.now += 600
+        do {
+            let crashed = makeMonitor(harness)
+            crashed.start()
+            try fixture.insert(title: "Crashed earlier", delivered: harness.now - 120)
+            try fixture.insert(title: "Crashed", delivered: harness.now - 5)
+            crashed.readNewRecords()
+        }
+        let relaunched = makeMonitor(harness)
+        relaunched.start()
+        defer { relaunched.stop() }
+        harness.now += 3
+        relaunched.deliverPending()
+
+        #expect(harness.received.map(\.title) == ["Stopped earlier", "Stopped", "Crashed earlier", "Crashed"])
+    }
+
+    /// A read position ahead of a clock set back while the sidebar was not running moves back to `lookback`
+    /// before the clock, so records delivered just before the launch, and after it, are listed.
+    @Test func readsOnAfterTheClockIsSetBack() throws {
+        try fixture.create()
+        let harness = Harness()
+        fixture.defaults.set(harness.now + 3600, forKey: NotificationDatabaseMonitor.readPositionKey)
+        try fixture.insert(title: "Before launch", delivered: harness.now - 30)
+        let monitor = makeMonitor(harness, grace: 0)
+        monitor.start()
+        defer { monitor.stop() }
+        monitor.deliverPending()
+
+        harness.now += 10
+        try fixture.insert(title: "After", delivered: harness.now - 5)
+        monitor.readNewRecords()
+        monitor.deliverPending()
+
+        #expect(harness.received.map(\.title) == ["Before launch", "After"])
+    }
+
+    /// A clock set back while the monitor reads lists the record whose write woke the read and the one still
+    /// waiting for its banner from before, and leaves the read position behind the clock, so records delivered
+    /// while the sidebar is quit are listed at the next launch.
+    @Test func readsOnWhenTheClockIsSetBackWhileRunning() throws {
+        try fixture.create()
+        let harness = Harness()
+        let monitor = makeMonitor(harness)
+        monitor.start()
+        try fixture.insert(title: "Before", delivered: harness.now - 5)
+        monitor.readNewRecords()
+        harness.now += 3
+        monitor.deliverPending()
+        try fixture.insert(title: "Waiting", delivered: harness.now - 5)
+        monitor.readNewRecords()
+
+        harness.now -= 3600
+        try fixture.insert(title: "After", delivered: harness.now - 5)
+        monitor.readNewRecords()
+        harness.now += 3
+        monitor.deliverPending()
+        harness.now += 3
+        monitor.deliverPending()
+        monitor.stop()
+        #expect(harness.received.map(\.title) == ["Before", "After", "Waiting"])
+
+        harness.now += 600
+        try fixture.insert(title: "While quit", delivered: harness.now - 300)
+        let relaunched = makeMonitor(harness)
+        relaunched.start()
+        defer { relaunched.stop() }
+        harness.now += 3
+        relaunched.deliverPending()
+
+        #expect(harness.received.map(\.title) == ["Before", "After", "Waiting", "While quit"])
+    }
+
+    /// A clock set back by little more than `lookback` can stay ahead of the read position while falling
+    /// behind the newest record read; a record delivered between the two is still listed.
+    @Test func noticesAClockSetBackBehindTheNewestRecordRead() throws {
+        try fixture.create()
+        let harness = Harness()
+        let monitor = makeMonitor(harness, grace: 0)
+        monitor.start()
+        defer { monitor.stop() }
+        try fixture.insert(title: "Before", delivered: harness.now - 5)
+        monitor.readNewRecords()
+        monitor.deliverPending()
+
+        harness.now -= 60
+        try fixture.insert(title: "After", delivered: harness.now - 6)
+        monitor.readNewRecords()
+        monitor.deliverPending()
+
+        #expect(harness.received.map(\.title) == ["Before", "After"])
     }
 
     /// A database that cannot be opened is tried again until it opens; one that fails a read is reported but

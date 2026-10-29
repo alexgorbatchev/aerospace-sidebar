@@ -201,7 +201,7 @@ struct NotificationCenterMonitorTests {
         let mail = FakeElement.banner(id: "m", app: "Mail", title: "Lunch")
         platform.windowsByPID[42] = [FakeElement.window(zoom), FakeElement.window(mail)]
 
-        let monitor = SidebarAppDelegate.makeMonitor(model: model, settings: settings, platform: platform)
+        let monitor = SidebarAppDelegate.makeMonitor(model: model, settings: settings, declaredChoices: .none, platform: platform)
         monitor.start()
         defer { monitor.stop() }
 
@@ -228,6 +228,7 @@ struct NotificationCenterMonitorTests {
         let monitor = SidebarAppDelegate.makeMonitor(
             model: model,
             settings: settings,
+            declaredChoices: .none,
             platform: platform,
             targetVisibleFrame: { CGRect(x: 0, y: 0, width: 1920, height: 1050) }
         )
@@ -252,6 +253,116 @@ struct NotificationCenterMonitorTests {
 
     /// Wired up as the app does it, an alert with choices gets a card that offers them; performing one
     /// acts on the alert, and dismissing the card closes the alert. Without NotificationCenter, nothing can.
+    static let reply = NativeChoice(title: "Reply", textInput: NativeChoice.TextInput(placeholder: "Message", sendTitle: "Send"))
+
+    /// A banner whose app declared a reply keeps offering it after timing out into the history, where the
+    /// card's reply is written and sent on its entry.
+    @Test func cardsAnswerBannersInTheHistory() throws {
+        let directory = try TemporaryDirectory()
+        let settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        let platform = FakePlatform()
+        let application = FakeElement()
+        platform.applicationsByPID[42] = application
+        platform.clock = FakeElement()
+        platform.windowsByPID[42] = [FakeElement.window(FakeElement.replyBanner(id: "r", app: "Calendar"))]
+        // Calendar declared a Reply that asks for text, as usernoted keeps it.
+        let database = try NotificationDatabaseFixture()
+        try database.create()
+        let categories = try PropertyListSerialization.data(fromPropertyList: [[
+            "id": "reply", "acts": [["id": "reply", "ti": "Reply", "st": 1, "tip": "Message", "tia": "Send"]],
+        ]], format: .binary, options: 0)
+        try database.execute("""
+            CREATE TABLE categories (app_id INTEGER PRIMARY KEY, categories BLOB);
+            INSERT INTO app VALUES (3, 'com.apple.iCal');
+            INSERT INTO categories VALUES (3, x'\(categories.map { String(format: "%02x", $0) }.joined())');
+            """)
+        let declared = DeclaredChoices(database: database.database)
+        let monitor = SidebarAppDelegate.makeMonitor(model: model, settings: settings, declaredChoices: declared, platform: platform)
+        model.nativeNotifications = monitor
+        monitor.start()
+        defer { monitor.stop() }
+
+        platform.windowsByPID[42] = [FakeElement.window()]
+        monitor.notificationCenterChanged()
+        let card = try #require(model.notifications.first)
+        #expect(model.offeredChoices(of: card)?.choices == [Self.reply])
+
+        model.reply("Reply", text: "On my way", for: card.id)
+        #expect(model.answering == [card.id])
+        let entry = FakeElement.replyBanner(id: "r", app: "Calendar")
+        application.flags["AXExpanded"] = true
+        platform.windowsByPID[42] = [FakeElement.window(entry)]
+        monitor.stepHistory()
+
+        #expect(entry.string("sent") == "On my way")
+        #expect(entry.performed.filter { $0.hasPrefix("Name:Send") }.count == 1)
+        #expect(platform.clock?.performed.count == 2)
+        #expect(model.answering.isEmpty)
+        #expect(model.notifications.isEmpty)
+    }
+
+    /// A notification on screen that refuses a choice fails it there; the history panel, which shares its
+    /// window, is left alone.
+    @Test func failsAChoiceTheNotificationRefusesOnScreen() {
+        let harness = Harness()
+        let clock = FakeElement()
+        harness.platform.clock = clock
+        let alert = FakeElement.alert(id: "a")
+        alert.actionSucceeds = false
+        harness.platform.windowsByPID[42] = [FakeElement.window(alert)]
+        harness.monitor.start()
+        defer { harness.monitor.stop() }
+        var results: [Bool] = []
+
+        harness.monitor.perform(.choice("Allow…"), on: ["a"], from: "Calendar") { results.append($0) }
+
+        #expect(results == [false])
+        #expect(alert.performed == ["Name:Allow…\nTarget:0x0\nSelector:(null)"])
+        #expect(clock.performed.isEmpty)
+        #expect(!harness.monitor.isOpeningHistory)
+    }
+
+    /// A choice the history no longer holds fails, and its card stops offering it but stays.
+    @Test func forgetsChoicesTheHistoryNoLongerHolds() throws {
+        // Recent: the model lists nothing older than its retention.
+        var now = Date()
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        let platform = FakePlatform()
+        let application = FakeElement()
+        platform.applicationsByPID[42] = application
+        platform.clock = FakeElement()
+        platform.windowsByPID[42] = [FakeElement.window(FakeElement.replyBanner(id: "gone"))]
+        let interceptor = SystemNotificationInterceptor(
+            now: { now },
+            bundleIdentifier: { _ in "com.example.probe" },
+            listsNotification: { model.lists(notification: $0) },
+            listsChoices: { model.lists(choicesOf: $0) },
+            declaredChoices: { _, _ in [Self.reply] },
+            onPresentChoices: { model.presentChoices = $0 },
+            onNotification: { model.add($0) }
+        )
+        let monitor = NotificationCenterMonitor(platform: platform, interceptor: interceptor, workspaceCenter: NotificationCenter(), now: { now }) { _ in }
+        model.nativeNotifications = monitor
+        monitor.start()
+        defer { monitor.stop() }
+        platform.windowsByPID[42] = [FakeElement.window()]
+        monitor.notificationCenterChanged()
+        #expect(model.presentChoices == ["gone"])
+        let card = try #require(model.notifications.first)
+
+        model.reply("Reply", text: "Too late", for: card.id)
+        application.flags["AXExpanded"] = true
+        monitor.stepHistory()
+        // Past `listGrace`, within `timeout`; exactly `listGrace` may fall short of it this far from 2001.
+        now += 1
+        monitor.stepHistory()
+
+        #expect(model.presentChoices.isEmpty)
+        #expect(model.notifications.map(\.id) == [card.id])
+        #expect(model.answering.isEmpty)
+    }
+
     @Test func cardsActOnTheAlertsTheyStandFor() throws {
         let directory = try TemporaryDirectory()
         let settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
@@ -261,18 +372,20 @@ struct NotificationCenterMonitorTests {
         let second = FakeElement.alert(id: "second", title: "Review")
         let window = FakeElement.window(first, second)
         platform.windowsByPID[42] = [window]
-        let monitor = SidebarAppDelegate.makeMonitor(model: model, settings: settings, platform: platform)
-        model.alerts = monitor
+        let monitor = SidebarAppDelegate.makeMonitor(model: model, settings: settings, declaredChoices: .none, platform: platform)
+        model.nativeNotifications = monitor
 
-        #expect(!monitor.perform(.open, onAlert: "first"))
+        var unattached: [Bool] = []
+        monitor.perform(.open, on: ["first"], from: "Calendar") { unattached.append($0) }
+        #expect(unattached == [false])
         monitor.notificationsReleased()
         monitor.start()
         defer { monitor.stop() }
 
         #expect(window.position == SystemNotificationInterceptor.offScreen)
-        #expect(model.presentAlerts == ["first", "second"])
+        #expect(model.presentChoices == ["first", "second"])
         let standup = try #require(model.notifications.first { $0.title == "Standup" })
-        #expect(model.presentAlert(of: standup)?.choices == ["Allow…"])
+        #expect(model.offeredChoices(of: standup)?.choices == ["Allow…"])
 
         model.choose("Allow…", for: standup.id)
         #expect(first.performed == ["Name:Allow…\nTarget:0x0\nSelector:(null)"])
@@ -283,8 +396,37 @@ struct NotificationCenterMonitorTests {
         #expect(monitor.isSweeping)
 
         monitor.stop()
-        #expect(model.presentAlerts.isEmpty)
+        #expect(model.presentChoices.isEmpty)
         #expect(window.position == .zero)
+    }
+
+    /// Wired up as the app does it, an alert the notification database listed first stays with macOS and its
+    /// card offers no choices: the database cannot tell them.
+    @Test func cardsWithoutAnAlertsChoicesLeaveItToMacOS() throws {
+        let directory = try TemporaryDirectory()
+        let settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        let identities = NotificationIdentities()
+        identities.insert("a")
+        model.add(SidebarNotification(source: "Calendar", title: "Standup", bundleIdentifier: "com.apple.iCal", nativeIdentifiers: ["a"]))
+        let platform = FakePlatform()
+        let alert = FakeElement.alert(id: "a")
+        let window = FakeElement.window(alert)
+        platform.windowsByPID[42] = [window]
+        let monitor = SidebarAppDelegate.makeMonitor(
+            model: model, settings: settings, identities: identities, declaredChoices: .none, platform: platform, targetVisibleFrame: { nil }
+        )
+        model.nativeNotifications = monitor
+
+        monitor.start()
+        defer { monitor.stop() }
+
+        #expect(window.moves.isEmpty)
+        #expect(model.presentChoices.isEmpty)
+        #expect(model.notifications.map(\.title) == ["Standup"])
+
+        model.dismiss(model.notifications[0].id)
+        #expect(alert.performed.isEmpty)
     }
 
     @Test func noAlertCanBeActedOnOnceNotificationCenterExits() {
@@ -293,7 +435,9 @@ struct NotificationCenterMonitorTests {
         platform.windowsByPID[42] = [FakeElement.window(FakeElement.alert(id: "a"))]
         let monitor = NotificationCenterMonitor(
             platform: platform,
-            interceptor: SystemNotificationInterceptor(listsNotification: { _ in true }, onPresentAlerts: { present.append($0) }) { _ in },
+            interceptor: SystemNotificationInterceptor(
+                listsNotification: { _ in true }, listsChoices: { _ in true }, onPresentChoices: { present.append($0) }
+            ) { _ in },
             workspaceCenter: NotificationCenter(),
             onStatus: { _ in }
         )
@@ -303,7 +447,9 @@ struct NotificationCenterMonitorTests {
         monitor.notificationCenterExited(pid: 42)
 
         #expect(present == [["a"], []])
-        #expect(!monitor.perform(.choice("Allow…"), onAlert: "a"))
+        var detached: [Bool] = []
+        monitor.perform(.choice("Allow…"), on: ["a"], from: "Calendar") { detached.append($0) }
+        #expect(detached == [false])
     }
 
     @Test func reportsMissingNotificationCenterAndRetries() {
@@ -406,31 +552,69 @@ struct NotificationCenterMonitorTests {
         #expect(harness.platform.observedPIDs == [42, 99])
     }
 
+    /// Attaching and stopping move the notifications' window back on screen, never the desktop widgets'.
     @Test func stopRestoresWindowsAndStopsListening() {
         let harness = Harness()
-        let window = FakeElement(position: SystemNotificationInterceptor.offScreen)
-        harness.platform.windowsByPID[42] = [window]
+        let window = FakeElement.window()
+        let widgets = FakeElement.widgetWindow(position: CGPoint(x: -1920, y: 0))
+        harness.platform.windowsByPID[42] = [window, widgets]
         harness.monitor.start()
+        window.position = SystemNotificationInterceptor.offScreen
 
         harness.monitor.stop()
         #expect(!harness.monitor.isSweeping)
         harness.workspaceCenter.post(name: NSWorkspace.didLaunchApplicationNotification, object: nil)
 
         #expect(window.position == .zero)
+        #expect(widgets.moves.isEmpty)
         #expect(harness.platform.observedPIDs == [42])
+    }
+
+    /// A language read that fails, as one can while NotificationCenter is slow after a wake, keeps the words
+    /// read before: English ones would leave every German notification to macOS for its unknown actions.
+    /// Sweeps read the language again until it succeeds.
+    @Test(.enabled(if: FileManager.default.fileExists(atPath: NotificationCenterLabels.tableURL.path)))
+    func keepsNotificationCentersWordsWhenItsLanguageDoesNotRead() {
+        let harness = Harness()
+        let application = FakeElement(["AXPreferredLanguage": "de"])
+        harness.platform.applicationsByPID[42] = application
+        harness.monitor.start()
+        defer { harness.monitor.stop() }
+
+        func banner(id: String, labels: NotificationCenterLabels) -> FakeElement {
+            let banner = FakeElement.banner(id: id)
+            banner.actions = [kAXPressAction] + [labels.showDetails, labels.close].map { "Name:\($0)\nTarget:0x0\nSelector:(null)" }
+            return banner
+        }
+        let german = NotificationCenterLabels.load(language: "de")
+        #expect(german.close != NotificationCenterLabels.english.close)
+
+        application.attributes["AXPreferredLanguage"] = nil
+        harness.workspaceCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+        let window = FakeElement.window(banner(id: "de", labels: german))
+        harness.platform.windowsByPID[42] = [window]
+        harness.monitor.notificationCenterChanged()
+
+        #expect(window.position == SystemNotificationInterceptor.offScreen)
+        #expect(harness.received.map(\.shownByMacOS) == [false])
+
+        application.attributes["AXPreferredLanguage"] = "ja"
+        harness.platform.windowsByPID[42] = [FakeElement.window(banner(id: "ja", labels: NotificationCenterLabels.load(language: "ja")))]
+        harness.monitor.notificationCenterChanged()
+        #expect(harness.received.map(\.shownByMacOS) == [false, false])
     }
 
     /// A notification NotificationCenter still shows or hides is pressed where it is.
     @Test func opensNotificationsWhereNotificationCenterKeepsThem() {
         let harness = Harness()
         var results: [Bool] = []
-        harness.monitor.open(["b"], from: "Mail") { results.append($0) }
+        harness.monitor.perform(.open, on: ["b"], from: "Mail") { results.append($0) }
         let banner = FakeElement.banner(id: "b")
         harness.platform.windowsByPID[42] = [FakeElement.window(banner)]
         harness.monitor.start()
         defer { harness.monitor.stop() }
 
-        harness.monitor.open(["b"], from: "Mail") { results.append($0) }
+        harness.monitor.perform(.open, on: ["b"], from: "Mail") { results.append($0) }
 
         #expect(results == [false, true])
         #expect(banner.performed == [kAXPressAction])
@@ -438,8 +622,7 @@ struct NotificationCenterMonitorTests {
     }
 
     /// Any other notification is opened from the history: its steps replace the sweeps, which would move the
-    /// panel's window back on screen, and sweeping resumes once the panel is closed. Meanwhile another
-    /// request fails at once.
+    /// panel's window back on screen, and sweeping resumes once the panel is closed.
     @Test func opensNotificationsFromTheHistoryInsteadOfSweeping() async throws {
         let harness = Harness()
         let application = FakeElement()
@@ -450,12 +633,10 @@ struct NotificationCenterMonitorTests {
         defer { harness.monitor.stop() }
         var results: [Bool] = []
 
-        harness.monitor.open(["h"], from: "Vivaldi") { results.append($0) }
+        harness.monitor.perform(.open, on: ["h"], from: "Vivaldi") { results.append($0) }
         #expect(clock.performed == [kAXPressAction])
         #expect(harness.monitor.isOpeningHistory)
         #expect(!harness.monitor.isSweeping)
-        harness.monitor.open(["other"], from: "Vivaldi") { results.append($0) }
-        #expect(results == [false])
 
         let entry = FakeElement.banner(id: "h", app: "Vivaldi")
         let panel = FakeElement.window(entry)
@@ -466,32 +647,215 @@ struct NotificationCenterMonitorTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(entry.performed == [kAXPressAction])
-        #expect(results == [false, true])
+        #expect(results == [true])
         #expect(panel.position == SystemNotificationInterceptor.offScreen)
         #expect(clock.performed == [kAXPressAction, kAXPressAction])
 
         application.flags["AXExpanded"] = false
         let handler = try #require(harness.platform.handler)
         handler(panel)
+        #expect(harness.monitor.isOpeningHistory)
+        harness.now += NotificationHistoryOpener.closeGrace
+        handler(panel)
         #expect(!harness.monitor.isOpeningHistory)
         #expect(harness.monitor.isSweeping)
         #expect(harness.received.map(\.nativeIdentifiers) == [["h"]])
     }
 
-    /// Stopping, or NotificationCenter exiting, abandons the history request.
+    /// A card clicked while another card's notification is being opened from the history waits for it, closing
+    /// its panel included, and then opens the panel for its own notification; sweeping resumes after both.
+    @Test func opensFromTheHistoryOneRequestAfterAnother() throws {
+        let harness = Harness()
+        let application = FakeElement()
+        harness.platform.applicationsByPID[42] = application
+        let clock = FakeElement()
+        harness.platform.clock = clock
+        harness.monitor.start()
+        defer { harness.monitor.stop() }
+        var results: [String] = []
+        harness.monitor.perform(.open, on: ["a"], from: "Vivaldi") { results.append("a \($0)") }
+        harness.monitor.perform(.open, on: ["b"], from: "Vivaldi") { results.append("b \($0)") }
+        #expect(results.isEmpty)
+        #expect(clock.performed == [kAXPressAction])
+        let handler = try #require(harness.platform.handler)
+
+        let first = FakeElement.banner(id: "a", app: "Vivaldi")
+        let window = FakeElement.window(first)
+        application.flags["AXExpanded"] = true
+        harness.platform.windowsByPID[42] = [window]
+        handler(window)
+        #expect(results == ["a true"])
+        application.flags["AXExpanded"] = false
+        handler(window)
+        harness.now += NotificationHistoryOpener.closeGrace
+        handler(window)
+        #expect(harness.monitor.isOpeningHistory)
+        #expect(!harness.monitor.isSweeping)
+        handler(window)
+        #expect(clock.performed == [kAXPressAction, kAXPressAction, kAXPressAction])
+
+        let second = FakeElement.banner(id: "b", app: "Vivaldi")
+        let next = FakeElement.window(second)
+        application.flags["AXExpanded"] = true
+        harness.platform.windowsByPID[42] = [next]
+        handler(next)
+        #expect(second.performed == [kAXPressAction])
+        #expect(results == ["a true", "b true"])
+        #expect(next.position == SystemNotificationInterceptor.offScreen)
+        application.flags["AXExpanded"] = false
+        handler(next)
+        harness.now += NotificationHistoryOpener.closeGrace
+        handler(next)
+        #expect(!harness.monitor.isOpeningHistory)
+        #expect(harness.monitor.isSweeping)
+    }
+
+    /// The sidebar's own moves of NotificationCenter's window report `kAXWindowMoved` like NotificationCenter's;
+    /// the sweep or history step such an event starts finds the window where it belongs and moves nothing.
+    @Test func answersItsOwnWindowMovesWithoutMovingAgain() throws {
+        let harness = Harness()
+        let application = FakeElement()
+        harness.platform.applicationsByPID[42] = application
+        harness.platform.clock = FakeElement()
+        let window = FakeElement.window(FakeElement.banner())
+        harness.platform.windowsByPID[42] = [window]
+        harness.monitor.start()
+        defer { harness.monitor.stop() }
+        let handler = try #require(harness.platform.handler)
+        #expect(window.moves == [SystemNotificationInterceptor.offScreen])
+
+        handler(window)
+        #expect(window.moves == [SystemNotificationInterceptor.offScreen])
+
+        harness.monitor.perform(.open, on: ["h"], from: "Vivaldi") { _ in }
+        let panel = FakeElement.window()
+        application.flags["AXExpanded"] = true
+        harness.platform.windowsByPID[42] = [panel]
+        handler(panel)
+        #expect(panel.moves == [SystemNotificationInterceptor.offScreen])
+        handler(panel)
+        #expect(panel.moves == [SystemNotificationInterceptor.offScreen])
+    }
+
+    /// A request that runs out of time with the panel open keeps the sweeps away until the panel has closed:
+    /// a sweep would move the closing panel back on screen.
+    @Test func keepsSweepsAwayWhileThePanelCloses() throws {
+        let harness = Harness()
+        let application = FakeElement()
+        harness.platform.applicationsByPID[42] = application
+        let clock = FakeElement()
+        harness.platform.clock = clock
+        harness.monitor.start()
+        defer { harness.monitor.stop() }
+        var results: [Bool] = []
+        harness.monitor.perform(.open, on: ["h"], from: "Vivaldi") { results.append($0) }
+        let handler = try #require(harness.platform.handler)
+
+        let panel = FakeElement.window()
+        application.flags["AXExpanded"] = true
+        harness.platform.windowsByPID[42] = [panel]
+        harness.now += NotificationHistoryOpener.timeout
+        handler(panel)
+        #expect(results == [false])
+        #expect(clock.performed == [kAXPressAction, kAXPressAction])
+
+        harness.now += NotificationHistoryOpener.closeTimeout / 2
+        handler(panel)
+        #expect(panel.position == SystemNotificationInterceptor.offScreen)
+        #expect(harness.monitor.isOpeningHistory)
+        #expect(!harness.monitor.isSweeping)
+
+        application.flags["AXExpanded"] = false
+        handler(panel)
+        harness.now += NotificationHistoryOpener.closeGrace
+        handler(panel)
+        #expect(!harness.monitor.isOpeningHistory)
+        #expect(harness.monitor.isSweeping)
+    }
+
+    /// A panel that opens after its request gave up is handed back to the history opener by the next sweep,
+    /// which would otherwise leave it open on screen: it is hidden and closed, and sweeping resumes after.
+    @Test func closesAPanelThatOpensAfterTheRequestGaveUp() throws {
+        let harness = Harness()
+        let application = FakeElement()
+        harness.platform.applicationsByPID[42] = application
+        let clock = FakeElement()
+        harness.platform.clock = clock
+        harness.monitor.start()
+        defer { harness.monitor.stop() }
+        var results: [Bool] = []
+        harness.monitor.perform(.open, on: ["h"], from: "Vivaldi") { results.append($0) }
+        let handler = try #require(harness.platform.handler)
+
+        harness.now += NotificationHistoryOpener.timeout
+        let window = FakeElement.window()
+        handler(window)
+        #expect(results == [false])
+        #expect(!harness.monitor.isOpeningHistory)
+        #expect(harness.monitor.isSweeping)
+
+        application.flags["AXExpanded"] = true
+        harness.platform.windowsByPID[42] = [window]
+        handler(window)
+        #expect(window.position == SystemNotificationInterceptor.offScreen)
+        #expect(clock.performed == [kAXPressAction, kAXPressAction])
+        #expect(harness.monitor.isOpeningHistory)
+        #expect(!harness.monitor.isSweeping)
+
+        application.flags["AXExpanded"] = false
+        handler(window)
+        harness.now += NotificationHistoryOpener.closeGrace
+        handler(window)
+        #expect(!harness.monitor.isOpeningHistory)
+        #expect(harness.monitor.isSweeping)
+        #expect(results == [false])
+    }
+
+    /// NotificationCenter exiting abandons the history request; its panel went with it, so the clock is not
+    /// pressed again, which would open the next NotificationCenter's panel.
     @Test func stopsOpeningTheHistoryWhenDetached() {
         let harness = Harness()
-        harness.platform.clock = FakeElement()
+        let clock = FakeElement()
+        harness.platform.clock = clock
+        let application = FakeElement()
+        harness.platform.applicationsByPID[42] = application
         harness.monitor.start()
         var results: [Bool] = []
 
-        harness.monitor.open(["h"], from: "Vivaldi") { results.append($0) }
+        harness.monitor.perform(.open, on: ["h"], from: "Vivaldi") { results.append($0) }
+        application.flags["AXExpanded"] = true
         harness.monitor.notificationCenterExited(pid: 42)
         harness.monitor.stepHistory()
 
         #expect(!harness.monitor.isOpeningHistory)
         #expect(results == [false])
+        #expect(clock.performed == [kAXPressAction])
         harness.monitor.stop()
+    }
+
+    /// Stopping, as on quit or when replace_system is switched off, closes the panel a request opened before
+    /// it moves NotificationCenter's window back on screen, so the panel does not stay open there.
+    @Test func stoppingClosesTheHistoryPanelItOpened() {
+        let harness = Harness()
+        let clock = FakeElement()
+        harness.platform.clock = clock
+        let application = FakeElement()
+        harness.platform.applicationsByPID[42] = application
+        harness.monitor.start()
+        var results: [Bool] = []
+        harness.monitor.perform(.open, on: ["h"], from: "Vivaldi") { results.append($0) }
+        let panel = FakeElement.window()
+        application.flags["AXExpanded"] = true
+        harness.platform.windowsByPID[42] = [panel]
+        harness.monitor.stepHistory()
+        #expect(panel.position == SystemNotificationInterceptor.offScreen)
+
+        harness.monitor.stop()
+
+        #expect(!harness.monitor.isOpeningHistory)
+        #expect(results == [false])
+        #expect(clock.performed == [kAXPressAction, kAXPressAction])
+        #expect(panel.position == .zero)
     }
 
     /// Without a clock to press, the card's own action runs at once.
@@ -501,7 +865,7 @@ struct NotificationCenterMonitorTests {
         defer { harness.monitor.stop() }
         var results: [Bool] = []
 
-        harness.monitor.open(["h"], from: "Vivaldi") { results.append($0) }
+        harness.monitor.perform(.open, on: ["h"], from: "Vivaldi") { results.append($0) }
 
         #expect(results == [false])
         #expect(!harness.monitor.isOpeningHistory)
@@ -584,5 +948,6 @@ struct SystemAccessibilityTests {
         #expect(element.actionNames.isEmpty)
         #expect(!element.perform(kAXPressAction))
         #expect(!element.setPosition(.zero))
+        #expect(!element.setValue("text"))
     }
 }

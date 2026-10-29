@@ -6,6 +6,20 @@ import SidebarProtocol
 public enum SidebarCLI {
     static let agentAlert = "ALERT: Agents must read `AGENT=1 aerospace-sidebar skill` before using this tool.\n"
 
+    /// Runs the `aerospace-sidebar` process and returns its exit status.
+    ///
+    /// Output to a pipe whose reader is gone, such as a consumer that already exited, fails with EPIPE instead of
+    /// killing the process with SIGPIPE, so it is reported and exits with EX_IOERR like any failed write. A signal's
+    /// disposition belongs to the whole process, so `main(arguments:context:)`, which tests run in their own process,
+    /// leaves it alone: ignoring SIGPIPE there would keep the app's tests from noticing a socket without
+    /// `SO_NOSIGPIPE`, which kills the app when its peer disconnects early.
+    public static func runProcess(
+        arguments: [String] = Array(CommandLine.arguments.dropFirst()), context: CLIContext = CLIContext()
+    ) async -> Int32 {
+        signal(SIGPIPE, SIG_IGN)
+        return await main(arguments: arguments, context: context)
+    }
+
     /// Runs one invocation and returns its exit status.
     public static func main(arguments: [String], context: CLIContext = CLIContext()) async -> Int32 {
         await CLIContext.$current.withValue(context) {
@@ -45,9 +59,14 @@ public enum SidebarCLI {
         case let error as OutputWriteError:
             return (agent ? "ERR: output_write_failed: \(error.underlying)\n" : "[ERROR] Cannot write output: \(error.underlying)\n", EX_IOERR)
         case let error as SidebarRequestError:
-            return (agent ? "ERR: \(error)\n" : "[ERROR] \(error)\n", 1)
+            return (agent ? "ERR: invalid: \(error)\n" : "[ERROR] \(error)\n", 1)
         default:
             let status = RootCommand.exitCode(for: error).rawValue
+            // Agents get failures as one `ERR: <code>: <detail>` line, without the usage block people get.
+            if agent, status != 0 {
+                let code = status == ExitCode.validationFailure.rawValue ? "usage" : "failed"
+                return ("ERR: \(code): \(RootCommand.message(for: error))\n", status)
+            }
             // Agent help is never wrapped; human help wraps at the width the command tree is trimmed to.
             var message = RootCommand.fullMessage(for: error, columns: agent ? Int(Int32.max) : context.helpWidth)
             if !message.hasSuffix("\n") { message += "\n" }
@@ -66,8 +85,14 @@ public enum SidebarCLI {
             "The sidebar app is not installed. Build and launch it once with `just run`."
         case .appDidNotStart:
             "The sidebar app did not start in time. Launch it and try again."
+        case .launchFailed(let reason):
+            "Cannot launch the sidebar app: \(reason)"
+        case .noReply(let reason):
+            "The sidebar app did not confirm the notification (\(reason)). It may still show it, so sending it again could list it twice."
         case .rejected(let message):
             "The sidebar refused the notification: \(message)."
+        case .tooLarge(let size):
+            "The notification is too large to send: \(size) bytes encoded, at most \(UnixSocket.maxMessageSize)."
         case .unreachable(_, let reason):
             "Cannot reach the sidebar app: \(reason)."
         }
@@ -79,8 +104,14 @@ public enum SidebarCLI {
             "app_not_installed: no app registered for bundle id com.alexgorbatchev.aerospace-sidebar"
         case .appDidNotStart(let path):
             "app_did_not_start: no listener on \(context.displayPath(path)) after launch"
+        case .launchFailed(let reason):
+            "launch_failed: \(reason)"
+        case .noReply(let reason):
+            "no_reply: sent but not confirmed (\(reason)); it may still show, do not send it again"
         case .rejected(let message):
             "rejected: \(message)"
+        case .tooLarge(let size):
+            "too_large: request is \(size) bytes encoded, the socket takes at most \(UnixSocket.maxMessageSize)"
         case .unreachable(let path, let reason):
             "unreachable: \(context.displayPath(path)): \(reason)"
         }

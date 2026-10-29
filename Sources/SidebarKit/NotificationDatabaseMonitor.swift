@@ -15,16 +15,25 @@ public enum NotificationDatabaseStatus: Equatable, Sendable {
 /// Lists notifications from the notification database that no banner showed.
 ///
 /// Each new record waits `grace` seconds for the accessibility path to report its banner, and is listed
-/// only if it did not. The id of the newest record read is kept in `defaults`, so notifications delivered
-/// while the sidebar was not running are listed at the next launch; the first launch starts from the
-/// newest record rather than importing the whole history. Without Full Disk Access the database cannot be
-/// read, and the monitor tries again every `accessRetryInterval` seconds; access taken away while reading
-/// shows when the next read fails, or at once through `checkAccess()`.
+/// only if it did not. Records are read by delivery date, each read starting `lookback` before the newest
+/// record read; `identities` tells which of them were listed or showed a banner already. The read position
+/// is kept in `defaults`, never past a record still waiting for its banner, so notifications delivered while
+/// the sidebar was not running, or still waiting when it quit, are listed at the next launch; the first
+/// launch starts from the newest delivered record rather than importing the whole history. Without Full Disk
+/// Access the database cannot be read, and the monitor tries again every `accessRetryInterval` seconds;
+/// access taken away while reading shows when the next read fails, or at once through `checkAccess()`.
 @MainActor
 public final class NotificationDatabaseMonitor {
     nonisolated static let logger = Logger(category: "database")
-    static let recordIDKey = "notificationDatabaseRecordID"
+    static let readPositionKey = "notificationDatabaseDeliveredAfter"
     static let accessRetryInterval: TimeInterval = 5
+    /// How far before the newest record read the next read starts. usernoted writes records 5–7 s after
+    /// delivering them, several at a time, and fills in a scheduled notification's delivery date only when it
+    /// delivers it, so a record can reach the database after one delivered later than it.
+    static let lookback: TimeInterval = 60
+    /// The app macOS posts its requests to let an app send notifications as. Such a request is macOS's
+    /// question, not a notification; listing it would offer a click that answers it.
+    static let permissionRequestApp = "com.apple.notificationcenter.askpermissions"
 
     public private(set) var status = NotificationDatabaseStatus.stopped {
         didSet {
@@ -46,6 +55,8 @@ public final class NotificationDatabaseMonitor {
     private var retryTimer: Timer?
     private var deliveryTimer: Timer?
     private var pending: [(notification: DeliveredNotification, readAt: Date)] = []
+    /// When the newest record read was delivered.
+    private var newestDelivery: Date?
     private var lastError: NotificationDatabase.Failure?
 
     /// - Parameters:
@@ -110,9 +121,9 @@ public final class NotificationDatabaseMonitor {
 
     /// Starts reading once the database opens, or tries again later.
     func open() {
-        let latest: Int64
+        let latest: Date?
         do {
-            latest = try database.latestRecordID()
+            latest = try database.latestDelivery(by: now())
         } catch {
             failed(error)
             retryLater()
@@ -123,9 +134,8 @@ public final class NotificationDatabaseMonitor {
         status = .reading
         lastError = nil
         Self.logger.info("Reading the notification database")
-        // A recreated database starts its record ids over.
-        if defaults.object(forKey: Self.recordIDKey) == nil || recordID > latest {
-            recordID = latest
+        if readPosition == nil {
+            readPosition = latest ?? .distantPast
         }
         let watcher = FileWatcher(url: database.logURL, delay: .milliseconds(200)) { [weak self] in
             self?.readNewRecords()
@@ -135,11 +145,22 @@ public final class NotificationDatabaseMonitor {
         readNewRecords()
     }
 
-    /// Queues the records added since the last read.
+    /// Queues the records delivered since the last read that are neither listed, reported by a banner nor
+    /// queued already. Nothing is read before `open()` sets the read position.
     func readNewRecords() {
+        let readAt = now()
+        guard var position = readPosition else { return }
+        // A clock that runs forward stays ahead of the read position and the newest record read. Once it is set
+        // back behind either, records delivered since carry earlier dates and would be skipped until it caught
+        // up, the one whose write woke this read included, so reading starts over `lookback` before the clock.
+        if position > readAt || newestDelivery.map({ $0 > readAt }) == true {
+            position = min(position, readAt.addingTimeInterval(-Self.lookback))
+            readPosition = position
+            newestDelivery = nil
+        }
         let records: [DeliveredNotification]
         do {
-            records = try database.notifications(after: recordID, deliveredBy: now())
+            records = try database.notifications(deliveredAfter: position, by: readAt)
         } catch {
             failed(error)
             // Without access, a change to the database would only fail again; opening it is what tells
@@ -150,9 +171,16 @@ public final class NotificationDatabaseMonitor {
             return
         }
         status = .reading
-        guard let last = records.last else { return }
-        recordID = last.recordID
-        let readAt = now()
+        guard let newest = records.last?.deliveredAt else { return }
+        newestDelivery = max(newestDelivery ?? newest, newest)
+        defer { advance() }
+        // Reads look back, so most records were read before: those listed or reported by a banner are in
+        // `identities`, those waiting for their banner in `pending`.
+        let new = records.filter { record in
+            record.bundleIdentifier != Self.permissionRequestApp && !identities.contains(record.identifier)
+                && !pending.contains { $0.notification.identifier == record.identifier }
+        }
+        guard let last = new.last else { return }
         // How late the read is after delivery, and after macOS wrote the log, shows whether a delay comes
         // from macOS or from watching the file.
         let deliveredAgo = readAt.timeIntervalSince(last.deliveredAt)
@@ -160,16 +188,19 @@ public final class NotificationDatabaseMonitor {
             readAt.timeIntervalSince1970 - (Double($0.modified) + Double($0.modifiedNanoseconds) / 1e9)
         }
         Self.logger.info("""
-            Read \(records.map(\.identifier), privacy: .public); newest delivered \(deliveredAgo, format: .fixed(precision: 1), privacy: .public) s \
+            Read \(new.map(\.identifier), privacy: .public); newest delivered \(deliveredAgo, format: .fixed(precision: 1), privacy: .public) s \
             ago, log written \(writtenAgo ?? -1, format: .fixed(precision: 1), privacy: .public) s ago
             """)
-        pending += records.map { ($0, readAt) }
+        pending += new.map { ($0, readAt) }
         scheduleDelivery()
     }
 
     /// Lists the queued records whose grace period is over and that no banner reported.
     func deliverPending() {
-        let cutoff = now().addingTimeInterval(-grace)
+        let time = now()
+        // A record read before the clock was set back would wait until the clock caught up; it waits from now.
+        pending = pending.map { (notification: $0.notification, readAt: min($0.readAt, time)) }
+        let cutoff = time.addingTimeInterval(-grace)
         let ready = pending.filter { $0.readAt <= cutoff }.map(\.notification)
         pending.removeAll { $0.readAt <= cutoff }
         for notification in ready where identities.insert(notification.identifier) {
@@ -186,6 +217,7 @@ public final class NotificationDatabaseMonitor {
                 receivedAt: notification.deliveredAt
             ))
         }
+        advance()
         scheduleDelivery()
     }
 
@@ -200,9 +232,22 @@ public final class NotificationDatabaseMonitor {
         }
     }
 
-    private var recordID: Int64 {
-        get { (defaults.object(forKey: Self.recordIDKey) as? NSNumber)?.int64Value ?? 0 }
-        set { defaults.set(NSNumber(value: newValue), forKey: Self.recordIDKey) }
+    /// Records delivered after this date are read; nil until the first launch opens the database.
+    private var readPosition: Date? {
+        get { defaults.object(forKey: Self.readPositionKey) as? Date }
+        set { defaults.set(newValue, forKey: Self.readPositionKey) }
+    }
+
+    /// Moves the read position up to `lookback` before the newest record read, but not past a record still
+    /// waiting for its banner, so a relaunch, or a crash, reads that one again. A record still waiting from
+    /// before the clock was set back can be dated after the newest record read, which then sets the limit.
+    private func advance() {
+        guard let newestDelivery, let readPosition else { return }
+        let oldest = pending.map(\.notification.deliveredAt).reduce(newestDelivery, min)
+        let position = oldest.addingTimeInterval(-Self.lookback)
+        if position > readPosition {
+            self.readPosition = position
+        }
     }
 
     /// Stops watching the database and tries to open it again every `accessRetryInterval` seconds.

@@ -35,9 +35,13 @@ public enum AeroSpaceConfigEditor {
     public struct Analysis: Equatable, Sendable {
         /// The strip the config should reserve.
         public var sidebar: SidebarSettings.Sidebar
-        /// The width the config reserves on the sidebar's side, when it reserves one.
+        /// The width the config reserves on the sidebar's side, when it surely reserves one
+        /// (`AeroSpaceConfig.Gap.certainReservedWidth`).
         public var reservedWidth: Int?
-        /// The width the config reserves on the other side, when it reserves one.
+        /// The width the `monitor.main` entry on the sidebar's side reserves, wherever it stands; it differs
+        /// from `reservedWidth` when other monitor patterns come before it.
+        public var mainEntryWidth: Int?
+        /// The width the config may reserve on the other side, when it reserves one.
         public var oppositeReservedWidth: Int?
         public var missingFloatRule: Bool
         public var warnings: [String]
@@ -52,9 +56,12 @@ public enum AeroSpaceConfigEditor {
         if activeLines(text).contains(where: { $0.contains("--no-outer-gaps") }) {
             warnings.append("A binding uses `fullscreen --no-outer-gaps`, which covers the sidebar; drop the flag.")
         }
+        // The sidebar's side must reserve the strip on the main monitor for certain; on the other side, a
+        // strip that may be reserved there is already one too many.
         return Analysis(
             sidebar: sidebar,
-            reservedWidth: config?.gap(on: sidebar.side).reservedWidth,
+            reservedWidth: config?.gap(on: sidebar.side).certainReservedWidth,
+            mainEntryWidth: config?.gap(on: sidebar.side).reservedWidth,
             oppositeReservedWidth: config?.gap(on: sidebar.side.opposite).reservedWidth,
             missingFloatRule: !activeLines(text).contains { $0.contains(SidebarApp.bundleIdentifier) },
             warnings: warnings

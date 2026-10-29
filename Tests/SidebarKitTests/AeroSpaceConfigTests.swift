@@ -27,6 +27,18 @@ struct AeroSpaceConfigTests {
         #expect(config.gap(on: .right).main == 305)
         #expect(config.gap(on: .left).reservedWidth == nil)
         #expect(config.gap(on: .right).reservedWidth == 300)
+        // The LG pattern comes first and wins on a main monitor it matches.
+        #expect(config.gap(on: .right).certainReservedWidth == nil)
+    }
+
+    @Test(arguments: [
+        ("[gaps]\nouter.left = [{ monitor.main = 305 }, { monitor.1 = 5 }, 5]", 300 as Int?),
+        ("[gaps]\nouter.left = [{ monitor.1 = 5 }, { monitor.main = 305 }, 5]", nil),
+        ("[gaps]\nouter.left = [{ monitor.main = 5 }, 5]", nil),
+        ("[gaps]\nouter.left = 305", nil),
+    ])
+    func reservesForCertainOnlyThroughALeadingMainEntry(toml: String, reserved: Int?) throws {
+        #expect(try AeroSpaceConfig(toml: toml).gap(on: .left).certainReservedWidth == reserved)
     }
 
     @Test(arguments: [

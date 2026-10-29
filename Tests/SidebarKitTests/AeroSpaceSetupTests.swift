@@ -19,7 +19,7 @@ struct AeroSpaceConfigEditorTests {
     @Test func reportsConfiguredConfig() {
         let analysis = AeroSpaceConfigEditor.analyze("[gaps]\nouter.right = [{ monitor.main = 305 }, 5]\n\n\(Self.rule)\n", sidebar: Self.right)
 
-        #expect(analysis == .init(sidebar: Self.right, reservedWidth: 300, oppositeReservedWidth: nil, missingFloatRule: false, warnings: []))
+        #expect(analysis == .init(sidebar: Self.right, reservedWidth: 300, mainEntryWidth: 300, oppositeReservedWidth: nil, missingFloatRule: false, warnings: []))
         #expect(analysis.isConfigured)
     }
 
@@ -34,6 +34,21 @@ struct AeroSpaceConfigEditorTests {
 
         #expect(analysis.reservedWidth == reserved && analysis.oppositeReservedWidth == opposite)
         #expect(!analysis.gapMatches && !analysis.isConfigured)
+    }
+
+    /// AeroSpace uses the first entry whose pattern matches a monitor, so a `monitor.main` entry behind
+    /// another pattern that may match the main monitor does not reserve the strip, and the update moves it
+    /// first. On the other side, the same entry may reserve a strip there.
+    @Test func countsTheStripOnlyWhenTheMainEntryComesFirst() throws {
+        let text = "[gaps]\nouter.right = [{ monitor.\"built-in\" = 10 }, { monitor.main = 305 }, 5]\n\n\(Self.rule)\n"
+
+        let analysis = AeroSpaceConfigEditor.analyze(text, sidebar: Self.right)
+        #expect(analysis.reservedWidth == nil && analysis.mainEntryWidth == 300 && !analysis.isConfigured)
+        #expect(AeroSpaceConfigEditor.analyze(text, sidebar: Self.left).oppositeReservedWidth == 300)
+
+        let result = try AeroSpaceConfigEditor.apply(to: text, sidebar: Self.right)
+        #expect(result.hasPrefix("[gaps]\n" + Self.block("0", "[{ monitor.main = 305 }, { monitor.built-in = 10 }, 5]")))
+        #expect(AeroSpaceConfigEditor.analyze(result, sidebar: Self.right).isConfigured)
     }
 
     @Test func reportsMissingPiecesAndWarnings() {
@@ -188,7 +203,7 @@ struct AeroSpaceSetupTests {
         home = try TemporaryDirectory()
     }
 
-    func setup(_ cli: FakeAeroSpaceCLI = FakeAeroSpaceCLI(), isAeroSpaceRunning: Bool = true) -> AeroSpaceSetup {
+    func setup(_ cli: any AeroSpaceCommandRunning = FakeAeroSpaceCLI(), isAeroSpaceRunning: Bool = true) -> AeroSpaceSetup {
         .forTesting(home: home.url, environment: [:], cli: cli, isAeroSpaceRunning: isAeroSpaceRunning)
     }
 
@@ -213,6 +228,7 @@ struct AeroSpaceSetupTests {
         #expect(reason.contains("ambiguous"))
     }
 
+    /// AeroSpace checks the config before and after the edit, then reloads it.
     @Test func appliesValidatesAndReloads() async throws {
         try home.write("[gaps]\nouter.right = 5\n", to: ".config/aerospace/aerospace.toml")
         let cli = FakeAeroSpaceCLI()
@@ -222,17 +238,93 @@ struct AeroSpaceSetupTests {
         #expect(outcome == .updated(backup: backupURL))
         #expect(try String(contentsOf: backupURL, encoding: .utf8) == "[gaps]\nouter.right = 5\n")
         #expect(try isConfigured(configURL))
-        #expect(cli.calls == [["reload-config", "--dry-run", "--no-gui"], ["reload-config", "--no-gui"]])
+        #expect(cli.calls == [AeroSpaceSetup.check, AeroSpaceSetup.check, ["reload-config", "--no-gui"]])
     }
 
     @Test func restoresOriginalWhenAeroSpaceRejectsTheEdit() async throws {
+        let original = "[gaps]\nouter.right = 5\n"
+        try home.write(original, to: ".config/aerospace/aerospace.toml")
+        let cli = CheckingAeroSpaceCLI(config: configURL, problems: ["monitor.main = 305": "bad key"])
+
+        await #expect(throws: AeroSpaceSetup.SetupError.rejected("bad key", original: original)) { try await setup(cli).apply(sidebar: Self.sidebar) }
+
+        #expect(try String(contentsOf: configURL, encoding: .utf8) == original)
+        #expect(cli.calls == [AeroSpaceSetup.check, AeroSpaceSetup.check])
+    }
+
+    /// AeroSpace loads a config with a key it does not know, while reporting it; an edit that adds no problem
+    /// of its own is kept.
+    @Test func keepsAnEditThatAddsNoProblems() async throws {
+        try home.write("unknown-key = 1\n[gaps]\nouter.right = 5\n", to: ".config/aerospace/aerospace.toml")
+        let cli = CheckingAeroSpaceCLI(config: configURL, problems: ["unknown-key": "[ERROR] unknown-key: Unknown key"])
+
+        let outcome = try await setup(cli).apply(sidebar: Self.sidebar)
+
+        #expect(outcome == .updatedWithExistingProblems(backup: backupURL, problems: "[ERROR] unknown-key: Unknown key"))
+        #expect(try isConfigured(configURL))
+        #expect(cli.calls == [AeroSpaceSetup.check, AeroSpaceSetup.check, ["reload-config", "--no-gui"]])
+    }
+
+    @Test func rejectsAnEditForTheProblemsItAdds() async throws {
+        let original = "unknown-key = 1\n[gaps]\nouter.right = 5\n"
+        try home.write(original, to: ".config/aerospace/aerospace.toml")
+        let cli = CheckingAeroSpaceCLI(config: configURL, problems: [
+            "unknown-key": "[ERROR] unknown-key: Unknown key",
+            "monitor.main = 305": "[ERROR] gaps.outer.right: Unknown monitor pattern",
+        ])
+
+        await #expect(throws: AeroSpaceSetup.SetupError.rejected("[ERROR] gaps.outer.right: Unknown monitor pattern", original: original)) {
+            try await setup(cli).apply(sidebar: Self.sidebar)
+        }
+
+        #expect(try String(contentsOf: configURL, encoding: .utf8) == original)
+    }
+
+    /// A version saved while AeroSpace checks the edit is not overwritten by restoring the original.
+    @Test func keepsAVersionSavedWhileAeroSpaceChecksTheEdit() async throws {
         try home.write("[gaps]\nouter.right = 5\n", to: ".config/aerospace/aerospace.toml")
-        let cli = FakeAeroSpaceCLI(results: ["--dry-run": CommandResult(status: 1, output: "bad key\n")])
+        let saved = "# Saved meanwhile\n"
+        let cli = CheckingAeroSpaceCLI(config: configURL, problems: ["monitor.main = 305": "bad key"]) { [configURL] check in
+            if check == 1 { try? saved.write(to: configURL, atomically: true, encoding: .utf8) }
+        }
 
-        await #expect(throws: AeroSpaceSetup.SetupError.rejected("bad key")) { try await setup(cli).apply(sidebar: Self.sidebar) }
+        await #expect(throws: AeroSpaceSetup.SetupError.rejectedAndReplaced("bad key")) { try await setup(cli).apply(sidebar: Self.sidebar) }
 
-        #expect(try String(contentsOf: configURL, encoding: .utf8) == "[gaps]\nouter.right = 5\n")
-        #expect(cli.calls.count == 1)
+        #expect(try String(contentsOf: configURL, encoding: .utf8) == saved)
+    }
+
+    /// A version saved while AeroSpace checks the original is the one edited, rather than overwritten.
+    @Test func editsAVersionSavedWhileAeroSpaceChecksTheOriginal() async throws {
+        try home.write("[gaps]\nouter.right = 5\n", to: ".config/aerospace/aerospace.toml")
+        let cli = CheckingAeroSpaceCLI(config: configURL, problems: [:]) { [configURL] check in
+            if check == 0 { try? "[gaps]\nouter.right = 7\n".write(to: configURL, atomically: true, encoding: .utf8) }
+        }
+
+        _ = try await setup(cli).apply(sidebar: Self.sidebar)
+
+        #expect(try String(contentsOf: configURL, encoding: .utf8).contains("outer.right = [{ monitor.main = 307 }, 7]"))
+        #expect(try String(contentsOf: backupURL, encoding: .utf8) == "[gaps]\nouter.right = 7\n")
+    }
+
+    @Test(arguments: [
+        // The edited config passes.
+        (CommandResult(status: 1, output: "a\n"), CommandResult(status: 0, output: ""), nil as String?),
+        // The original passed, so whatever the edited config reports is the edit's.
+        (CommandResult(status: 0, output: ""), CommandResult(status: 1, output: "a\n"), "a"),
+        // Only problems the original did not have count, in the order AeroSpace reports them.
+        (CommandResult(status: 1, output: "a\n\nb\n"), CommandResult(status: 1, output: "c\n\na\n\nd\n"), "c\n\nd"),
+        (CommandResult(status: 1, output: "a\n\nb\n"), CommandResult(status: 1, output: "b\n\na"), nil),
+        // The main entry inserted first moves an entry's problem to the next index.
+        (
+            CommandResult(status: 1, output: "[ERROR] gaps.outer.right[0].monitor.^LG(: Can't parse regex\n"),
+            CommandResult(status: 1, output: "[ERROR] gaps.outer.right[1].monitor.^LG(: Can't parse regex\n"),
+            nil
+        ),
+        // Each problem of the original accounts for one problem of the edited config.
+        (CommandResult(status: 1, output: "x[0]: a\n"), CommandResult(status: 1, output: "x[1]: a\n\nx[2]: a\n"), "x[2]: a"),
+    ])
+    func countsOnlyProblemsTheEditAdds(before: CommandResult, validation: CommandResult, added: String?) {
+        #expect(AeroSpaceSetup.problems(addedBy: validation, to: before) == added)
     }
 
     @Test func keepsEditWhenAeroSpaceCommandIsMissing() async throws {
@@ -243,6 +335,7 @@ struct AeroSpaceSetupTests {
 
         #expect(outcome == .updatedWithoutReload(backup: backupURL))
         #expect(try isConfigured(configURL))
+        #expect(cli.calls == [AeroSpaceSetup.check])
     }
 
     /// The CLI cannot reach a stopped AeroSpace, so a failed check would wrongly undo the edit.
@@ -270,11 +363,21 @@ struct AeroSpaceSetupTests {
         #expect(backups == ["aerospace.toml.bak"])
     }
 
-    @Test func watchesTheLoadedConfigOrTheXDGLocation() throws {
-        #expect(setup().configToWatch() == configURL.resolvingSymlinksInPath())
+    /// Every place AeroSpace looks is watched, whether or not a config is there yet, and so is the file a
+    /// symlinked config points to, through relative and chained links, also while that file is missing.
+    @Test func watchesEveryConfigLocationAndSymlinkTargets() throws {
+        let dotfile = home.url.appendingPathComponent(".aerospace.toml")
+        let target = home.url.appendingPathComponent("dotfiles/aerospace.toml")
+        #expect(setup().configsToWatch() == [dotfile, configURL])
 
-        try home.write("", to: ".aerospace.toml")
-        #expect(setup().configToWatch() == home.url.appendingPathComponent(".aerospace.toml").resolvingSymlinksInPath())
+        try home.write("", to: "dotfiles/aerospace.toml")
+        try FileManager.default.createDirectory(at: configURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: home.url.appendingPathComponent("dotfiles/current.toml").path, withDestinationPath: "aerospace.toml")
+        try FileManager.default.createSymbolicLink(atPath: configURL.path, withDestinationPath: "../../dotfiles/current.toml")
+        #expect(setup().configsToWatch() == [dotfile, configURL, target])
+
+        try FileManager.default.removeItem(at: target)
+        #expect(setup().configsToWatch() == [dotfile, configURL, target])
     }
 
     @Test func realAeroSpaceCheckMatchesRunningApps() {
@@ -340,5 +443,51 @@ struct AeroSpaceSetupTests {
         if installed {
             #expect(result.output.contains("aerospace CLI client version"))
         }
+    }
+}
+
+/// Checks the config like `aerospace reload-config --dry-run`: reads it from disk and reports, separated by
+/// blank lines, each problem whose marker the config contains, failing when there is any. Other commands
+/// succeed.
+final class CheckingAeroSpaceCLI: AeroSpaceCommandRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [[String]] = []
+    private var reported: [String: String]
+    let config: URL
+    let checkDuration: Duration
+    /// Runs during each check, after the config was read, with the number of checks before it.
+    let duringCheck: @Sendable (Int) -> Void
+
+    init(
+        config: URL,
+        problems: [String: String],
+        checkDuration: Duration = .zero,
+        duringCheck: @escaping @Sendable (Int) -> Void = { _ in }
+    ) {
+        self.config = config
+        reported = problems
+        self.checkDuration = checkDuration
+        self.duringCheck = duringCheck
+    }
+
+    var calls: [[String]] { lock.withLock { recorded } }
+    /// Each problem by the marker that reports it; changing it makes later checks report others.
+    var problems: [String: String] {
+        get { lock.withLock { reported } }
+        set { lock.withLock { reported = newValue } }
+    }
+    var checks: Int { calls.count(where: { $0 == AeroSpaceSetup.check }) }
+
+    func run(_ arguments: [String]) async -> CommandResult {
+        let index = lock.withLock {
+            recorded.append(arguments)
+            return recorded.count(where: { $0 == AeroSpaceSetup.check }) - 1
+        }
+        guard arguments == AeroSpaceSetup.check else { return CommandResult(status: 0, output: "") }
+        try? await Task.sleep(for: checkDuration)
+        let text = (try? String(contentsOf: config, encoding: .utf8)) ?? ""
+        duringCheck(index)
+        let found = problems.filter { text.contains($0.key) }.map(\.value).sorted()
+        return CommandResult(status: found.isEmpty ? 0 : 1, output: found.map { $0 + "\n" }.joined(separator: "\n"))
     }
 }

@@ -21,6 +21,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     let editor: SettingsEditor
     private let store: SettingsStore
     private let onboarding: OnboardingModel
+    private let appNotifications: AppNotificationsModel
     private let aeroSpace: AeroSpaceSync
     private let fontChooser: FontChooser
     /// Steps behind System Settings while it is in front.
@@ -41,6 +42,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     private static let measuringSize = NSSize(width: 800, height: 600)
 
     /// - Parameters:
+    ///   - appNotifications: The apps whose notifications are switched off, which Settings › Notifications lists.
     ///   - history: Every notification received lately (`SidebarModel.received`), which Settings › Rules tests
     ///     rules against.
     ///   - reveal: Shows a file in Finder.
@@ -48,13 +50,14 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     public convenience init(
         store: SettingsStore,
         onboarding: OnboardingModel,
+        appNotifications: AppNotificationsModel,
         aeroSpace: AeroSpaceSync,
         history: @escaping @MainActor () -> [SidebarNotification],
         reveal: @escaping (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
         terminate: @escaping @MainActor (Any?) -> Void = NSApplication.shared.terminate
     ) {
         self.init(
-            store: store, onboarding: onboarding, aeroSpace: aeroSpace, fontChooser: FontChooser(),
+            store: store, onboarding: onboarding, appNotifications: appNotifications, aeroSpace: aeroSpace, fontChooser: FontChooser(),
             workspaceCenter: NSWorkspace.shared.notificationCenter, history: history, reveal: reveal, terminate: terminate
         )
     }
@@ -64,6 +67,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     init(
         store: SettingsStore,
         onboarding: OnboardingModel,
+        appNotifications: AppNotificationsModel,
         aeroSpace: AeroSpaceSync,
         fontChooser: FontChooser,
         workspaceCenter: NotificationCenter,
@@ -75,6 +79,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     ) {
         self.store = store
         self.onboarding = onboarding
+        self.appNotifications = appNotifications
         self.aeroSpace = aeroSpace
         self.fontChooser = fontChooser
         self.sidebarScreenFrame = sidebarScreenFrame
@@ -104,7 +109,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
             case .appearance: pane(group, AppearancePane(editor: editor, chooseFont: chooseFont, close: close))
             case .sidebar: pane(group, SidebarPane(editor: editor, aeroSpace: aeroSpace, reveal: reveal, close: close))
             case .permissions: pane(group, PermissionsPane(onboarding: onboarding))
-            case .notifications: pane(group, NotificationsPane(editor: editor, close: close))
+            case .notifications: pane(group, NotificationsPane(editor: editor, appNotifications: appNotifications, close: close))
             case .rules: pane(group, RulesPane(editor: editor, history: history, close: close))
             case .history: pane(group, HistoryPane(editor: editor, close: close))
             }
@@ -144,14 +149,14 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         store.observeFont { [weak self] _ in self?.sizePanes() }
     }
 
-    /// Opens on `group` with a fresh draft and status, centered on the sidebar's screen unless it is already
-    /// open.
+    /// Opens on `group`, centered on the sidebar's screen with a fresh draft and status. An open window only
+    /// switches to `group`, keeping its place and the edits not saved yet.
     public func show(_ group: SettingsGroup = .general) {
-        editor.revert()
         onboarding.refresh()
         aeroSpace.refresh()
         navigation.selection = group
         if !window.isVisible {
+            editor.revert()
             centersOnNextSize = true
             sizeWindow()
             // Until the panes report their sizes, center the window at the size it has.

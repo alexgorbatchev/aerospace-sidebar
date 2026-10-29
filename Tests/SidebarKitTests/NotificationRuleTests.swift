@@ -101,12 +101,12 @@ struct NotificationRuleTests {
     @Test func changedRulesRestackListedNotifications() {
         let start = Date(timeIntervalSince1970: 1_000)
         let store = InMemoryStore()
-        let alerts = RecordingAlerts()
-        let model = SidebarModel(performer: RecordingPerformer(), store: store)
-        model.alerts = alerts
+        let alerts = RecordingNativeNotifications()
+        let model = SidebarModel(performer: RecordingPerformer(), store: store, now: { start })
+        model.nativeNotifications = alerts
         model.add(SidebarNotification(source: "ci", title: "Build", severity: .high, receivedAt: start))
         model.add(SidebarNotification(source: "Slack", title: "Hi", receivedAt: start + 1))
-        model.add(SidebarNotification(source: "macOS", title: "Allow?", nativeAlert: .init(identifier: "a", choices: ["Allow"]), nativeIdentifiers: ["a"], receivedAt: start + 2))
+        model.add(SidebarNotification(source: "macOS", title: "Allow?", nativeChoices: .init(identifier: "a", choices: ["Allow"]), nativeIdentifiers: ["a"], receivedAt: start + 2))
 
         model.apply(rules: [Rule(source: "Slack", action: .severity(.critical)), Rule(source: "macOS", action: .hide)])
         #expect(model.notifications.map(\.title) == ["Hi", "Build"])
@@ -132,7 +132,7 @@ struct NotificationRuleTests {
     /// then they stack under the older card, which keeps the severity it arrived with.
     @Test func changedRulesStackCardsThatNowMatch() {
         let start = Date(timeIntervalSince1970: 1_000)
-        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), now: { start })
         model.add(SidebarNotification(source: "ci", title: "Deploy", severity: .low, receivedAt: start))
         let first = model.notifications[0].id
         model.add(SidebarNotification(source: "ci", title: "Deploy", receivedAt: start + 1))

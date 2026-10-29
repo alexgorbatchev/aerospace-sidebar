@@ -107,14 +107,36 @@ struct FileWatcherTests {
         #expect(counter.count == 0)
     }
 
-    @Test func missingDirectoryWatchesNothing() async throws {
-        let watcher = FileWatcher(url: directory.url.appendingPathComponent("missing/aerospace.toml"), delay: .milliseconds(10)) {
-            Issue.record("unexpected report")
+    /// While the file's directory is missing, the watcher waits for it in the nearest existing ancestor, and
+    /// follows it as it is created, removed and created again.
+    @Test func reportsTheFileInDirectoriesCreatedLater() async throws {
+        let counter = Counter()
+        let watcher = FileWatcher(url: directory.url.appendingPathComponent("a/b/aerospace.toml"), delay: .milliseconds(30)) {
+            counter.count += 1
         }
-
         watcher.start()
+        defer { watcher.stop() }
+
+        try FileManager.default.createDirectory(at: directory.url.appendingPathComponent("a/b"), withIntermediateDirectories: true)
         try await settle()
-        watcher.stop()
+        #expect(counter.count == 0)
+
+        try directory.write("a", to: "a/b/aerospace.toml")
+        try await expectReports(1, from: counter)
+        try FileManager.default.removeItem(at: directory.url.appendingPathComponent("a"))
+        try await expectReports(2, from: counter)
+        try directory.write("b", to: "a/b/aerospace.toml")
+        try await expectReports(3, from: counter)
+    }
+
+    @Test func findsTheNearestExistingDirectory() throws {
+        try directory.write("", to: "a/file")
+
+        let a = directory.url.appendingPathComponent("a").path
+        #expect(FileWatcher.nearestExistingDirectory(of: directory.url.appendingPathComponent("a/b/c/x.toml")).path == a)
+        // A file in the way is no directory.
+        #expect(FileWatcher.nearestExistingDirectory(of: directory.url.appendingPathComponent("a/file/x.toml")).path == a)
+        #expect(FileWatcher.nearestExistingDirectory(of: URL(fileURLWithPath: "/nonexistent-root/x/y.toml")).path == "/")
     }
 }
 

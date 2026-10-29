@@ -100,7 +100,8 @@ public final class SidebarPanelController: NSObject {
         panel.hasShadow = false
 
         let content = NSHostingView(rootView: SidebarPanelContent(
-            model: model, settings: settings, openSettings: openSettings, setUp: setUp
+            model: model, settings: settings, openSettings: openSettings, setUp: setUp,
+            requestKeyboard: { [weak panel] in panel?.takeKeyboard() }
         ))
         panel.contentView = content
         return panel
@@ -113,10 +114,13 @@ struct SidebarPanelContent: View {
     let settings: SettingsStore
     let openSettings: (SettingsGroup) -> Void
     let setUp: (PermissionFlowPane, CGRect?) -> Void
+    /// Makes the panel the key window, so that typing reaches a field the user opened (`requestKeyboard`).
+    let requestKeyboard: @MainActor () -> Void
 
     var body: some View {
         SidebarView(model: model, side: settings.settings.sidebar.side, openSettings: openSettings, setUp: setUp)
             .typography(settings)
+            .environment(\.requestKeyboard, requestKeyboard)
     }
 }
 
@@ -124,17 +128,40 @@ struct SidebarPanelContent: View {
 /// the sidebar and keyboard input from reaching it. `.nonactivatingPanel` lets it become
 /// key without activating the app or stealing activation from the frontmost app.
 ///
-/// The panel takes key status only for a click on it. AppKit makes the first visible window that can
-/// become key the key window once the app finishes launching, and picks another when a key window closes,
-/// such as Settings; either would move the user's keyboard focus to the sidebar unasked.
+/// The panel takes key status only for a click on it, or when the user opens a field to type into, such as a
+/// reply on a card, which VoiceOver does without a click (`takeKeyboard()`). Once key, it stays key until another
+/// window takes over, whatever `canBecomeKey` says later (measured on macOS 26.6). AppKit makes the first visible
+/// window that can become key the key window once the app finishes launching, and picks another when a key window
+/// closes, such as Settings; either would move the user's keyboard focus to the sidebar unasked.
 final class SidebarPanel: NSPanel {
     override var canBecomeKey: Bool { acceptsKeyStatus(during: currentEvent) }
 
-    /// Whether `event`, the event being handled, is a click on the panel.
+    /// Set only while `takeKeyboard()` makes the panel key.
+    private(set) var grantsKeyStatus = false
+    /// Makes the panel the key window; tests record it instead, since a key test window takes the user's keyboard.
+    var becomeKey: @MainActor (NSWindow) -> Void = { $0.makeKey() }
+
+    /// Whether the panel takes key status: while `takeKeyboard()` asks for it, or for `event`, the event being
+    /// handled, when that is a click on the panel.
     func acceptsKeyStatus(during event: NSEvent?) -> Bool {
+        if grantsKeyStatus { return true }
         guard let event else { return false }
         return event.windowNumber == windowNumber && Self.clicks.contains(event.type)
     }
 
+    /// Makes the panel the key window, without activating the app, so that typing reaches a field the user
+    /// opened.
+    func takeKeyboard() {
+        grantsKeyStatus = true
+        becomeKey(self)
+        grantsKeyStatus = false
+    }
+
     private static let clicks: Set<NSEvent.EventType> = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+}
+
+extension EnvironmentValues {
+    /// Makes the sidebar panel the key window when the user opens a field to type into
+    /// (`SidebarPanel.takeKeyboard()`).
+    @Entry var requestKeyboard: @MainActor () -> Void = {}
 }

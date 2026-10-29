@@ -7,6 +7,11 @@ import SidebarProtocol
 /// Only processes of the same user can connect: the socket file is mode 0600 inside the per-user
 /// temporary directory, and each peer's uid is checked with `getpeereid`. This is the only way to
 /// push notifications that run commands on click.
+///
+/// A request is confirmed as soon as it decodes, which validates it, and then handed to the main actor. The
+/// reply never waits for the main actor, which can be busy for longer than a client waits (NotificationCenter
+/// can take ~15 s to answer after a wake): a client that gave up on a request the app goes on to show would
+/// report a failure for it, or send it again.
 public final class ControlServer: Sendable {
     public enum StartError: Error, Equatable {
         case alreadyRunning(path: String)
@@ -16,7 +21,7 @@ public final class ControlServer: Sendable {
     private static let receiveTimeout = timeval(tv_sec: 2, tv_usec: 0)
 
     public let path: String
-    private let handler: @MainActor @Sendable (ControlRequest) -> ControlResponse
+    private let handler: @MainActor @Sendable (ControlRequest) -> Void
     private let queue = DispatchQueue(label: "com.alexgorbatchev.aerospace-sidebar.control")
     private let state = OSAllocatedUnfairLock<(descriptor: Int32, source: (any DispatchSourceRead)?)>(
         initialState: (-1, nil)
@@ -24,7 +29,7 @@ public final class ControlServer: Sendable {
 
     public init(
         path: String = SidebarApp.controlSocketPath,
-        handler: @escaping @MainActor @Sendable (ControlRequest) -> ControlResponse
+        handler: @escaping @MainActor @Sendable (ControlRequest) -> Void
     ) {
         self.path = path
         self.handler = handler
@@ -73,10 +78,8 @@ public final class ControlServer: Sendable {
             reply(ControlResponse(error: "invalid request: \(error)"), on: connection)
             return
         }
-        Task { @MainActor [handler, queue] in
-            let response = handler(request)
-            queue.async { [self] in reply(response, on: connection) }
-        }
+        Task { @MainActor [handler] in handler(request) }
+        reply(ControlResponse(error: nil), on: connection)
     }
 
     private func reply(_ response: ControlResponse, on connection: Int32) {

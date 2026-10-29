@@ -2,36 +2,47 @@ import Foundation
 import Observation
 
 /// The Settings window's working copy. Edits stay in `draft` until `save()` writes `config.toml`;
-/// `revert()` discards them. While nothing is edited, external changes to the file replace the draft.
-/// The draft font is previewed right away, so font edits show before they are saved.
+/// `revert()` discards them. Changes to the file, made by hand or by another tool, replace the groups of
+/// the draft that hold no edits; Save warns before replacing a group that changed in both places, or a file
+/// that does not load. The draft font is previewed right away, so font edits show before they are saved.
 @MainActor
 @Observable
 public final class SettingsEditor {
     public var draft: SidebarSettings {
         didSet { store.preview(font: draft.font == store.settings.font ? nil : draft.font) }
     }
-    /// Problems to show in the window's status line: invalid values, save or load failures.
-    public private(set) var status: String?
 
+    /// Problems to show in the window's status line: why the last Save did not save, else load failures,
+    /// which show as soon as the file changes.
+    public var status: String? {
+        if let problem {
+            return problem
+        }
+        if let loadError = store.loadError, loadError == replacedLoadError {
+            return "config.toml is invalid (\(loadError)). Save again to replace it with these settings, or Cancel to fix it by hand."
+        }
+        return Self.loadStatus(store)
+    }
+
+    /// Why the last Save did not save, until a save succeeds or the draft is reverted.
+    private var problem: String?
+    /// The load error of an invalid `config.toml` that Save warned about, so that saving again replaces the
+    /// file. Once the file loads again, the warning is gone.
+    private var replacedLoadError: String?
     @ObservationIgnored private let store: SettingsStore
-    /// The settings `draft` started from; the store has already changed when it notifies observers.
-    @ObservationIgnored private var baseline: SidebarSettings
+    /// The settings `draft` started from: a group that differs from it holds edits, and the others follow the
+    /// store.
+    @ObservationIgnored private var start: SidebarSettings
 
     public init(store: SettingsStore) {
         self.store = store
         draft = store.settings
-        baseline = store.settings
-        status = Self.loadStatus(store)
-        store.observe { [weak self] settings in
-            guard let self else { return }
-            if !self.isDirty {
-                self.draft = settings
-            }
-            self.baseline = settings
-        }
+        start = store.settings
+        store.observe { [weak self] settings in self?.follow(settings) }
     }
 
-    public var isDirty: Bool { draft != baseline }
+    /// Whether the draft holds edits that are not saved.
+    public var isDirty: Bool { draft != start }
 
     /// `appsLeftToMacOS` as comma-separated text.
     public var appsLeftToMacOSText: String {
@@ -45,56 +56,116 @@ public final class SettingsEditor {
     }
 
     public func revert() {
-        baseline = store.settings
+        start = store.settings
         draft = store.settings
-        status = Self.loadStatus(store)
+        problem = nil
+        replacedLoadError = nil
     }
 
-    /// Validates and writes the draft. Returns false and sets `status` when it cannot.
+    /// Validates the draft and writes its edits over the current settings. Returns false and sets `status`
+    /// when it cannot, or when a Save again is needed to replace changes to the file.
     @discardableResult
     public func save() -> Bool {
-        if !SidebarSettings.Sidebar.widthRange.contains(draft.sidebar.width) {
-            status = "Width must be between \(SidebarSettings.Sidebar.widthRange.lowerBound) and \(SidebarSettings.Sidebar.widthRange.upperBound) points."
+        if let invalid = invalidValue() {
+            problem = invalid
             return false
         }
-        let history = draft.history
-        if !SidebarSettings.History.retentionRange.contains(history.retentionHours) {
-            status = "Keep for must be between \(SidebarSettings.History.retentionRange.lowerBound) and \(SidebarSettings.History.retentionRange.upperBound) hours."
-            return false
-        }
-        if !SidebarSettings.History.maxCountRange.contains(history.maxCount) {
-            status = "Keep at most must be between \(SidebarSettings.History.maxCountRange.lowerBound) and \(SidebarSettings.History.maxCountRange.upperBound) notifications."
-            return false
-        }
-        let font = draft.font
-        if !SidebarSettings.Font.sizeRange.contains(font.size) {
-            status = "Size must be between \(SidebarSettings.Font.sizeRange.lowerBound.formatted()) and \(SidebarSettings.Font.sizeRange.upperBound.formatted()) points."
-            return false
-        }
-        if let (index, problem) = draft.rules.enumerated().lazy.compactMap({ index, rule in rule.problem.map { (index, $0) } }).first {
-            status = "Rule \(index + 1) \(problem)."
-            return false
-        }
-        let fontName = font.name.trimmingCharacters(in: .whitespaces)
+        let fontName = draft.font.name.trimmingCharacters(in: .whitespaces)
         if !fontName.isEmpty {
             guard let family = Typography.installedFamily(named: fontName) else {
-                status = "No installed font family is named “\(fontName)”."
+                problem = "No installed font family is named “\(fontName)”."
                 return false
             }
             draft.font.name = family
         } else {
             draft.font.name = ""
         }
-        let draft = draft
-        store.update { $0 = draft }
+        var updated = store.settings
+        var changedInFile: [SettingsGroup] = []
+        for group in Self.groups where !group.isEqual(draft, start) {
+            if !group.isEqual(updated, start), !group.isEqual(updated, draft) {
+                changedInFile.append(group.settingsGroup)
+                // The warning names the file's version; saving again replaces it.
+                group.copy(updated, &start)
+            }
+            group.copy(draft, &updated)
+        }
+        if !changedInFile.isEmpty {
+            problem = "\(changedInFile.map(\.title).formatted(.list(type: .and))) settings changed in config.toml while you edited them. Save again to replace those changes, or Cancel to keep them."
+            return false
+        }
+        if let loadError = store.loadError, loadError != replacedLoadError {
+            replacedLoadError = loadError
+            problem = nil
+            return false
+        }
+        store.update { $0 = updated }
         if let error = store.saveError {
-            status = "Couldn't save settings: \(error)"
+            problem = "Couldn't save settings: \(error)"
             return false
         }
         store.preview(font: nil)
-        status = nil
+        start = store.settings
+        problem = nil
+        replacedLoadError = nil
         return true
     }
+
+    /// Why a value in the draft cannot be saved; nil when every value can.
+    private func invalidValue() -> String? {
+        if !SidebarSettings.Sidebar.widthRange.contains(draft.sidebar.width) {
+            return "Width must be between \(SidebarSettings.Sidebar.widthRange.lowerBound) and \(SidebarSettings.Sidebar.widthRange.upperBound) points."
+        }
+        let history = draft.history
+        if !SidebarSettings.History.retentionRange.contains(history.retentionHours) {
+            return "Keep for must be between \(SidebarSettings.History.retentionRange.lowerBound) and \(SidebarSettings.History.retentionRange.upperBound) hours."
+        }
+        if !SidebarSettings.History.maxCountRange.contains(history.maxCount) {
+            return "Keep at most must be between \(SidebarSettings.History.maxCountRange.lowerBound) and \(SidebarSettings.History.maxCountRange.upperBound) notifications."
+        }
+        if !SidebarSettings.Font.sizeRange.contains(draft.font.size) {
+            return "Size must be between \(SidebarSettings.Font.sizeRange.lowerBound.formatted()) and \(SidebarSettings.Font.sizeRange.upperBound.formatted()) points."
+        }
+        if let (index, problem) = draft.rules.enumerated().lazy.compactMap({ index, rule in rule.problem.map { (index, $0) } }).first {
+            return "Rule \(index + 1) \(problem)."
+        }
+        return nil
+    }
+
+    /// Takes `settings`, as the file changed, into every group of the draft that holds no edits.
+    private func follow(_ settings: SidebarSettings) {
+        var followed = draft
+        for group in Self.groups where group.isEqual(followed, start) {
+            group.copy(settings, &followed)
+            group.copy(settings, &start)
+        }
+        if followed != draft {
+            draft = followed
+        }
+    }
+
+    /// A part of the settings that one Settings group edits. Edits and changes to the file are told apart
+    /// group by group.
+    private struct Group {
+        let settingsGroup: SettingsGroup
+        let isEqual: (SidebarSettings, SidebarSettings) -> Bool
+        /// Copies the group from the first settings into the second.
+        let copy: (SidebarSettings, inout SidebarSettings) -> Void
+
+        init<Value: Equatable>(_ keyPath: WritableKeyPath<SidebarSettings, Value>, _ settingsGroup: SettingsGroup) {
+            self.settingsGroup = settingsGroup
+            isEqual = { $0[keyPath: keyPath] == $1[keyPath: keyPath] }
+            copy = { $1[keyPath: keyPath] = $0[keyPath: keyPath] }
+        }
+    }
+
+    private static let groups = [
+        Group(\.font, .appearance),
+        Group(\.sidebar, .sidebar),
+        Group(\.notifications, .notifications),
+        Group(\.rules, .rules),
+        Group(\.history, .history),
+    ]
 
     private static func loadStatus(_ store: SettingsStore) -> String? {
         let fontName = store.settings.font.name

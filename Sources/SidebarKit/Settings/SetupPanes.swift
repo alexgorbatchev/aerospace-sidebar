@@ -152,10 +152,17 @@ struct AeroSpaceRows: View {
             return "\(file) reserves \(sidebar.width) points on the \(sidebar.side.rawValue) for the sidebar."
         }
         var problems: [String] = []
-        switch analysis.reservedWidth {
-        case nil: problems.append("reserves no sidebar strip on the \(sidebar.side.rawValue)")
-        case let width? where width != sidebar.width: problems.append("reserves \(width) points on the \(sidebar.side.rawValue), not \(sidebar.width)")
-        default: break
+        let side = sidebar.side.rawValue
+        if let width = analysis.mainEntryWidth {
+            if width != sidebar.width {
+                problems.append("reserves \(width) points on the \(side), not \(sidebar.width)")
+            }
+            // AeroSpace uses the first entry whose pattern matches a monitor.
+            if analysis.reservedWidth == nil {
+                problems.append("puts other monitor patterns before monitor.main on the \(side), which AeroSpace may match to the main display first")
+            }
+        } else {
+            problems.append("reserves no sidebar strip on the \(side)")
         }
         if let width = analysis.oppositeReservedWidth {
             problems.append("also reserves \(width) points on the \(sidebar.side.opposite.rawValue)")

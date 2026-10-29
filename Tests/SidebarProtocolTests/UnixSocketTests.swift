@@ -68,13 +68,14 @@ struct UnixSocketTests {
         await written
     }
 
+    /// The request was sent in full, so the server may have it: the failure is told apart from one before sending.
     @Test func clientGivesUpOnServerThatNeverReplies() async throws {
         let path = Self.temporarySocketPath()
         let listener = try UnixSocket.listen(on: path)
         defer { close(listener); unlink(path) }
         async let accepted = onBlockingQueue { accept(listener, nil, nil) }
 
-        await #expect(throws: SocketError("read", code: EAGAIN)) {
+        await #expect(throws: ExchangeError.noReply(SocketError("read", code: EAGAIN).description)) {
             try await UnixSocket.exchange(
                 .pushNotification(NotificationPayload(title: "t")),
                 path: path,
@@ -82,6 +83,59 @@ struct UnixSocketTests {
             )
         }
         close(await accepted)
+    }
+
+    /// No socket file, or a stale one nothing listens on, means no server; other connect failures do not.
+    @Test func connectFailuresTellWhetherAServerListens() async throws {
+        let missing = Self.temporarySocketPath()
+        let stale = Self.temporarySocketPath()
+        close(try UnixSocket.listen(on: stale))
+        defer { unlink(stale) }
+        let request = ControlRequest.pushNotification(try NotificationPayload(title: "t"))
+
+        for (path, error) in [
+            (missing, SocketError("connect", code: ENOENT)),
+            (stale, SocketError("connect", code: ECONNREFUSED)),
+        ] {
+            await #expect(throws: ExchangeError.notConnected(error)) { try await UnixSocket.exchange(request, path: path) }
+        }
+        #expect(ExchangeError.notConnected(SocketError("connect", code: ENOENT)).meansNoListener)
+        #expect(ExchangeError.notConnected(SocketError("connect", code: ECONNREFUSED)).meansNoListener)
+        #expect(!ExchangeError.notConnected(SocketError("socket path", code: ENAMETOOLONG)).meansNoListener)
+        #expect(!ExchangeError.notSent(SocketError("write", code: EPIPE)).meansNoListener)
+        #expect(!ExchangeError.noReply("late").meansNoListener)
+    }
+
+    /// A server that hangs up before reading the whole request never handled it.
+    @Test func serverClosingMidRequestMeansNotSent() async throws {
+        let path = Self.temporarySocketPath()
+        let listener = try UnixSocket.listen(on: path)
+        defer { close(listener); unlink(path) }
+        // Larger than the socket buffers hold, so the client is still writing when the server hangs up.
+        let request = ControlRequest.pushNotification(try NotificationPayload(body: String(repeating: "\u{1}", count: 4096)))
+        async let hungUp: Void = onBlockingQueue { close(accept(listener, nil, nil)) }
+
+        let error = await #expect(throws: ExchangeError.self) { try await UnixSocket.exchange(request, path: path) }
+        await hungUp
+
+        guard case .notSent(let socketError) = error else {
+            Issue.record("expected notSent, got \(String(describing: error))")
+            return
+        }
+        #expect(socketError.operation == "write")
+    }
+
+    /// The server reads at most `maxMessageSize` bytes; a larger request is refused before connecting.
+    @Test func refusesRequestsLargerThanTheServerReads() async throws {
+        let text = String(repeating: "\u{1}", count: 4095) + "e" + String(repeating: "\u{301}", count: 6000)
+        let request = ControlRequest.pushNotification(try NotificationPayload(body: text, action: .run(command: text, workingDirectory: "/")))
+        let size = try JSONEncoder().encode(request).count
+        #expect(size > UnixSocket.maxMessageSize)
+
+        // Nothing listens on the path, so connecting would fail differently.
+        await #expect(throws: ExchangeError.tooLarge(size: size)) {
+            try await UnixSocket.exchange(request, path: Self.temporarySocketPath())
+        }
     }
 
     @Test func blockingQueuePropagatesErrors() async {

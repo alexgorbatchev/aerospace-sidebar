@@ -62,8 +62,8 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
     public struct Notifications: Codable, Equatable, Sendable {
         /// Hide native banners and list them in the sidebar.
         public var replaceSystem = true
-        /// Leave notifications with buttons, a reply field or other actions to macOS. Otherwise they are
-        /// listed like the others, without those actions.
+        /// Leave notifications with buttons, a reply field or other actions that their cards cannot offer to
+        /// macOS. Otherwise they are listed like the others, without those actions.
         public var actionableLeftToMacOS = true
         /// Apps whose notifications macOS keeps presenting; matched case-insensitively by app name.
         public var appsLeftToMacOS: [String] = []

@@ -25,26 +25,34 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     /// The Permissions steps, shared by Settings and the sidebar's Set Up… buttons; made on first use.
     public private(set) lazy var onboarding: OnboardingModel = {
         let onboarding = makeOnboarding(notificationDatabase)
+        onboarding.willRemoveAccessibility = { [weak self] in self?.monitor?.stop() }
         onboarding.onPermissionsChanged = { [weak self] in self?.permissionsChanged() }
         return onboarding
     }()
+    /// The apps whose notifications are switched off in System Settings, which Settings › Notifications lists and
+    /// whose cards cannot open their notifications; made on first use.
+    public private(set) lazy var appNotifications: AppNotificationsModel = makeAppNotifications(model)
     /// Notifications listed from NotificationCenter or its database, shared so neither lists one twice,
     /// and kept across launches.
     private let identities: NotificationIdentities
     private var server: ControlServer?
     private var pruneTimer: Timer?
     private let makeController: @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor (SettingsGroup) -> Void, _ setUp: @escaping @MainActor (PermissionFlowPane, CGRect?) -> Void) -> SidebarPanelController
-    private let makeMonitor: @MainActor (SidebarModel, SettingsStore, NotificationIdentities) -> NotificationCenterMonitor
+    private let makeMonitor: @MainActor (SidebarModel, SettingsStore, NotificationIdentities, NotificationDatabase) -> NotificationCenterMonitor
     private let makeDatabaseMonitor: @MainActor (SidebarModel, NotificationIdentities, NotificationDatabase) -> NotificationDatabaseMonitor
     private let makeServer: @MainActor (SidebarModel, AppIconFont) -> ControlServer
     private let makeOnboarding: @MainActor (NotificationDatabase) -> OnboardingModel
-    private let makeSettingsWindow: @MainActor (SettingsStore, AeroSpaceSync, OnboardingModel, SidebarModel) -> SettingsWindowController
+    private let makeAppNotifications: @MainActor (SidebarModel) -> AppNotificationsModel
+    private let makeSettingsWindow: @MainActor (SettingsStore, AeroSpaceSync, OnboardingModel, AppNotificationsModel, SidebarModel) -> SettingsWindowController
     private let urlSender: @MainActor () -> String?
+    private let activation: ActivationYielder
 
     /// - Parameters:
     ///   - identities: Notifications already listed; tests pass one that is not saved in `UserDefaults.standard`.
     ///   - notificationDatabase: macOS's notification database; tests pass one in a temporary directory.
     ///   - urlSender: Name of the process that opened the URL being handled.
+    ///   - activation: Hands activation back to the app the user was in; tests that call
+    ///     `applicationDidBecomeActive` pass one that activates and deactivates nothing.
     public init(
         settings: SettingsStore = SettingsStore(file: SettingsFile(
             home: FileManager.default.homeDirectoryForCurrentUser,
@@ -65,8 +73,8 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         makeController: @escaping @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor (SettingsGroup) -> Void, _ setUp: @escaping @MainActor (PermissionFlowPane, CGRect?) -> Void) -> SidebarPanelController = {
             SidebarPanelController(model: $0, settings: $1, openSettings: $2, setUp: $3)
         },
-        makeMonitor: @escaping @MainActor (SidebarModel, SettingsStore, NotificationIdentities) -> NotificationCenterMonitor = {
-            SidebarAppDelegate.makeMonitor(model: $0, settings: $1, identities: $2)
+        makeMonitor: @escaping @MainActor (SidebarModel, SettingsStore, NotificationIdentities, NotificationDatabase) -> NotificationCenterMonitor = {
+            SidebarAppDelegate.makeMonitor(model: $0, settings: $1, identities: $2, declaredChoices: DeclaredChoices(database: $3))
         },
         makeDatabaseMonitor: @escaping @MainActor (SidebarModel, NotificationIdentities, NotificationDatabase) -> NotificationDatabaseMonitor = {
             SidebarAppDelegate.makeDatabaseMonitor(model: $0, identities: $1, database: $2)
@@ -74,10 +82,15 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         makeServer: @escaping @MainActor (SidebarModel, AppIconFont) -> ControlServer = { SidebarAppDelegate.makeServer(model: $0, icons: $1) },
         makeAeroSpaceSync: @MainActor (SettingsStore) -> AeroSpaceSync = SidebarAppDelegate.makeAeroSpaceSync,
         makeOnboarding: @escaping @MainActor (NotificationDatabase) -> OnboardingModel = SidebarAppDelegate.makeOnboarding(notificationDatabase:),
-        makeSettingsWindow: @escaping @MainActor (SettingsStore, AeroSpaceSync, OnboardingModel, SidebarModel) -> SettingsWindowController = { store, aeroSpace, onboarding, model in
-            SettingsWindowController(store: store, onboarding: onboarding, aeroSpace: aeroSpace) { model.received }
+        makeAppNotifications: @escaping @MainActor (SidebarModel) -> AppNotificationsModel = { SidebarAppDelegate.makeAppNotifications(model: $0) },
+        makeSettingsWindow: @escaping @MainActor (SettingsStore, AeroSpaceSync, OnboardingModel, AppNotificationsModel, SidebarModel) -> SettingsWindowController = {
+            store, aeroSpace, onboarding, appNotifications, model in
+            SettingsWindowController(store: store, onboarding: onboarding, appNotifications: appNotifications, aeroSpace: aeroSpace) {
+                model.received
+            }
         },
-        urlSender: @escaping @MainActor () -> String? = SidebarAppDelegate.currentAppleEventSender
+        urlSender: @escaping @MainActor () -> String? = SidebarAppDelegate.currentAppleEventSender,
+        activation: ActivationYielder = ActivationYielder()
     ) {
         self.settings = settings
         self.model = makeModel(settings.settings)
@@ -91,8 +104,10 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         self.makeDatabaseMonitor = makeDatabaseMonitor
         self.makeServer = makeServer
         self.makeOnboarding = makeOnboarding
+        self.makeAppNotifications = makeAppNotifications
         self.makeSettingsWindow = makeSettingsWindow
         self.urlSender = urlSender
+        self.activation = activation
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
@@ -103,9 +118,10 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
 
         aeroSpace.start()
 
-        let monitor = makeMonitor(model, settings, identities)
+        let monitor = makeMonitor(model, settings, identities, notificationDatabase)
         self.monitor = monitor
-        model.alerts = monitor
+        model.nativeNotifications = monitor
+        model.notificationsAreOff = { [appNotifications] in appNotifications.notificationsAreOff(for: $0) }
         let databaseMonitor = makeDatabaseMonitor(model, identities, notificationDatabase)
         self.databaseMonitor = databaseMonitor
         settings.observe { [weak self, model] settings in
@@ -151,7 +167,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
 
     /// Opens the Settings window on `group`, creating it on first use.
     public func showSettings(_ group: SettingsGroup = .general) {
-        let window = settingsWindow ?? makeSettingsWindow(settings, aeroSpace, onboarding, model)
+        let window = settingsWindow ?? makeSettingsWindow(settings, aeroSpace, onboarding, appNotifications, model)
         settingsWindow = window
         window.show(group)
     }
@@ -164,7 +180,13 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Checks the permissions now that Settings removed one, rather than at the monitors' next poll or read.
+    /// Removing Accessibility stops interception first, which moves NotificationCenter's windows back while
+    /// the permission still allows it; interception starts again here and waits for the permission, or
+    /// attaches again when it was not removed after all.
     private func permissionsChanged() {
+        if settings.settings.notifications.replaceSystem {
+            monitor?.start()
+        }
         monitor?.checkPermission()
         databaseMonitor?.checkAccess()
     }
@@ -197,6 +219,11 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         return menu
     }
 
+    /// Launch Services activates the app to open a URL or at launch; see `ActivationYielder`.
+    public func applicationDidBecomeActive(_ notification: Notification) {
+        activation.appDidBecomeActive()
+    }
+
     /// Handles `aerospace-sidebar://` URLs; see `SidebarRequest` for the routes.
     public func application(_ application: NSApplication, open urls: [URL]) {
         let source = urlSender() ?? "URL"
@@ -212,12 +239,15 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// - Parameter targetVisibleFrame: The visible frame of the sidebar's screen, whose right edge the
-    ///   sidebar may cover; native notifications are moved left of the sidebar there.
+    /// - Parameters:
+    ///   - declaredChoices: What apps declared their notifications' choices as, which lets cards offer them.
+    ///   - targetVisibleFrame: The visible frame of the sidebar's screen, whose right edge the sidebar may
+    ///     cover; native notifications are moved left of the sidebar there.
     public static func makeMonitor(
         model: SidebarModel,
         settings: SettingsStore,
         identities: NotificationIdentities = NotificationIdentities(),
+        declaredChoices: DeclaredChoices,
         platform: any AccessibilityPlatform = SystemAccessibility(),
         targetVisibleFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenVisibleFrame
     ) -> NotificationCenterMonitor {
@@ -229,7 +259,9 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
                 bundleIdentifier: { InstalledApps.shared.bundleIdentifier(named: $0) },
                 leavesActionableToMacOS: { settings.settings.notifications.actionableLeftToMacOS },
                 listsNotification: { model.lists(notification: $0) },
-                onPresentAlerts: { model.presentAlerts = $0 },
+                listsChoices: { model.lists(choicesOf: $0) },
+                declaredChoices: { declaredChoices.choices(ofApp: $0, titled: $1) },
+                onPresentChoices: { model.presentChoices = $0 },
                 nativeOrigin: {
                     guard let visibleFrame = targetVisibleFrame() else { return .zero }
                     return CGPoint(x: -SidebarLayout(settings.settings.sidebar).coverage(ofRightEdgeOf: visibleFrame), y: 0)
@@ -262,7 +294,6 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
             switch request {
             case .pushNotification(let payload):
                 model.add(SidebarNotification(payload: payload, source: "aerospace-sidebar", icons: icons))
-                return ControlResponse(error: nil)
             }
         }
     }
@@ -273,6 +304,14 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
             permissions: PermissionFlowGuide(notificationDatabase: notificationDatabase),
             loginItems: MainAppLoginItem()
         )
+    }
+
+    /// Reads which apps have notifications switched off from usernoted's settings, which takes Full Disk Access.
+    public static func makeAppNotifications(
+        model: SidebarModel,
+        home: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> AppNotificationsModel {
+        AppNotificationsModel(preferences: NotificationPreferences(home: home)) { model.received }
     }
 
     public static func makeAeroSpaceSync(settings: SettingsStore) -> AeroSpaceSync {

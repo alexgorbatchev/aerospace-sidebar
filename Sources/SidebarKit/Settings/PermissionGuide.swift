@@ -78,7 +78,7 @@ public struct NotificationDatabaseAccess: PermissionStatusProviding {
 
     public func authorizationState() -> PermissionAuthorizationState {
         do {
-            _ = try database.latestRecordID()
+            _ = try database.latestDelivery(by: Date())
             return .granted
         } catch {
             return error.isAccessDenied ? .notGranted : .unknown

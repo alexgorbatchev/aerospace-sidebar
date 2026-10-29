@@ -143,6 +143,104 @@ struct SettingsEditorTests {
 
         #expect(SettingsEditor(store: store).status?.hasPrefix("config.toml is invalid") == true)
     }
+
+    /// Groups without edits follow changes to the file, and Save keeps those changes.
+    @Test func savingKeepsChangesToTheFileInGroupsWithoutEdits() throws {
+        let editor = SettingsEditor(store: store)
+        editor.draft.sidebar.width = 400
+
+        try directory.write("[[rules]]\nsource = \"Slack\"\naction = \"low\"\n", to: "config.toml")
+        store.reload()
+        let rule = SidebarSettings.Rule(source: "Slack", action: .severity(.low))
+        #expect(editor.draft.rules == [rule])
+        #expect(editor.draft.sidebar.width == 400)
+
+        #expect(editor.save())
+        #expect(try store.file.load() == SidebarSettings(sidebar: .init(width: 400), rules: [rule]))
+        #expect(!editor.isDirty)
+    }
+
+    /// A group edited in Settings and changed in the file is replaced only by saving again after a warning.
+    @Test func warnsBeforeReplacingAGroupChangedInTheFile() throws {
+        let editor = SettingsEditor(store: store)
+        editor.draft.sidebar.width = 400
+        editor.draft.history.maxCount = 300
+        try directory.write("[sidebar]\nwidth = 500\n[history]\nmax_count = 300\n", to: "config.toml")
+        store.reload()
+
+        #expect(!editor.save())
+        #expect(editor.status == "Sidebar settings changed in config.toml while you edited them. Save again to replace those changes, or Cancel to keep them.")
+        #expect(try store.file.load().sidebar.width == 500)
+
+        #expect(editor.save())
+        #expect(try store.file.load().sidebar.width == 400)
+        #expect(editor.status == nil)
+    }
+
+    /// The status line shows a file that stopped loading while Settings is open, and Save replaces it only
+    /// when pressed again.
+    @Test func warnsBeforeReplacingAnInvalidFile() throws {
+        let editor = SettingsEditor(store: store)
+        editor.draft.history.maxCount = 300
+        try directory.write("[history\n", to: "config.toml")
+        store.reload()
+        #expect(editor.status?.hasPrefix("config.toml is invalid, so the previous settings stay in effect:") == true)
+
+        #expect(!editor.save())
+        #expect(editor.status?.hasSuffix("Save again to replace it with these settings, or Cancel to fix it by hand.") == true)
+        #expect(try String(contentsOf: store.file.url, encoding: .utf8) == "[history\n")
+
+        #expect(editor.save())
+        #expect(try store.file.load().history.maxCount == 300)
+        #expect(editor.status == nil)
+    }
+
+    /// Saving again replaces an invalid file with the settings in effect, also without edits in the draft.
+    @Test func replacesAnInvalidFileWithoutEdits() throws {
+        store.update { $0.history.maxCount = 300 }
+        let editor = SettingsEditor(store: store)
+        try directory.write("[history\n", to: "config.toml")
+        store.reload()
+
+        #expect(!editor.save())
+        #expect(editor.status?.hasSuffix("Save again to replace it with these settings, or Cancel to fix it by hand.") == true)
+
+        #expect(editor.save())
+        #expect(store.loadError == nil)
+        #expect(try store.file.load().history.maxCount == 300)
+        #expect(editor.status == nil)
+    }
+
+    /// Once the file loads again, the warning about replacing it is gone.
+    @Test func dropsTheWarningOnceTheFileLoadsAgain() throws {
+        let editor = SettingsEditor(store: store)
+        editor.draft.history.maxCount = 300
+        try directory.write("[history\n", to: "config.toml")
+        store.reload()
+        #expect(!editor.save())
+
+        try directory.write("[sidebar]\nwidth = 320\n", to: "config.toml")
+        store.reload()
+
+        #expect(editor.status == nil)
+        #expect(editor.save())
+        #expect(try store.file.load() == SidebarSettings(sidebar: .init(width: 320), history: .init(maxCount: 300)))
+    }
+
+    /// Once the cause of a failed save is gone, saving the same draft again writes it.
+    @Test func savesAgainAfterAFailedSave() throws {
+        let editor = SettingsEditor(store: store)
+        editor.draft.history.maxCount = 300
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: directory.url.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.url.path) }
+        #expect(!editor.save())
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.url.path)
+
+        #expect(editor.save())
+        #expect(try store.file.load().history.maxCount == 300)
+        #expect(editor.status == nil)
+    }
 }
 
 @MainActor
@@ -277,7 +375,7 @@ struct SettingsPaneTests {
     /// Permissions and General act immediately; the draft panes end with Cancel and Save.
     @Test func onlyDraftPanesHaveSaveAndCancel() throws {
         let immediate: [any View] = [permissionsPane(), general()]
-        let draft: [any View] = [sidebarPane(), NotificationsPane(editor: editor, close: {}), history(), appearance()]
+        let draft: [any View] = [sidebarPane(), NotificationsPane(editor: editor, appNotifications: .fake(), close: {}), history(), appearance()]
         for pane in immediate {
             let sut = try AnyView(pane).inspect()
             #expect(throws: (any Error).self) { try sut.find(button: "Save") }
@@ -337,14 +435,18 @@ struct SettingsPaneTests {
     }
 
     @Test(arguments: [
-        (300, nil as Int?, false, "a.toml reserves 300 points on the left for the sidebar."),
-        (250, nil, true, "a.toml reserves 250 points on the left, not 300 and lacks the floating rule."),
-        (nil, 300, false, "a.toml reserves no sidebar strip on the left and also reserves 300 points on the right."),
-    ] as [(Int?, Int?, Bool, String)])
-    func describesAeroSpaceConfigAgainstSettings(reserved: Int?, opposite: Int?, missingFloatRule: Bool, hint: String) {
+        (300, 300, nil as Int?, false, "a.toml reserves 300 points on the left for the sidebar."),
+        (250, 250, nil, true, "a.toml reserves 250 points on the left, not 300 and lacks the floating rule."),
+        (nil, nil, 300, false, "a.toml reserves no sidebar strip on the left and also reserves 300 points on the right."),
+        // Another pattern comes before the main entry and may win on the main display.
+        (nil, 300, nil, false, "a.toml puts other monitor patterns before monitor.main on the left, which AeroSpace may match to the main display first."),
+        (nil, 250, nil, false, "a.toml reserves 250 points on the left, not 300 and puts other monitor patterns before monitor.main on the left, which AeroSpace may match to the main display first."),
+    ] as [(Int?, Int?, Int?, Bool, String)])
+    func describesAeroSpaceConfigAgainstSettings(reserved: Int?, mainEntry: Int?, opposite: Int?, missingFloatRule: Bool, hint: String) {
         let analysis = AeroSpaceConfigEditor.Analysis(
             sidebar: .init(side: .left, width: 300),
             reservedWidth: reserved,
+            mainEntryWidth: mainEntry,
             oppositeReservedWidth: opposite,
             missingFloatRule: missingFloatRule,
             warnings: []
@@ -410,13 +512,13 @@ struct SettingsPaneTests {
         var closed = 0
         var chooses = 0
         let sidebar = try sidebarPane(close: { closed += 1 }).inspect()
-        let notifications = try NotificationsPane(editor: editor, close: { closed += 1 }).inspect()
+        let notifications = try NotificationsPane(editor: editor, appNotifications: .fake(), close: { closed += 1 }).inspect()
         let font = try appearance(chooseFont: { chooses += 1 }, close: { closed += 1 }).inspect()
 
         try sidebar.find(ViewType.Picker.self).select(value: SidebarSettings.Sidebar.Side.left)
         try sidebar.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Width" }).setInput("420")
         try notifications.find(ViewType.Toggle.self).tap()
-        try notifications.find(ViewType.Toggle.self, where: { try $0.labelView().text().string() == "Keep banners with buttons" }).tap()
+        try notifications.find(ViewType.Toggle.self, where: { try $0.labelView().text().string() == "Keep banners with buttons cards cannot offer" }).tap()
         try notifications.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Keep banners for" }).setInput("zoom.us, Calendar")
         try font.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Font" }).setInput("Menlo")
         try font.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Size" }).setInput("15")
@@ -459,7 +561,7 @@ struct SettingsPaneTests {
 
     /// The Banners setting says what turning it off changes.
     @Test func notificationsExplainTakingOverBanners() throws {
-        let sut = try NotificationsPane(editor: editor, close: {}).inspect()
+        let sut = try NotificationsPane(editor: editor, appNotifications: .fake(), close: {}).inspect()
 
         #expect(throws: Never.self) { try sut.find(text: "Banners:") }
         #expect(throws: Never.self) { try sut.find(text: "Needs Accessibility. Off, only pushed ones are listed.") }
@@ -574,6 +676,24 @@ struct SettingsWindowControllerTests {
         controller.editor.draft.history.maxCount = 999
         controller.window.close()
         #expect(controller.editor.draft == store.settings)
+    }
+
+    /// The gear and Set Up… buttons open Settings while it may already be open; that only switches groups
+    /// and keeps the edits not saved yet.
+    @Test func showingAnOpenWindowKeepsItsDraft() throws {
+        _ = NSApplication.shared
+        let directory = try TemporaryDirectory()
+        let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        let controller = SettingsWindowController.forTesting(store: store, aeroSpace: .fake(store: store, home: directory.url))
+        controller.show()
+        defer { controller.window.close() }
+        controller.editor.draft.sidebar.width = 420
+
+        controller.show(.permissions)
+
+        #expect(controller.editor.draft.sidebar.width == 420)
+        #expect(controller.navigation.selection == .permissions)
+        #expect(controller.tabs.selectedTabViewItemIndex == SettingsGroup.permissions.rawValue)
     }
 
     @Test func quitButtonTerminatesApp() throws {

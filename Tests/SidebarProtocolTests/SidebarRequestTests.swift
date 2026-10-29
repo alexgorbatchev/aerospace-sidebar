@@ -25,6 +25,42 @@ struct NotificationPayloadTests {
         }
     }
 
+    /// A letter with any number of combining marks is one character, so characters alone would let a
+    /// "one-character" title of any size through.
+    @Test func limitsBytesAsWellAsCharacters() throws {
+        let stacked = "e" + String(repeating: "\u{301}", count: 50_000)
+        #expect(stacked.count == 1)
+        #expect(throws: SidebarRequestError.fieldTooLong(field: "title", limit: NotificationPayload.maxTitleLength)) {
+            try NotificationPayload(title: stacked)
+        }
+
+        // A family emoji is one character of 25 bytes: text of them fits while it stays within four bytes per
+        // character of the limit.
+        let family = "👨‍👩‍👧‍👦"
+        let fitting = NotificationPayload.maxBodyLength * NotificationPayload.maxBytesPerCharacter / family.utf8.count
+        #expect(try NotificationPayload(body: String(repeating: family, count: fitting)).body.count == fitting)
+        #expect(throws: SidebarRequestError.fieldTooLong(field: "body", limit: NotificationPayload.maxBodyLength)) {
+            try NotificationPayload(body: String(repeating: family, count: fitting + 1))
+        }
+    }
+
+    @Test func limitsTheClickAction() throws {
+        let command = String(repeating: "x", count: NotificationPayload.maxCommandLength + 1)
+        #expect(throws: SidebarRequestError.fieldTooLong(field: "command", limit: NotificationPayload.maxCommandLength)) {
+            try NotificationPayload(title: "t", action: .run(command: command, workingDirectory: "/"))
+        }
+        let directory = "/" + String(repeating: "d", count: NotificationPayload.maxWorkingDirectoryLength)
+        #expect(throws: SidebarRequestError.fieldTooLong(field: "workingDirectory", limit: NotificationPayload.maxWorkingDirectoryLength)) {
+            try NotificationPayload(title: "t", action: .run(command: "ls", workingDirectory: directory))
+        }
+        let url = try #require(URL(string: "https://example.com/" + String(repeating: "p", count: NotificationPayload.maxOpenURLLength)))
+        #expect(throws: SidebarRequestError.fieldTooLong(field: "open", limit: NotificationPayload.maxOpenURLLength)) {
+            try NotificationPayload(title: "t", action: .open(url))
+        }
+        #expect(try NotificationPayload(title: "t", action: .run(command: "ls", workingDirectory: "/tmp")).action
+            == .run(command: "ls", workingDirectory: "/tmp"))
+    }
+
     @Test func iconIsOptionalAndLimited() throws {
         #expect(try NotificationPayload(title: "t", icon: "slack").icon == "slack")
         #expect(try NotificationPayload(title: "t", icon: "").icon == nil)
@@ -102,6 +138,16 @@ struct SidebarRequestTests {
         #expect(throws: error) { try SidebarRequest(url: URL(string: url)!) }
     }
 
+    /// URLs come from any process or web page, so their fields are bounded in bytes too.
+    @Test func rejectsURLFieldsStackingCombiningMarks() throws {
+        var components = URLComponents(string: "aerospace-sidebar://notification/push")!
+        components.queryItems = [URLQueryItem(name: "body", value: "e" + String(repeating: "\u{301}", count: 20_000))]
+
+        #expect(throws: SidebarRequestError.fieldTooLong(field: "body", limit: NotificationPayload.maxBodyLength)) {
+            try SidebarRequest(url: components.url!)
+        }
+    }
+
     @Test func urlsNeverCarryCommandsOrNonWebLinks() throws {
         let run = try NotificationPayload(title: "t", action: .run(command: "ls", workingDirectory: "/"))
         let file = try NotificationPayload(title: "t", action: .open(URL(fileURLWithPath: "/tmp")))
@@ -115,7 +161,7 @@ struct SidebarRequestTests {
         (.unsupportedScheme(nil), "(none)"),
         (.unknownRoute("x"), "'x'"),
         (.emptyNotification, "title or a body"),
-        (.fieldTooLong(field: "body", limit: 9), "body is longer than 9"),
+        (.fieldTooLong(field: "body", limit: 9), "body is longer than 9 characters (or 36 bytes in UTF-8)"),
         (.invalidOpenURL("ftp://x"), "'ftp://x'"),
         (.actionNotAllowedInURL, "aerospace-sidebar CLI"),
     ])
