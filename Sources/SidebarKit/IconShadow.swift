@@ -16,19 +16,6 @@ struct IconShadow: ViewModifier {
     }
 }
 
-/// `IconShadow` for content that keeps its own size and fills it the way an icon's artwork fills its
-/// square, such as a push button: the shadow an icon of that artwork would cast. A `GeometryReader` would
-/// take all the space offered instead of the content's own size, so the height is read after layout.
-struct ArtworkShadow: ViewModifier {
-    @State private var height: CGFloat = 0
-
-    func body(content: Content) -> some View {
-        content
-            .iconShadow(square: height / NotificationCard.iconArtwork)
-            .onGeometryChange(for: CGFloat.self, of: \.size.height) { height = $0 }
-    }
-}
-
 private extension View {
     /// The icon shadow for a square of `side` points.
     func iconShadow(square side: CGFloat) -> some View {

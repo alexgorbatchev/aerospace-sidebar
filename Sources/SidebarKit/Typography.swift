@@ -24,8 +24,9 @@ struct Typography: Equatable {
             / Self.sampleWidth(.systemFont(ofSize: SidebarSettings.Font.defaultSize))
     }
 
-    func font(_ style: NSFont.TextStyle) -> Font {
-        let size = size(style)
+    /// `style` in the configured font, `scale` times its size.
+    func font(_ style: NSFont.TextStyle, scale: CGFloat = 1) -> Font {
+        let size = size(style) * scale
         let font: Font = if let family { .custom(family, fixedSize: size) } else { .system(size: size) }
         return NSFont.preferredFont(forTextStyle: style).fontDescriptor.symbolicTraits.contains(.bold) ? font.bold() : font
     }

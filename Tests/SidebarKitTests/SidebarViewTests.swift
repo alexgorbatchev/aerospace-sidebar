@@ -101,6 +101,18 @@ struct SidebarViewTests {
         #expect(model.notifications.count == 1)
     }
 
+    /// The dismiss button is drawn for the card it sits on, in that card's tint.
+    @Test(arguments: NotificationSeverity.allCases)
+    func dismissButtonSitsOnTheCard(severity: NotificationSeverity) throws {
+        model.add(SidebarNotification(source: "cli", title: "On a card", severity: severity))
+
+        let button = try card(model.notifications[0], hovered: true).inspect().find(ExpandingIconButton.self).actualView()
+
+        #expect(button.surface == .card(severity))
+        let style = try #require(try button.inspect().button().buttonStyle() as? ExpandingIconButtonStyle)
+        #expect(style.surface == .card(severity))
+    }
+
     @Test func clearAllRemovesEverything() throws {
         model.add(SidebarNotification(source: "a", title: "one"))
         model.add(SidebarNotification(source: "b", title: "two"))
@@ -394,6 +406,8 @@ struct SidebarViewTests {
 
         #expect(buttons.map(\.title) == order)
         #expect(buttons.allSatisfy { $0.expandsToward == expandsToward })
+        // They belong to no card, so they float over the background.
+        #expect(buttons.allSatisfy { $0.surface == .floating })
     }
 
     /// The scroll indicator only exists while the list scrolls, so this checks the edge it is placed on.
@@ -458,6 +472,157 @@ struct SidebarViewTests {
             #expect(saber.color == color)
             #expect(throws: (any Error).self) { try sut.find(SaberBorder<RoundedRectangle>.self) }
         }
+    }
+
+    /// A choice casts the choice shadow under the pointer, keeps its size and takes its own clicks.
+    @Test func choiceButtonsLiftUnderThePointer() throws {
+        var chosen = 0
+        for hovered in [false, true] {
+            let sut = try ChoiceButton(title: "Allow", isHovered: hovered) { chosen += 1 }.inspect()
+            let shadow = try sut.find(where: { (try? $0.modifier(CardButtonShadowEffect.self)) != nil })
+                .modifier(CardButtonShadowEffect.self).actualView()
+
+            #expect(shadow.shadow == .choice)
+            #expect(shadow.isHovered == hovered)
+            #expect(throws: (any Error).self) { try sut.find(where: { (try? $0.scaleEffect()) != nil }) }
+            try sut.find(button: "Allow").tap()
+        }
+        #expect(chosen == 2)
+    }
+
+    /// On a card an icon button casts the dismiss shadow while highlighted instead of the floating shadow,
+    /// has a primary label that stays put and the dismiss sizes. Floating, it has the floating shadow, a
+    /// secondary label that turns white, and the sidebar's sizes.
+    @Test(arguments: [false, true])
+    func iconButtonsOnACardTakeTheDismissLooks(onCard: Bool) throws {
+        let surface: ExpandingIconButton.Surface = onCard ? .card(.high) : .floating
+        for pressed in [false, true] {
+            let sut = try ExpandingIconButtonStyle(expandsToward: .leading, surface: surface).inspect(isPressed: pressed)
+            let hoverShadow = try sut.find(where: { (try? $0.modifier(CardButtonShadowEffect.self)) != nil })
+                .modifier(CardButtonShadowEffect.self).actualView()
+            let labels = sut.findAll(ViewType.StyleConfiguration.Label.self)
+            let white = try #require(labels.first { (try? $0.foregroundStyleShapeStyle(Color.self)) == .white })
+            let shadow = try sut.find(where: { (try? $0.shadow()) != nil }).shadow()
+
+            #expect(hoverShadow.shadow == (onCard ? .dismiss : nil))
+            #expect(hoverShadow.isHovered == pressed)
+            #expect(try white.opacity() == (pressed && !onCard ? 1 : 0))
+            #expect(shadow.color == .black.opacity(onCard ? 0 : 0.5))
+            // Drawn at its own size, never scaled, so its edges can fall on whole pixels.
+            #expect(throws: (any Error).self) { try sut.find(where: { (try? $0.scaleEffect()) != nil }) }
+        }
+        #expect(surface.diameterScale == (onCard ? NotificationCard.hoverScale : 1))
+        #expect(surface.textScale == (onCard ? 0.9 * NotificationCard.hoverScale : 1))
+    }
+
+    /// Drawn on a clear capsule, the shadows are all there is: the halo just past the edge, the hover
+    /// shadow below the bottom edge while hovered, and nothing inside, where they are cut out.
+    @Test(arguments: [false, true])
+    func cardButtonShadowsFallAroundTheButton(isDismiss: Bool) throws {
+        let shadow: CardButtonShadow = isDismiss ? .dismiss : .choice
+        for hovered in [false, true] {
+            // The capsule spans 4 to 44 points across and 4 to 24 points down: 16 to 176 and 16 to 96
+            // pixels at this scale.
+            let view = Color.clear.frame(width: 40, height: 20)
+                .modifier(CardButtonShadowEffect(shadow: shadow, isHovered: hovered))
+                .padding(4)
+            let renderer = ImageRenderer(content: view.settledForRendering())
+            renderer.scale = 4
+            let image = try #require(renderer.cgImage)
+            let bitmap = NSBitmapImageRep(cgImage: image)
+            let alpha = { (x: Int, y: Int) in Double(bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0) }
+
+            // Half a point above the top edge only the halo reaches.
+            #expect((alpha(96, 14) > 0.1) == (shadow.halo > 0))
+            // Just over a point below the bottom edge the hover shadow covers whatever halo is left. Its
+            // caster is a pixel smaller than the button, so it ends a pixel short of two points.
+            #expect((alpha(96, 101) > 0.4) == hovered)
+            #expect(alpha(96, 56) < 0.01)
+        }
+    }
+
+    /// A cut-out shadow falls only around a translucent view: inside it the view looks as it does without a
+    /// shadow, and its curved edge pixels stay between the inside and the shadowed outside. A shadow on the
+    /// view itself shows through it, darkening the inside and the partly covered edge pixels.
+    @Test func cutOutShadowFallsOnlyAroundTheView() throws {
+        func render(shadowed: Bool) throws -> NSBitmapImageRep {
+            let card = RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.5)).frame(width: 40, height: 40)
+            let view = Group {
+                if shadowed {
+                    card.cutOutShadows(RoundedRectangle(cornerRadius: 10), reach: 20) {
+                        ShadowCaster(shape: RoundedRectangle(cornerRadius: 10), opacity: 0.5, radius: 5, y: 2)
+                    }
+                } else {
+                    card
+                }
+            }
+            let renderer = ImageRenderer(content: view.padding(10).background(Color(white: 0.6)).settledForRendering())
+            renderer.scale = 4
+            let image = try #require(renderer.cgImage)
+            return NSBitmapImageRep(cgImage: image)
+        }
+        // Along the diagonal through the bottom-left corner, `d` pixels in from the padded corner; the arc
+        // crosses it between pixels 10 and 12.
+        func brightness(_ bitmap: NSBitmapImageRep, _ d: Int) -> Double {
+            Double(bitmap.colorAt(x: 40 + d, y: 199 - d)?.usingColorSpace(.sRGB)?.brightnessComponent ?? 0)
+        }
+        let plain = try render(shadowed: false), shadowed = try render(shadowed: true)
+        let inside = brightness(shadowed, 14), edge = brightness(shadowed, 11), outside = brightness(shadowed, 9)
+
+        #expect(abs(inside - brightness(plain, 14)) < 0.005)
+        #expect(edge > outside && edge < inside)
+        #expect(outside < brightness(plain, 9) - 0.05)
+    }
+
+    /// The card's outline holds the card and each stack layer under it, inset more per layer.
+    @Test func cardSilhouetteLaysOutTheStackLayers() {
+        let rect = CGRect(x: 0, y: 0, width: 100, height: 60)
+        let path = CardSilhouette(stackLayers: 2).path(in: rect)
+
+        #expect(path.boundingRect == rect)
+        // The card ends 10 points up; the first layer spans 8 to 92, the second 16 to 84.
+        #expect(path.contains(CGPoint(x: 50, y: 49)))
+        #expect(path.contains(CGPoint(x: 10, y: 52)))
+        #expect(!path.contains(CGPoint(x: 6, y: 52)))
+        #expect(path.contains(CGPoint(x: 18, y: 56)))
+        #expect(!path.contains(CGPoint(x: 12, y: 56)))
+        #expect(CardSilhouette(stackLayers: 0).path(in: rect) == RoundedRectangle(cornerRadius: NotificationCard.cornerRadius).path(in: rect))
+    }
+
+    /// Icon buttons are as wide as the text needs, rounded to whole pixels; on a card, as large as they
+    /// look on the card scaled under the pointer.
+    @Test(arguments: [1.0, 2.0])
+    func iconButtonDiametersFallOnWholePixels(displayScale: CGFloat) {
+        let typography = Typography(SidebarSettings.Font(name: "", size: SidebarSettings.Font.defaultSize))
+        let floating = ExpandingIconButton.diameter(.floating, typography: typography, displayScale: displayScale)
+        let card = ExpandingIconButton.diameter(.card(.high), typography: typography, displayScale: displayScale)
+
+        #expect(floating == ExpandingIconButton.diameter)
+        // 18 × 1.02 = 18.36 points: 18 at 1×, 37 pixels (18.5 points) at 2×.
+        #expect(card == (displayScale == 1 ? 18 : 18.5))
+    }
+
+    /// The dismiss button follows the corner of the card, which the hover scale moves out by half the
+    /// growth of each side, on whole pixels.
+    @Test func dismissButtonFollowsTheScaledCornerOnWholePixels() {
+        let size = CGSize(width: 301, height: 87)
+
+        #expect(NotificationCard.dismissOffset(cardSize: size, scale: 1, displayScale: 2) == CGSize(width: 5, height: -5))
+        // 5 + 3.01 and 5 + 0.87 points, to the nearest half point.
+        #expect(NotificationCard.dismissOffset(cardSize: size, scale: 1.02, displayScale: 2) == CGSize(width: 8, height: -6))
+        #expect(NotificationCard.dismissOffset(cardSize: size, scale: 1.02, displayScale: 1) == CGSize(width: 8, height: -6))
+    }
+
+    /// Without a shadow, the effect adds no shadow casters; with one, it adds the halo's and the hover
+    /// shadow's. Checked in the view tree: a render here can come back with another test's drawing.
+    @Test func cardButtonShadowEffectWithoutAShadowDrawsNothing() throws {
+        func casters(_ shadow: CardButtonShadow?) throws -> Int {
+            try Color.clear.modifier(CardButtonShadowEffect(shadow: shadow, isHovered: true)).inspect()
+                .findAll(ShadowCaster<Capsule>.self).count
+        }
+
+        #expect(try casters(nil) == 0)
+        #expect(try casters(.dismiss) == 2)
     }
 
     @Test func iconButtonsAskForTheirBorderWhilePressed() throws {
@@ -613,5 +778,12 @@ struct SidebarViewTests {
             ])
             #expect(try gradients.map { try $0.endPoint() } == [.top, .bottom])
         }
+    }
+}
+
+extension View {
+    /// The view with animations off, for `ImageRenderer`, so it renders its final state.
+    func settledForRendering() -> some View {
+        transaction { $0.disablesAnimations = true }
     }
 }

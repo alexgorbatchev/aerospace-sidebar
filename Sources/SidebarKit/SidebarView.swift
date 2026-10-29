@@ -227,15 +227,23 @@ struct NotificationCard: View {
     let openLink: (URL) -> Void
     let dismiss: () -> Void
 
-    static let cornerRadius: CGFloat = 10
+    nonisolated static let cornerRadius: CGFloat = 10
     /// How far each layer under a stacked card shows, and how much narrower it is per side.
-    static let stackLayerHeight: CGFloat = 5
-    static let stackLayerInset: CGFloat = 8
+    nonisolated static let stackLayerHeight: CGFloat = 5
+    nonisolated static let stackLayerInset: CGFloat = 8
     static let maxStackLayers = 2
+    /// The soft shadow that lifts a card off whatever is behind the panel.
+    static let shadowOpacity = 0.5
+    static let shadowRadius: CGFloat = 5
+    static let shadowOffset: CGFloat = 2
     /// Cards scale up slightly under the pointer.
-    static let hoverScale: CGFloat = 1.02
+    nonisolated static let hoverScale: CGFloat = 1.02
     /// How far the dismiss button sticks out past the card's top-trailing corner.
     static let dismissOverhang: CGFloat = 5
+    /// The dismiss button's size relative to the sidebar's own buttons (diameter) and the caption text
+    /// style (text). It sits outside the card's hover scale, so its edges can fall on whole pixels, and is
+    /// drawn as large as it looks on the scaled card.
+    nonisolated static let dismissScale = (diameter: hoverScale, text: 0.9 * hoverScale)
     /// The underline under links in the body, which keep the text's color.
     static let linkUnderline = Color.primary.opacity(0.35)
     /// The underline under the link the pointer is on, white like a hovered button's label.
@@ -251,8 +259,11 @@ struct NotificationCard: View {
     @Environment(\.typography) private var typography
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.appIcon) private var appIcon
+    @Environment(\.displayScale) private var displayScale
     /// The dismiss button overhangs the card, so the pointer can rest on it outside the card's hover area.
     @State private var isDismissHovered = false
+    /// The card's size with its stack layers, before the hover scale.
+    @State private var size = CGSize.zero
 
     /// The dismiss button shows only while the pointer is on the card or on the button itself.
     var showsDismiss: Bool { isHovered || isDismissHovered }
@@ -270,18 +281,41 @@ struct NotificationCard: View {
                     .padding(.horizontal, Self.stackLayerInset * CGFloat(layer))
             }
         }
-        .floatingShadow()
+        .cutOutShadows(CardSilhouette(stackLayers: stackLayers), reach: 3 * Self.shadowRadius + Self.shadowOffset) {
+            ShadowCaster(shape: CardSilhouette(stackLayers: stackLayers), opacity: Self.shadowOpacity, radius: Self.shadowRadius, y: Self.shadowOffset)
+        }
+        .onGeometryChange(for: CGSize.self, of: \.size) { size = $0 }
+        .scaleEffect(scale)
+        // Outside the scale, which would put its edges between pixels; `dismissOffset` follows the corner.
         .overlay(alignment: .topTrailing) {
-            ExpandingIconButton("Dismiss", systemImage: "xmark", expandsToward: .leading, action: dismiss)
+            ExpandingIconButton(
+                "Dismiss",
+                systemImage: "xmark",
+                expandsToward: .leading,
+                surface: .card(notification.severity),
+                action: dismiss
+            )
                 .onHover { isDismissHovered = $0 }
-                .offset(x: Self.dismissOverhang, y: -Self.dismissOverhang)
+                .offset(Self.dismissOffset(cardSize: size, scale: scale, displayScale: displayScale))
                 .opacity(showsDismiss ? 1 : 0)
                 .allowsHitTesting(showsDismiss)
                 .animation(.easeOut(duration: 0.15), value: showsDismiss)
         }
-        .scaleEffect(isHovered && !reduceMotion ? Self.hoverScale : 1)
         .animation(.easeOut(duration: 0.15), value: isHovered)
         .onHover(perform: hover)
+    }
+
+    private var scale: CGFloat { isHovered && !reduceMotion ? Self.hoverScale : 1 }
+
+    /// Where the dismiss button sits off the top-trailing corner of a card `cardSize` large, which `scale`
+    /// moves out by half the growth of each side, rounded to the pixels of `displayScale`.
+    static func dismissOffset(cardSize: CGSize, scale: CGFloat, displayScale: CGFloat) -> CGSize {
+        let growth = (scale - 1) / 2
+        func pixels(_ points: CGFloat) -> CGFloat { (points * displayScale).rounded() / displayScale }
+        return CGSize(
+            width: pixels(dismissOverhang + cardSize.width * growth),
+            height: pixels(-(dismissOverhang + cardSize.height * growth))
+        )
     }
 
     /// Layers drawn under the card for notifications received more than once.
@@ -385,9 +419,7 @@ struct NotificationCard: View {
             // accessibility runs the card's action. It gets the choices as the card's actions.
             HStack(spacing: 6) {
                 ForEach(presentAlert.choices, id: \.self) { choice in
-                    // Lifted off the card like its icon.
-                    Button(choice, font: typography.font(.callout)) { choose(choice) }
-                        .modifier(ArtworkShadow())
+                    ChoiceButton(title: choice) { choose(choice) }
                 }
             }
             .padding(.top, 2)
@@ -493,13 +525,7 @@ struct NotificationCard: View {
     /// The hover border takes the severity's color, so it does not clash with the accent stroke.
     var saberColor: Color { accent ?? .accentColor }
 
-    private var background: AnyShapeStyle {
-        switch notification.severity {
-        case .critical: AnyShapeStyle(Color.red.opacity(0.25))
-        case .high: AnyShapeStyle(Color.orange.opacity(0.15))
-        case .low, .normal: AnyShapeStyle(.quaternary)
-        }
-    }
+    private var background: AnyShapeStyle { notification.severity.cardFill }
 
     private var severitySymbol: String? {
         switch notification.severity {
@@ -522,9 +548,10 @@ struct NotificationCard: View {
 
 extension View {
     /// Lifts a card or button off whatever is behind the transparent panel. The shadow is cast by the
-    /// composited view, so text inside it casts none of its own.
-    func floatingShadow() -> some View {
-        compositingGroup().shadow(color: .black.opacity(0.5), radius: 5, y: 2)
+    /// composited view, so text inside it casts none of its own. Not for AppKit controls such as push
+    /// buttons: the composited glass bezel has nothing behind it to blend with and turns black.
+    func floatingShadow(isShown: Bool = true) -> some View {
+        compositingGroup().shadow(color: .black.opacity(isShown ? 0.5 : 0), radius: 5, y: 2)
     }
 }
 
@@ -544,5 +571,41 @@ private extension SidebarNotification {
     var drawingOrder: Double {
         let severityRank = Double(NotificationSeverity.allCases.firstIndex(of: severity)!)
         return -(severityRank * 1e10 + receivedAt.timeIntervalSinceReferenceDate)
+    }
+}
+
+extension NotificationSeverity {
+    /// The tint a card of this severity draws over its material, shared by its dismiss button.
+    var cardFill: AnyShapeStyle {
+        switch self {
+        case .critical: AnyShapeStyle(Color.red.opacity(0.25))
+        case .high: AnyShapeStyle(Color.orange.opacity(0.15))
+        case .low, .normal: AnyShapeStyle(.quaternary)
+        }
+    }
+}
+
+/// The outline of a card and the stack layers under it, laid out as `NotificationCard` lays them out: the
+/// card fills the space above the layers, and each layer is `stackLayerHeight` tall and inset
+/// `stackLayerInset` more per side than the one above it.
+struct CardSilhouette: Shape {
+    let stackLayers: Int
+
+    func path(in rect: CGRect) -> Path {
+        let layerHeight = NotificationCard.stackLayerHeight
+        var card = rect
+        card.size.height -= CGFloat(stackLayers) * layerHeight
+        var path = RoundedRectangle(cornerRadius: NotificationCard.cornerRadius).path(in: card)
+        for layer in 1..<stackLayers + 1 {
+            let inset = NotificationCard.stackLayerInset * CGFloat(layer)
+            let layerRect = CGRect(
+                x: rect.minX + inset,
+                y: card.maxY + CGFloat(layer - 1) * layerHeight,
+                width: rect.width - 2 * inset,
+                height: layerHeight
+            )
+            path.addPath(UnevenRoundedRectangle(bottomLeadingRadius: layerHeight, bottomTrailingRadius: layerHeight).path(in: layerRect))
+        }
+        return path
     }
 }
