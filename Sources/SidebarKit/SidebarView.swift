@@ -373,7 +373,7 @@ struct NotificationCard: View {
             .overlay {
                 if let accent {
                     RoundedRectangle(cornerRadius: Self.cornerRadius)
-                        .strokeBorder(accent, lineWidth: notification.severity == .critical ? 2 : 1)
+                        .strokeBorder(accent, lineWidth: 1)
                 }
             }
             .saberBorder(RoundedRectangle(cornerRadius: Self.cornerRadius), color: saberColor, isActive: isHovered)
