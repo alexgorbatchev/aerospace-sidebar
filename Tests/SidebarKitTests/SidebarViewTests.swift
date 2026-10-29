@@ -586,20 +586,21 @@ struct SidebarViewTests {
         }
     }
 
-    @Test func iconButtonLabelShowsTitleOnlyWhenExpandedOnTheChosenSide() throws {
-        func label(expanded: Bool, edge: HorizontalEdge) throws -> InspectableView<ViewType.HStack> {
-            try ExpandingLabelStyle(isExpanded: expanded, titleEdge: edge, diameter: 18).inspect().hStack()
-        }
+    /// The title is always beside the icon on the chosen side; collapsed, the label is the icon's width,
+    /// pinned to the icon's side, and the title is invisible.
+    @Test(arguments: [HorizontalEdge.leading, .trailing])
+    func iconButtonLabelRevealsTitleBesideTheIcon(edge: HorizontalEdge) throws {
+        // The stack holds a slot for a leading title, the icon, then a slot for a trailing title.
+        let iconIndex = 1
+        let titleIndex = edge == .leading ? 0 : 2
+        for expanded in [false, true] {
+            let stack = try ExpandingLabelStyle(isExpanded: expanded, titleEdge: edge, diameter: 18).inspect().hStack()
 
-        #expect(throws: (any Error).self) { try label(expanded: false, edge: .leading).find(ViewType.StyleConfiguration.Title.self) }
-        // The stack holds an optional leading title, the icon, then an optional trailing title.
-        let leading = try label(expanded: true, edge: .leading)
-        #expect(throws: Never.self) { try leading.styleConfigurationTitle(0) }
-        #expect(try leading.styleConfigurationIcon(1).fixedFrame().width == 18)
-        #expect(throws: (any Error).self) { try leading.styleConfigurationTitle(2) }
-        let trailing = try label(expanded: true, edge: .trailing)
-        #expect(throws: (any Error).self) { try trailing.styleConfigurationTitle(0) }
-        #expect(throws: Never.self) { try trailing.styleConfigurationTitle(2) }
+            #expect(try stack.styleConfigurationIcon(iconIndex).fixedFrame().width == 18)
+            #expect(try stack.styleConfigurationTitle(titleIndex).opacity() == (expanded ? 1 : 0))
+            #expect((try? stack.fixedWidth()) == (expanded ? nil : 18))
+            #expect(try stack.fixedAlignment().horizontal == (edge == .leading ? .trailing : .leading))
+        }
     }
 
     @Test func edgesFadeOnlyWhileCardsAreHiddenPastThem() throws {

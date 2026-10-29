@@ -76,6 +76,10 @@ struct ExpandingIconButtonBody: View {
 }
 
 /// The icon in a circle `diameter` wide; when expanded, the title beside it on `titleEdge`.
+///
+/// The title is always laid out beside the icon, and collapsed the label is only the icon's width, pinned
+/// to the icon's side. Widening then reveals the title where it will stay while it fades in, instead of
+/// inserting it at full width, where it would slide in with the label's growing edge.
 struct ExpandingLabelStyle: LabelStyle {
     let isExpanded: Bool
     let titleEdge: HorizontalEdge
@@ -83,19 +87,21 @@ struct ExpandingLabelStyle: LabelStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 0) {
-            if isExpanded, titleEdge == .leading { title(configuration) }
+            if titleEdge == .leading { title(configuration) }
             configuration.icon
                 .fontWeight(.semibold)
                 .frame(width: diameter, height: diameter)
-            if isExpanded, titleEdge == .trailing { title(configuration) }
+            if titleEdge == .trailing { title(configuration) }
         }
+        .fixedSize()
+        .frame(width: isExpanded ? nil : diameter, alignment: titleEdge == .leading ? .trailing : .leading)
     }
 
     private func title(_ configuration: Configuration) -> some View {
         configuration.title
             .lineLimit(1)
-            .fixedSize()
             .padding(titleEdge == .leading ? .leading : .trailing, diameter / 2)
-            .transition(.opacity)
+            .opacity(isExpanded ? 1 : 0)
+            .accessibilityHidden(!isExpanded)
     }
 }
