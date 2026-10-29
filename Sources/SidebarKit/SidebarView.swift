@@ -22,6 +22,7 @@ struct SidebarView: View {
     @State private var scrollPosition = ScrollPosition(edge: .top)
     @State private var scrollMetrics = ScrollMetrics()
     @State private var isScrolling = false
+    @State private var isRevealed = false
     @State private var hoveredID: SidebarNotification.ID?
     /// PermissionFlow's drag panel flies from the clicked Set Up… button to System Settings.
     @State private var accessibilityAnchor = ScreenFrameAnchor()
@@ -98,6 +99,9 @@ struct SidebarView: View {
         }
         .padding(.top, Self.topMargin)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .scaleEffect(reveal.scale, anchor: reveal.anchor)
+        .opacity(reveal.opacity)
+        .onAppear { withAnimation(Self.motion) { isRevealed = true } }
         // Changes arrive from the model, outside any view action, so the view animates them itself.
         .animation(Self.motion, value: model.notifications)
         .animation(Self.motion, value: model.interception)
@@ -107,6 +111,10 @@ struct SidebarView: View {
 
     /// The sidebar's screen edge, where the top buttons and the scroll indicator sit.
     var screenEdge: HorizontalAlignment { side == .left ? .leading : .trailing }
+
+    private var reveal: SidebarReveal {
+        SidebarReveal(isRevealed: isRevealed, side: side, reduceMotion: reduceMotion)
+    }
 
     /// Clear All and Settings as small round icon buttons in the top corner on the sidebar's screen edge,
     /// Settings outermost. Their labels open away from that edge, so the icon under the pointer stays put.
@@ -163,6 +171,23 @@ struct SidebarView: View {
         case .needsAccessibility: "Grant Accessibility access to show macOS notifications here."
         case .notificationCenterUnavailable: "macOS notifications cannot be read right now."
         }
+    }
+}
+
+/// How the sidebar's content looks before and after it first appears: it grows out of its top corner on the
+/// screen edge, where the top buttons sit, or with Reduce Motion only fades in.
+struct SidebarReveal: Equatable {
+    let scale: CGFloat
+    let opacity: Double
+    let anchor: UnitPoint
+
+    /// Too small to see, but not zero: AppKit inverts the content's transform and asserts on a zero scale.
+    static let collapsedScale: CGFloat = 0.01
+
+    init(isRevealed: Bool, side: SidebarSettings.Sidebar.Side, reduceMotion: Bool) {
+        scale = isRevealed || reduceMotion ? 1 : Self.collapsedScale
+        opacity = isRevealed || !reduceMotion ? 1 : 0
+        anchor = side == .left ? .topLeading : .topTrailing
     }
 }
 

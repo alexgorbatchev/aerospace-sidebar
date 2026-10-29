@@ -416,6 +416,30 @@ struct SidebarViewTests {
         #expect(view(side: side).screenEdge == edge)
     }
 
+    /// Until it first appears, the content is collapsed into the top corner on the screen edge, where the
+    /// top buttons sit, so it grows out of that corner.
+    @Test(arguments: [(SidebarSettings.Sidebar.Side.right, UnitPoint.topTrailing), (.left, .topLeading)])
+    func contentGrowsOutOfTheTopCornerOnTheScreenEdge(side: SidebarSettings.Sidebar.Side, corner: UnitPoint) throws {
+        let sut = try view(side: side).inspect().vStack()
+
+        #expect(try sut.scaleEffect() == CGSize(width: SidebarReveal.collapsedScale, height: SidebarReveal.collapsedScale))
+        #expect(try sut.scaleEffectAnchor() == corner)
+        #expect(try sut.opacity() == 1)
+        try sut.callOnAppear()
+    }
+
+    @Test func revealGrowsTheContentOrOnlyFadesItInWithReduceMotion() {
+        func look(_ isRevealed: Bool, reduceMotion: Bool) -> (CGFloat, Double) {
+            let reveal = SidebarReveal(isRevealed: isRevealed, side: .right, reduceMotion: reduceMotion)
+            return (reveal.scale, reveal.opacity)
+        }
+
+        #expect(look(false, reduceMotion: false) == (SidebarReveal.collapsedScale, 1))
+        #expect(look(true, reduceMotion: false) == (1, 1))
+        #expect(look(false, reduceMotion: true) == (1, 0))
+        #expect(look(true, reduceMotion: true) == (1, 1))
+    }
+
     @Test func explainsDisabledInterception() throws {
         model.interception = .disabled
 

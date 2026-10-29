@@ -31,6 +31,23 @@ struct SidebarPanelControllerTests {
         #expect(controller.panel.isVisible)
     }
 
+    /// SwiftUI's first layout happens at the panel's initial size; a layout at zero width would grow every
+    /// card out of nothing as soon as the sidebar animates any change.
+    @Test func panelStartsOnTheStripBeforeItIsShown() throws {
+        settings.update { $0.sidebar.width = 240 }
+        let controller = SidebarPanelController.forTesting(
+            model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
+            settings: settings,
+            targetVisibleFrame: { CGRect(x: 0, y: 40, width: 1440, height: 860) },
+            notificationCenter: NotificationCenter()
+        )
+        let contentView = try #require(controller.panel.contentView)
+
+        #expect(controller.panel.frame == CGRect(x: 1200, y: 40, width: 240, height: 860))
+        #expect(contentView.frame.size == CGSize(width: 240, height: 860))
+        #expect(!controller.panel.isVisible)
+    }
+
     /// The sidebar steps behind System Settings, which AeroSpace floats and so may sit under the strip, while
     /// the user grants a permission there.
     @Test func stepsBehindSystemSettings() {

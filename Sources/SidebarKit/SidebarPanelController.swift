@@ -38,7 +38,13 @@ public final class SidebarPanelController: NSObject {
         self.settings = settings
         self.targetVisibleFrame = targetVisibleFrame
         self.pinnedSidebar = settings.settings.sidebar
-        self.panel = Self.makePanel(model: model, settings: settings, openSettings: openSettings, setUp: setUp)
+        // SwiftUI lays the content out first at the panel's initial size. Starting on the strip keeps that
+        // layout final, so a change the sidebar animates soon after launch does not also grow every card
+        // from zero width.
+        let strip = targetVisibleFrame().map { SidebarLayout(settings.settings.sidebar).frame(in: $0) } ?? .zero
+        self.panel = Self.makePanel(
+            contentRect: strip, model: model, settings: settings, openSettings: openSettings, setUp: setUp
+        )
         follower = SystemSettingsFollower(window: panel, level: Self.level, workspaceCenter: workspaceCenter)
         super.init()
         settings.observe { [weak self] settings in
@@ -69,6 +75,7 @@ public final class SidebarPanelController: NSObject {
     }
 
     private static func makePanel(
+        contentRect: CGRect,
         model: SidebarModel,
         settings: SettingsStore,
         openSettings: @escaping @MainActor (SettingsGroup) -> Void,
@@ -77,7 +84,7 @@ public final class SidebarPanelController: NSObject {
         // Borderless with no close button: combined with LSUIElement, AeroSpace classifies
         // the window as a popup and neither tiles it nor hides it on workspace switches.
         let panel = SidebarPanel(
-            contentRect: .zero,
+            contentRect: contentRect,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
