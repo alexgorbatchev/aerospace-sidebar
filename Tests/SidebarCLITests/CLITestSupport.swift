@@ -45,19 +45,22 @@ struct Invocation {
 func invoke(
     _ arguments: [String],
     agent: Bool = false,
+    environment: [String: String] = [:],
+    installedApps: Set<String> = [],
     sender: RecordingSender = RecordingSender(),
     output: BufferOutput = BufferOutput(),
     width: Int? = 100
 ) async -> Invocation {
     let errorOutput = BufferOutput()
     let context = CLIContext(
-        environment: agent ? ["AGENT": "1"] : [:],
+        environment: environment.merging(agent ? ["AGENT": "1"] : [:]) { _, agent in agent },
         output: output,
         errorOutput: errorOutput,
         sender: sender,
         workingDirectory: "/Users/dev/project",
         homeDirectory: "/Users/dev",
-        terminalWidth: width
+        terminalWidth: width,
+        isInstalledApp: { installedApps.contains($0) }
     )
     let status = await SidebarCLI.main(arguments: arguments, context: context)
     return Invocation(status: status, output: output.text, errorOutput: errorOutput.text)

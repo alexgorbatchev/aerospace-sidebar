@@ -31,6 +31,71 @@ struct PushCommandTests {
         #expect(sender.payloads.first?.severity == .normal)
     }
 
+    @Test func showsTheAppItRunsInWhenNoIconIsNamed() async throws {
+        let sender = RecordingSender()
+
+        _ = await invoke(
+            ["notification", "push", "--title", "t", "--run", "ls"],
+            environment: ["__CFBundleIdentifier": "com.mitchellh.ghostty", "TERM_PROGRAM": "Apple_Terminal"],
+            installedApps: ["com.mitchellh.ghostty", "com.apple.Terminal"],
+            sender: sender
+        )
+
+        let payload = try #require(sender.payloads.first)
+        #expect(payload.bundleIdentifier == "com.mitchellh.ghostty")
+        #expect(payload.icon == nil)
+    }
+
+    @Test func keepsTheNamedIconBesideTheAppItRunsIn() async throws {
+        let sender = RecordingSender()
+
+        _ = await invoke(
+            ["notification", "push", "--title", "t", "--icon", "slack"],
+            environment: ["__CFBundleIdentifier": "com.mitchellh.ghostty"],
+            installedApps: ["com.mitchellh.ghostty"],
+            sender: sender
+        )
+
+        let payload = try #require(sender.payloads.first)
+        #expect(payload.icon == "slack")
+        #expect(payload.bundleIdentifier == "com.mitchellh.ghostty")
+    }
+
+    /// Commands run from a card inherit the sidebar's own identifier; one that names no installed app
+    /// says nothing either. The terminal is then the one `TERM_PROGRAM` names.
+    @Test(arguments: [SidebarApp.bundleIdentifier, "com.example.uninstalled"])
+    func fallsBackToTheTerminalProgram(bundleIdentifier: String) async throws {
+        let sender = RecordingSender()
+
+        _ = await invoke(
+            ["notification", "push", "--title", "t"],
+            environment: ["__CFBundleIdentifier": bundleIdentifier, "TERM_PROGRAM": "iTerm.app"],
+            installedApps: [SidebarApp.bundleIdentifier, "com.googlecode.iterm2"],
+            sender: sender
+        )
+
+        #expect(sender.payloads.first?.bundleIdentifier == "com.googlecode.iterm2")
+    }
+
+    /// tmux sets `TERM_PROGRAM` to itself, and a terminal that is not installed has no icon to show.
+    @Test(arguments: [
+        ["TERM_PROGRAM": "tmux"], ["TERM_PROGRAM": "WezTerm"], [:],
+    ])
+    func showsATerminalOutsideAnyKnownApp(environment: [String: String]) async throws {
+        let sender = RecordingSender()
+
+        _ = await invoke(["notification", "push", "--title", "t"], environment: environment, sender: sender)
+
+        let payload = try #require(sender.payloads.first)
+        #expect(payload.icon == PushCommand.fallbackIcon)
+        #expect(payload.bundleIdentifier == nil)
+    }
+
+    @Test func checksInstalledAppsWithLaunchServices() {
+        #expect(CLIContext.isInstalledApp("com.apple.finder"))
+        #expect(!CLIContext.isInstalledApp("com.example.uninstalled"))
+    }
+
     @Test func rejectsOpenTogetherWithRun() async {
         let result = await invoke(["notification", "push", "--title", "t", "--open", "https://a.b", "--run", "ls"])
 
@@ -103,6 +168,18 @@ struct URLCommandTests {
         #expect(try SidebarRequest(url: url) == .pushNotification(NotificationPayload(
             title: "a+b", body: "c & d", severity: .critical, icon: ":slack:", action: .open(URL(string: "https://example.com")!)
         )))
+    }
+
+    /// The URL is opened elsewhere, by whatever app opens it, so the terminal running this has no say.
+    @Test func leavesTheIconToTheURL() async throws {
+        let result = await invoke(
+            ["notification", "url", "--title", "t"],
+            environment: ["__CFBundleIdentifier": "com.mitchellh.ghostty"],
+            installedApps: ["com.mitchellh.ghostty"]
+        )
+        let url = try #require(URL(string: result.output.trimmingCharacters(in: .newlines)))
+
+        #expect(try SidebarRequest(url: url) == .pushNotification(NotificationPayload(title: "t")))
     }
 
     @Test func rejectsNonWebOpenURL() async {

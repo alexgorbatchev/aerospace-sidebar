@@ -42,6 +42,7 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
     public static let maxSubtitleLength = 256
     public static let maxBodyLength = 4096
     public static let maxIconLength = 64
+    public static let maxBundleIdentifierLength = 255
 
     public let title: String
     public let subtitle: String
@@ -50,6 +51,9 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
     /// sketchybar-app-font icon id, such as `slack` or `:slack:`. The app resolves it; an unknown id is
     /// noted on the notification rather than rejected.
     public let icon: String?
+    /// Bundle identifier of the app the sender runs in, such as its terminal; the card shows that app's icon
+    /// when `icon` names none. URLs do not carry it.
+    public let bundleIdentifier: String?
     public let action: NotificationAction?
 
     /// - Throws: `SidebarRequestError` when both title and body are empty or a field exceeds its limit.
@@ -59,6 +63,7 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
         body: String = "",
         severity: NotificationSeverity = .normal,
         icon: String? = nil,
+        bundleIdentifier: String? = nil,
         action: NotificationAction? = nil
     ) throws(SidebarRequestError) {
         guard !title.isEmpty || !body.isEmpty else {
@@ -69,6 +74,7 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
             ("subtitle", subtitle, Self.maxSubtitleLength),
             ("body", body, Self.maxBodyLength),
             ("icon", icon ?? "", Self.maxIconLength),
+            ("bundleIdentifier", bundleIdentifier ?? "", Self.maxBundleIdentifierLength),
         ] where value.count > limit {
             throw .fieldTooLong(field: field, limit: limit)
         }
@@ -77,11 +83,12 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
         self.body = body
         self.severity = severity
         self.icon = icon?.isEmpty == false ? icon : nil
+        self.bundleIdentifier = bundleIdentifier?.isEmpty == false ? bundleIdentifier : nil
         self.action = action
     }
 
     private enum CodingKeys: String, CodingKey {
-        case title, subtitle, body, severity, icon, action
+        case title, subtitle, body, severity, icon, bundleIdentifier, action
     }
 
     public init(from decoder: Decoder) throws {
@@ -92,6 +99,7 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
             body: container.decodeIfPresent(String.self, forKey: .body) ?? "",
             severity: container.decodeIfPresent(NotificationSeverity.self, forKey: .severity) ?? .normal,
             icon: container.decodeIfPresent(String.self, forKey: .icon),
+            bundleIdentifier: container.decodeIfPresent(String.self, forKey: .bundleIdentifier),
             action: container.decodeIfPresent(NotificationAction.self, forKey: .action)
         )
     }

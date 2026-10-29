@@ -161,6 +161,17 @@ struct SidebarViewTests {
         #expect(image.isTemplate)
     }
 
+    /// The header marks a card that opens a link; a command's card shows the app it was pushed from instead.
+    @Test func marksOnlyLinksInTheHeader() throws {
+        model.add(SidebarNotification(source: "url", title: "Link", action: .open(URL(string: "https://a.example")!)))
+        model.add(SidebarNotification(source: "cli", title: "Command", action: .run(command: "ls", workingDirectory: "/")))
+
+        let symbols = try view().inspect().findAll(ViewType.Image.self).compactMap { try? $0.actualImage().name() }
+
+        #expect(symbols.contains("link"))
+        #expect(!symbols.contains("terminal"))
+    }
+
     /// A notification from an app shows the app's icon, leaving the app's name to the source text.
     @Test func drawsTheIconOfTheAppThatPosted() throws {
         let appIcon = NSImage(size: NSSize(width: 64, height: 64))

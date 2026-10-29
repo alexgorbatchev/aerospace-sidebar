@@ -1,7 +1,7 @@
 ---
 name: aerospace-sidebar
 description: Push notifications into the aerospace-sidebar macOS app with the aerospace-sidebar CLI or aerospace-sidebar:// URLs. Use when a task should alert the user on their Mac, report a finished build or agent run, or offer a click-to-run command or link.
-last_modified: 2026-10-26 22:06
+last_modified: 2026-10-28 14:30
 ---
 
 # aerospace-sidebar
@@ -32,12 +32,13 @@ Sends a notification to the running app over its control socket (`$(getconf DARW
 | `--subtitle <subtitle>` | string, up to 256 characters | empty | Line under the title |
 | `--body <body>` | string, up to 4096 characters | empty | Main text |
 | `--severity <severity>` | `low`, `normal`, `high`, `critical` | `normal` | Sort order and look: `low` is dimmed, `high` orange, `critical` red |
-| `--icon <id>` | sketchybar-app-font icon id, `slack` or `:slack:`, up to 64 characters | none | App icon shown before the sender, for example `ghostty`, `slack`, `google_chrome`, `github`. Each `iconName` in https://raw.githubusercontent.com/alexgorbatchev/aerospace-sidebar/main/Resources/sketchybar-app-font/icon_map.json is an id, listed with the app names it stands for |
+| `--icon <id>` | sketchybar-app-font icon id, `slack` or `:slack:`, up to 64 characters | the app the command runs in, else a terminal | App icon shown before the sender, for example `ghostty`, `slack`, `google_chrome`, `github`. Each `iconName` in https://raw.githubusercontent.com/alexgorbatchev/aerospace-sidebar/main/Resources/sketchybar-app-font/icon_map.json is an id, listed with the app names it stands for |
 | `--open <url>` | absolute URL | none | Opened with its default app when the notification is clicked |
 | `--run <command>` | shell command | none | Run with the user's login shell (`$SHELL -lc`) in the current directory when the notification is clicked; output is discarded |
 
 - A notification needs `--title` or `--body`.
-- An `--icon` id the font does not have is not an error: the notification shows without an icon and with a small `Invalid icon: <id>` note under its text. The command still prints `OK: pushed`.
+- Without `--icon`, the notification shows the icon of the app the command runs in, read from `__CFBundleIdentifier` (set by macOS for processes an app starts and inherited by their children), else from `TERM_PROGRAM` (`Apple_Terminal`, `ghostty`, `iTerm.app`, `vscode`, `WarpTerminal`, `WezTerm`). When neither names an installed app, it shows a terminal icon.
+- An `--icon` id the font does not have is not an error: the notification shows the icon of the app the command runs in, if any, and a small `Invalid icon: <id>` note under its text. The command still prints `OK: pushed`.
 - `--open` and `--run` are mutually exclusive. Without either, a click only dismisses the notification.
 - Hovering a notification shows what a click will do, including the full command.
 

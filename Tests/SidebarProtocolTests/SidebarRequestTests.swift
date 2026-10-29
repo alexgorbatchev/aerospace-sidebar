@@ -34,6 +34,17 @@ struct NotificationPayloadTests {
         }
     }
 
+    @Test func bundleIdentifierIsOptionalAndLimited() throws {
+        let payload = try NotificationPayload(title: "t", bundleIdentifier: "com.mitchellh.ghostty")
+        #expect(payload.bundleIdentifier == "com.mitchellh.ghostty")
+        #expect(try JSONDecoder().decode(NotificationPayload.self, from: JSONEncoder().encode(payload)) == payload)
+        #expect(try NotificationPayload(title: "t", bundleIdentifier: "").bundleIdentifier == nil)
+        let limit = NotificationPayload.maxBundleIdentifierLength
+        #expect(throws: SidebarRequestError.fieldTooLong(field: "bundleIdentifier", limit: limit)) {
+            try NotificationPayload(title: "t", bundleIdentifier: String(repeating: "x", count: limit + 1))
+        }
+    }
+
     @Test func decodingAppliesValidation() throws {
         let valid = Data(#"{"title":"t","action":{"open":{"_0":"https://example.com"}}}"#.utf8)
         #expect(try JSONDecoder().decode(NotificationPayload.self, from: valid)

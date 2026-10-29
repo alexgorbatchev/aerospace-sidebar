@@ -50,8 +50,8 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
     /// start over from it.
     public let postedSeverity: NotificationSeverity?
     public let icon: Icon?
-    /// The bundle identifier of the app that posted it, whose icon the card shows; nil for pushed
-    /// notifications and those macOS posts itself.
+    /// The bundle identifier of the app that posted it, or that the CLI pushing it ran in, whose icon the card
+    /// shows; nil for URL pushes and notifications macOS posts itself.
     public let bundleIdentifier: String?
     /// The icon id a push named that the font does not have; the card notes it under the text.
     public let invalidIcon: String?
@@ -105,7 +105,8 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         self.occurrences = occurrences
     }
 
-    /// A pushed notification. An icon id that `icons` does not know is kept as `invalidIcon`.
+    /// A pushed notification. An icon id that `icons` does not know is kept as `invalidIcon`; the sender's app,
+    /// when it names one, provides the card's icon instead.
     public init(payload: NotificationPayload, source: String, icons: AppIconFont, receivedAt: Date = Date()) {
         let icon = payload.icon.flatMap(icons.icon(for:))
         let action: ClickAction? = switch payload.action {
@@ -120,6 +121,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
             body: payload.body,
             severity: payload.severity,
             icon: icon,
+            bundleIdentifier: payload.bundleIdentifier,
             invalidIcon: icon == nil ? payload.icon : nil,
             action: action,
             receivedAt: receivedAt

@@ -10,7 +10,7 @@
 - **Click actions**: a notification can run a shell command or open a link when clicked. Web links in a notification's text are clickable on their own, underlined faintly, and in white under the pointer.
 - **Severity**: `low`, `normal`, `high` and `critical` notifications sort and look different, with critical ones always on top.
 - **Rules**: regular expressions on a notification's sender, title, subtitle or body raise or lower its severity, or hide it, such as every Slack message as `high`. Saving rules also applies them to the notifications already listed, which move, stack or go accordingly; removing a rule gives them back the severity they arrived with. Settings › Rules shows which recent notifications each rule matches, including ones you dismissed and ones a rule hid.
-- **App icons**: a notification from an app shows that app's icon before its sender, as macOS does. A pushed notification can name an app icon from [sketchybar-app-font](https://github.com/kvndrsslr/sketchybar-app-font) instead, such as `slack` or `google_chrome`.
+- **App icons**: a notification from an app shows that app's icon before its sender, as macOS does. A pushed notification can name an app icon from [sketchybar-app-font](https://github.com/kvndrsslr/sketchybar-app-font) instead, such as `slack` or `google_chrome`; without one, a notification pushed from the terminal shows that terminal's icon.
 - **Repeats stacked**: a notification identical to one already listed joins it as a single card with a count, instead of filling the list with copies.
 - **History**: the list survives quitting and relaunching; notifications are kept for 24 hours by default.
 - **Missed notifications**: with Full Disk Access, notifications that never showed a banner are listed too: those during Focus or Do Not Disturb, those macOS drops when several arrive at once, and those delivered while the sidebar was not running.
@@ -120,11 +120,11 @@ Skill:
 | `--subtitle <subtitle>` | | empty | Line under the title, up to 256 characters |
 | `--body <body>` | | empty | Main text, up to 4096 characters |
 | `--severity <severity>` | | `normal` | `low`, `normal`, `high` or `critical`; more severe notifications are listed first |
-| `--icon <id>` | | none | sketchybar-app-font icon id such as `slack` or `:slack:`, up to 64 characters |
+| `--icon <id>` | | terminal's icon | sketchybar-app-font icon id such as `slack` or `:slack:`, up to 64 characters |
 | `--open <url>` | | none | URL to open when the notification is clicked |
 | `--run <command>` | | none | Shell command to run in the current directory when the notification is clicked |
 
-A notification needs `--title` or `--body`. `--open` and `--run` cannot be combined.
+A notification needs `--title` or `--body`. `--open` and `--run` cannot be combined. Without `--icon`, the notification shows the icon of the app the command runs in: `__CFBundleIdentifier`, set by macOS for processes an app starts, else the terminal named by `TERM_PROGRAM` (Terminal, Ghostty, iTerm2, VS Code, Warp, WezTerm). Outside any of them it shows a terminal icon.
 
 `aerospace-sidebar notification url`
 

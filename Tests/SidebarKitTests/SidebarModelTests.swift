@@ -306,6 +306,17 @@ struct SidebarModelTests {
         #expect(notification.body == "b")
     }
 
+    @Test func takesTheSendersAppFromThePayload() throws {
+        let notification = SidebarNotification(
+            payload: try NotificationPayload(title: "t", bundleIdentifier: "com.mitchellh.ghostty"),
+            source: "cli",
+            icons: .vendored
+        )
+
+        #expect(notification.bundleIdentifier == "com.mitchellh.ghostty")
+        #expect(notification.icon == nil)
+    }
+
     @Test func keepsUnknownIconApartFromTheText() throws {
         let notification = SidebarNotification(
             payload: try NotificationPayload(title: "t", body: "b", icon: ":nope:"),

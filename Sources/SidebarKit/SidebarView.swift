@@ -564,8 +564,7 @@ struct NotificationCard: View {
         switch notification.action {
         case nil: nil
         case .open: "link"
-        case .run: "terminal"
-        case .activateApp: nil
+        case .run, .activateApp: nil
         }
     }
 

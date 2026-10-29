@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import SidebarProtocol
 
 /// A destination for command output; writes fail loudly so callers can report them.
@@ -40,6 +40,8 @@ public struct CLIContext: Sendable {
     public var homeDirectory: String
     /// Columns available for help text; nil when standard output is not a terminal.
     public var terminalWidth: Int?
+    /// Whether an app with this bundle identifier is installed.
+    public var isInstalledApp: @Sendable (String) -> Bool
 
     public init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -48,7 +50,8 @@ public struct CLIContext: Sendable {
         sender: any NotificationSending = SocketNotificationSender(),
         workingDirectory: String = FileManager.default.currentDirectoryPath,
         homeDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path,
-        terminalWidth: Int? = CLIContext.standardOutputWidth()
+        terminalWidth: Int? = CLIContext.standardOutputWidth(),
+        isInstalledApp: @escaping @Sendable (String) -> Bool = CLIContext.isInstalledApp
     ) {
         self.environment = environment
         self.output = output
@@ -57,6 +60,7 @@ public struct CLIContext: Sendable {
         self.workingDirectory = workingDirectory
         self.homeDirectory = homeDirectory
         self.terminalWidth = terminalWidth
+        self.isInstalledApp = isInstalledApp
     }
 
     /// Writes command output; failures surface as `OutputWriteError` so the CLI exits with `EX_IOERR`.
@@ -73,6 +77,25 @@ public struct CLIContext: Sendable {
         ["1", "true", "yes"].contains(environment["AGENT"]?.lowercased() ?? "")
     }
 
+    /// Terminals by the `TERM_PROGRAM` they set, for shells that did not inherit `__CFBundleIdentifier`.
+    static let terminalPrograms = [
+        "Apple_Terminal": "com.apple.Terminal",
+        "ghostty": "com.mitchellh.ghostty",
+        "iTerm.app": "com.googlecode.iterm2",
+        "vscode": "com.microsoft.VSCode",
+        "WarpTerminal": "dev.warp.Warp-Stable",
+        "WezTerm": "com.github.wez.wezterm",
+    ]
+
+    /// The installed app this command runs in, such as its terminal: `__CFBundleIdentifier`, which macOS puts in
+    /// an app's environment and its child processes inherit, else the terminal `TERM_PROGRAM` names. The
+    /// sidebar is skipped, because commands run from its cards inherit its identifier.
+    var hostApp: String? {
+        [environment["__CFBundleIdentifier"], environment["TERM_PROGRAM"].flatMap { Self.terminalPrograms[$0] }]
+            .compactMap { $0 }
+            .first { $0 != SidebarApp.bundleIdentifier && isInstalledApp($0) }
+    }
+
     /// Width of human help screens, resolved like ArgumentParser does: `COLUMNS`, else the terminal, else 80.
     var helpWidth: Int {
         environment["COLUMNS"].flatMap(Int.init) ?? terminalWidth ?? 80
@@ -84,6 +107,11 @@ public struct CLIContext: Sendable {
         if path == home { return "~" }
         if path.hasPrefix(home + "/") { return "~" + path.dropFirst(home.count) }
         return path
+    }
+
+    @Sendable
+    public static func isInstalledApp(_ bundleIdentifier: String) -> Bool {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) != nil
     }
 
     public static func standardOutputWidth() -> Int? {

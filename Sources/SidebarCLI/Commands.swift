@@ -51,8 +51,14 @@ struct NotificationFields: ParsableArguments {
     @Option(name: .customLong("open"), help: ArgumentHelp("URL to open when the notification is clicked.", valueName: "url"))
     var openURL: String?
 
-    func payload(action: NotificationAction?) throws -> NotificationPayload {
-        try NotificationPayload(title: title, subtitle: subtitle, body: body, severity: severity, icon: icon, action: action)
+    /// - Parameter defaultIcon: The icon when `--icon` names none.
+    func payload(
+        action: NotificationAction?, bundleIdentifier: String? = nil, defaultIcon: String? = nil
+    ) throws -> NotificationPayload {
+        try NotificationPayload(
+            title: title, subtitle: subtitle, body: body, severity: severity, icon: icon ?? defaultIcon,
+            bundleIdentifier: bundleIdentifier, action: action
+        )
     }
 
     func openAction() throws -> NotificationAction? {
@@ -74,6 +80,9 @@ struct PushCommand: AsyncParsableCommand {
         )
     }
 
+    /// The sketchybar-app-font icon of a push that names none from outside any app.
+    static let fallbackIcon = "terminal"
+
     @OptionGroup var fields: NotificationFields
 
     @Option(name: .customLong("run"), help: ArgumentHelp(
@@ -92,7 +101,11 @@ struct PushCommand: AsyncParsableCommand {
         let context = CLIContext.current
         let action = try command.map { NotificationAction.run(command: $0, workingDirectory: context.workingDirectory) }
             ?? fields.openAction()
-        try await context.sender.push(fields.payload(action: action))
+        // Without --icon the card shows the app the command runs in, such as its terminal, else a terminal glyph.
+        let hostApp = context.hostApp
+        try await context.sender.push(fields.payload(
+            action: action, bundleIdentifier: hostApp, defaultIcon: hostApp == nil ? Self.fallbackIcon : nil
+        ))
         try context.emit(context.isAgent ? "OK: pushed\n" : "[OK] Notification sent to the sidebar.\n")
     }
 }
