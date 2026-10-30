@@ -223,7 +223,196 @@ struct PushCommandTests {
     }
 }
 
+struct ChoiceOptionTests {
+    /// Each option adds buttons in the order given: commands, then replies, then links. A value splits at its
+    /// first `=`, so a command may hold more.
+    @Test func pushesChoicesBesideTheClickAction() async throws {
+        let sender = RecordingSender()
+
+        let result = await invoke([
+            "notification", "push", "--title", "Deploy ready", "--open", "https://ci.example/1",
+            "--choice", "Deploy=make deploy ENV=prod", "--choice", "Skip=true",
+            "--reply", "Note=echo \"$AEROSPACE_SIDEBAR_REPLY\" >> notes.txt",
+            "--choice-link", "Logs=https://ci.example/1/logs?a=b",
+        ], sender: sender)
+
+        #expect(result.status == 0)
+        let directory = "/Users/dev/project"
+        #expect(sender.payloads.first?.action == .open(URL(string: "https://ci.example/1")!))
+        #expect(sender.payloads.first?.choices == [
+            try PushedChoice(title: "Deploy", action: .run(command: "make deploy ENV=prod", workingDirectory: directory)),
+            try PushedChoice(title: "Skip", action: .run(command: "true", workingDirectory: directory)),
+            try PushedChoice(title: "Note", action: .run(command: "echo \"$AEROSPACE_SIDEBAR_REPLY\" >> notes.txt", workingDirectory: directory), asksForText: true),
+            try PushedChoice(title: "Logs", action: .open(URL(string: "https://ci.example/1/logs?a=b")!)),
+        ])
+    }
+
+    @Test(arguments: [
+        (["--choice", "Deploy"], "ERR: usage: The value 'Deploy' is invalid for '--choice <title=command>': expected TITLE=VALUE with a title before the first '='\n"),
+        (["--reply", "=echo"], "ERR: usage: The value '=echo' is invalid for '--reply <title=command>': expected TITLE=VALUE with a title before the first '='\n"),
+    ])
+    func rejectsValuesWithoutTitle(arguments: [String], message: String) async {
+        let result = await invoke(["notification", "push", "--title", "t"] + arguments, agent: true)
+
+        #expect(result.status == 64)
+        #expect(result.errorOutput == message)
+    }
+
+    @Test(arguments: [
+        (["--choice", "A=ls", "--choice-link", "A=https://a.example"], "ERR: invalid: two choices are titled 'A'\n"),
+        (["--choice", "A="], "ERR: invalid: choice 'A' needs a command\n"),
+        (["--choice-link", "Docs=file:///etc/hosts"], "ERR: invalid: 'file:///etc/hosts' is not an http or https URL\n"),
+        (["--choice-link", "Docs=not a url"], "ERR: invalid: 'not a url' is not an http or https URL\n"),
+    ])
+    func rejectsInvalidChoices(arguments: [String], message: String) async {
+        let sender = RecordingSender()
+
+        let result = await invoke(["notification", "push", "--title", "t"] + arguments, agent: true, sender: sender)
+
+        #expect(result.status == 1)
+        #expect(result.errorOutput == message)
+        #expect(sender.payloads.isEmpty)
+    }
+}
+
+struct AskCommandTests {
+    @Test func asksWithChoicesAndRepliesAndPrintsTheChoice() async throws {
+        let sender = RecordingSender(answer: .answered(choice: "Ship it", reply: nil))
+
+        let result = await invoke(
+            ["notification", "ask", "--title", "Deploy?", "--severity", "high", "--choice", "Ship it", "--choice", "Wait", "--reply", "Why?"],
+            environment: ["__CFBundleIdentifier": "com.mitchellh.ghostty"], installedApps: ["com.mitchellh.ghostty"], sender: sender
+        )
+
+        #expect(result.status == 0)
+        #expect(result.output == "Ship it\n")
+        #expect(sender.payloads == [try NotificationPayload(
+            title: "Deploy?", severity: .high, bundleIdentifier: "com.mitchellh.ghostty", choices: [
+                PushedChoice(title: "Ship it", action: .answer),
+                PushedChoice(title: "Wait", action: .answer),
+                PushedChoice(title: "Why?", action: .answer, asksForText: true),
+            ]
+        )])
+        #expect(sender.timeouts == [nil])
+    }
+
+    /// People get the reply text for a choice that asks for it as the command's output.
+    @Test func printsTheReplyText() async {
+        let sender = RecordingSender(answer: .answered(choice: "Reply", reply: "on my way\nsoon"))
+
+        let result = await invoke(["notification", "ask", "--title", "t", "--reply", "Reply"], sender: sender)
+
+        #expect(result.output == "on my way\nsoon\n")
+        #expect(sender.payloads.first?.icon == PushCommand.fallbackIcon)
+    }
+
+    /// Agents get one `OK:` line with the answer as JSON, which tells a title from a reply that may span lines.
+    @Test(arguments: [
+        (AskAnswer.answered(choice: "Reply", reply: "on my way\nsoon"), #"OK: {"choice":"Reply","reply":"on my way\nsoon"}"#),
+        (.answered(choice: "Yes", reply: nil), #"OK: {"choice":"Yes","reply":null}"#),
+    ])
+    func printsAnOKLineForAgents(answer: AskAnswer, line: String) async {
+        let result = await invoke(
+            ["notification", "ask", "--title", "t", "--choice", "Yes", "--reply", "Reply"], agent: true, sender: RecordingSender(answer: answer)
+        )
+
+        #expect(result.output == line + "\n")
+    }
+
+    @Test(arguments: [
+        (AskAnswer.answered(choice: "Reply", reply: "a \"b\" / c"), #"{"choice":"Reply","reply":"a \"b\" / c"}"#),
+        (.answered(choice: "Yes", reply: nil), #"{"choice":"Yes","reply":null}"#),
+    ])
+    func printsJSON(answer: AskAnswer, json: String) async {
+        for agent in [false, true] {
+            let result = await invoke(
+                ["notification", "ask", "--title", "t", "--choice", "Yes", "--reply", "Reply", "--json"],
+                agent: agent, sender: RecordingSender(answer: answer)
+            )
+
+            #expect(result.output == json + "\n")
+        }
+    }
+
+    @Test func passesTheTimeout() async {
+        let sender = RecordingSender(answer: .answered(choice: "Yes", reply: nil))
+
+        _ = await invoke(["notification", "ask", "--title", "t", "--choice", "Yes", "--timeout", "1.5"], sender: sender)
+
+        #expect(sender.timeouts == [.milliseconds(1500)])
+    }
+
+    /// No answer is an outcome of its own, exit status 2, apart from failing to ask.
+    @Test(arguments: [
+        (CLIError.dismissed, false, 2, "[ERROR] The notification was dismissed without an answer.\n"),
+        (.dismissed, true, 2, "ERR: dismissed: the card went without an answer\n"),
+        (.timedOut, false, 2, "[ERROR] No answer came in time, so the notification was withdrawn.\n"),
+        (.timedOut, true, 2, "ERR: timeout: no answer within --timeout; the card was withdrawn\n"),
+        (.noAnswer("closed"), false, 1, "[ERROR] The sidebar app stopped waiting for an answer (closed).\n"),
+        (.noAnswer("closed"), true, 1, "ERR: no_answer: the connection ended without an answer (closed)\n"),
+        (.askNotConfirmed("late"), false, 1, "[ERROR] The sidebar app did not confirm the question (late). It removes a question whose command stopped waiting, so you can ask again.\n"),
+        (.askNotConfirmed("late"), true, 1, "ERR: no_reply: sent but not confirmed (late); the connection is closed, so no card stays, ask again\n"),
+    ])
+    func reportsAsksWithoutAnswer(error: CLIError, agent: Bool, status: Int32, message: String) async {
+        let result = await invoke(["notification", "ask", "--title", "t", "--choice", "Yes"], agent: agent, sender: RecordingSender(error: error))
+
+        #expect(result.status == status)
+        #expect(result.errorOutput == message)
+        #expect(result.output.isEmpty)
+    }
+
+    @Test func reportsDismissedCards() async {
+        let result = await invoke(["notification", "ask", "--title", "t", "--choice", "Yes"], agent: true, sender: RecordingSender(answer: .dismissed))
+
+        #expect(result.status == 2)
+        #expect(result.errorOutput == "ERR: dismissed: the card went without an answer\n")
+    }
+
+    @Test(arguments: [
+        (["--title", "t"], "ERR: usage: Give at least one --choice or --reply.\n"),
+        (["--title", "t", "--choice", "Yes", "--timeout", "0"], "ERR: usage: --timeout needs a number of seconds above 0 and at most 31536000.\n"),
+        (["--title", "t", "--choice", "Yes", "--timeout", "inf"], "ERR: usage: --timeout needs a number of seconds above 0 and at most 31536000.\n"),
+        (["--title", "t", "--choice", "Yes", "--run", "ls"], "ERR: usage: Unknown option '--run'. Did you mean '--icon'?\n"),
+    ])
+    func rejectsInvalidAsks(arguments: [String], message: String) async {
+        let result = await invoke(["notification", "ask"] + arguments, agent: true)
+
+        #expect(result.status == 64)
+        #expect(result.errorOutput == message)
+    }
+
+    @Test func rejectsDuplicateTitles() async {
+        let result = await invoke(["notification", "ask", "--title", "t", "--choice", "Yes", "--reply", "Yes"], agent: true)
+
+        #expect(result.status == 1)
+        #expect(result.errorOutput == "ERR: invalid: two choices are titled 'Yes'\n")
+    }
+
+    @Test func reportsUnwritableAnswers() async {
+        let result = await invoke(
+            ["notification", "ask", "--title", "t", "--choice", "Yes"], agent: true,
+            sender: RecordingSender(answer: .answered(choice: "Yes", reply: nil)), output: BufferOutput(fails: true)
+        )
+
+        #expect(result.status == EX_IOERR)
+    }
+}
+
 struct URLCommandTests {
+    @Test func carriesLinkChoices() async throws {
+        let result = await invoke(["notification", "url", "--title", "t", "--choice-link", "Docs=https://example.com/docs"])
+        let url = try #require(URL(string: result.output.trimmingCharacters(in: .newlines)))
+
+        #expect(try SidebarRequest(url: url) == .pushNotification(NotificationPayload(
+            title: "t", choices: [PushedChoice(title: "Docs", action: .open(URL(string: "https://example.com/docs")!))]
+        )))
+    }
+
+    @Test func urlCommandHasNoCommandOrReplyChoices() async {
+        #expect(await invoke(["notification", "url", "--title", "t", "--choice", "A=ls"]).status == 64)
+        #expect(await invoke(["notification", "url", "--title", "t", "--reply", "A=ls"]).status == 64)
+    }
+
     @Test func printsDecodableURL() async throws {
         let result = await invoke([
             "notification", "url", "--title", "a+b", "--body", "c & d", "--severity", "critical", "--icon", ":slack:",

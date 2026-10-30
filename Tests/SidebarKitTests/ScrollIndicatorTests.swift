@@ -77,6 +77,21 @@ struct ScrollMetricsTests {
 
 @MainActor
 struct ScrollIndicatorTests {
+    /// The list's edge fades and scroll indicator follow its scroll geometry on their own (`ListScroll`), so a scroll
+    /// redraws them and not every card in the list.
+    @Test func edgeFadesAndIndicatorFollowTheListsScroll() throws {
+        let scroll = ListScroll()
+        #expect(throws: (any Error).self) { try ListScrollIndicator(scroll: scroll, isScrolling: false) { _ in }.inspect().find(ScrollIndicator.self) }
+        #expect(try ListEdgeFade(scroll: scroll).inspect().find(EdgeFadeMask.self).actualView().fadesBottom == false)
+
+        scroll.metrics = ScrollMetrics(contentHeight: 1020, visibleHeight: 408, offset: 300)
+
+        let indicator = try ListScrollIndicator(scroll: scroll, isScrolling: true) { _ in }.inspect().find(ScrollIndicator.self).actualView()
+        #expect(indicator.metrics == scroll.metrics && indicator.isScrolling)
+        let fade = try ListEdgeFade(scroll: scroll).inspect().find(EdgeFadeMask.self).actualView()
+        #expect(fade.fadesTop && fade.fadesBottom)
+    }
+
     @Test func draggingScrollsFromTheOffsetWhereTheDragStarted() throws {
         var targets: [CGFloat] = []
         // Track 400 (408 − 2 × inset) with a 160pt knob leaves 240pt of travel for 612pt of scrolling.

@@ -6,7 +6,7 @@ import Testing
 struct HelpTests {
     static let helpPaths: [[String]] = [
         ["--help"], ["-h"], ["help"], ["notification", "--help"], ["help", "notification"],
-        ["notification", "push", "-h"], ["help", "notification", "push"], ["notification", "url", "--help"], ["skill", "--help"],
+        ["notification", "push", "-h"], ["help", "notification", "push"], ["notification", "url", "--help"], ["notification", "ask", "--help"], ["skill", "--help"],
     ]
 
     @Test func rootHelpDrawsCommandTree() async {
@@ -16,6 +16,7 @@ struct HelpTests {
         #expect(result.output.contains("""
             Commands:
               notification  Show notifications in the sidebar.
+              ├─ ask        Show a notification with buttons and wait for the user's answer.
               ├─ push       Show a notification in the sidebar, starting the app if needed.
               ╰─ url        Print an aerospace-sidebar:// link that shows a notification when opened.
               skill         Print how to install the aerospace-sidebar agent skill.
@@ -28,6 +29,7 @@ struct HelpTests {
 
         #expect(result.output.contains("""
             Commands:
+              ask   Show a notification with buttons and wait for the user's answer.
               push  Show a notification in the sidebar, starting the app if needed.
               url   Print an aerospace-sidebar:// link that shows a notification when opened.
             """))
@@ -55,6 +57,7 @@ struct HelpTests {
         #expect(result.output.contains("""
             Commands:
             - notification: Show notifications in the sidebar.
+              - ask: Show a notification with buttons and wait for the user's answer.
               - push: Show a notification in the sidebar, starting the app if needed.
               - url: Print an aerospace-sidebar:// link that shows a notification when opened.
             - skill: Print how to install the aerospace-sidebar agent skill.

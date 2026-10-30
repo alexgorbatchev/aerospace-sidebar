@@ -155,19 +155,21 @@ struct NotificationHistoryTests {
         #expect(store.load() == notifications)
     }
 
-    /// Entries for notifications that are not alerts have no `nativeChoices` key.
-    @Test func fileStoreLoadsEntriesSavedWithoutAlerts() throws {
+    /// Entries for notifications without choices have no `nativeChoices` or `pushedChoices` key.
+    @Test func fileStoreLoadsEntriesSavedWithoutChoices() throws {
         let directory = try TemporaryDirectory()
         let url = directory.url.appendingPathComponent("notifications.json")
         try Data("""
             [{"id": "05E8D885-F2D3-4170-902C-27F064B139F0", "source": "macOS", "title": "Privacy & Security", "subtitle": "",
-              "body": "b", "severity": "normal", "shownByMacOS": true, "nativeIdentifiers": [], "receivedAt": 0, "occurrences": 1}]
+              "body": "b", "severity": "normal", "shownByMacOS": true, "nativeIdentifiers": [], "receivedAt": 0,
+              "occurrences": 1}]
             """.utf8).write(to: url)
 
         let loaded = FileNotificationStore(url: url).load()
 
         #expect(loaded.map(\.title) == ["Privacy & Security"])
         #expect(loaded.map(\.nativeChoices) == [nil])
+        #expect(loaded.map(\.pushedChoices) == [[]])
     }
 
     /// An entry that does not read, such as an alert whose choices were saved as plain titles, is left out
@@ -177,10 +179,12 @@ struct NotificationHistoryTests {
         let url = directory.url.appendingPathComponent("notifications.json")
         try Data("""
             [{"id": "05E8D885-F2D3-4170-902C-27F064B139F0", "source": "macOS", "title": "unreadable", "subtitle": "",
-              "body": "b", "severity": "normal", "shownByMacOS": false, "nativeIdentifiers": [], "receivedAt": 0, "occurrences": 1,
+              "body": "b", "severity": "normal", "shownByMacOS": false, "pushedChoices": [], "nativeIdentifiers": [], "receivedAt": 0,
+              "occurrences": 1,
               "nativeChoices": {"identifier": "A", "choices": ["Allow…"]}},
              {"id": "15E8D885-F2D3-4170-902C-27F064B139F0", "source": "macOS", "title": "kept", "subtitle": "",
-              "body": "b", "severity": "normal", "shownByMacOS": false, "nativeIdentifiers": [], "receivedAt": 0, "occurrences": 1,
+              "body": "b", "severity": "normal", "shownByMacOS": false, "pushedChoices": [], "nativeIdentifiers": [], "receivedAt": 0,
+              "occurrences": 1,
               "nativeChoices": {"identifier": "B", "choices": [{"title": "Allow…", "isDestructive": false}]}}]
             """.utf8).write(to: url)
 

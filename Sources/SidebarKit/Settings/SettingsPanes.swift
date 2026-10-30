@@ -178,24 +178,28 @@ struct AppearancePane: View {
                 NumberField(title: "Size", value: $editor.draft.font.size, stepRange: SidebarSettings.Font.sizeRange, unit: "points")
             }
             SettingsHint(text: "Empty for the system font. All text scales with Size.")
-            SettingsRow(label: "Background") {
-                HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.columnSpacing) {
-                    ColorWell(title: "Background color", color: $editor.draft.background.color, sidebarSide: sidebarSide)
-                        .frame(width: SettingsMetrics.numberFieldWidth * typography.scale)
-                    NumberField(title: "Background opacity", value: backgroundOpacity, stepRange: 0...100, unit: "% opacity")
-                }
-                .fixedSize()
+            // Neither the color well nor the slider has a text baseline, so their rows center the label.
+            SettingsRow(label: "Background", alignment: .center) {
+                ColorWell(title: "Background color", color: $editor.draft.background.color, sidebarSide: sidebarSide)
+                    .fixedSize()
             }
-            SettingsHint(text: "Fills the sidebar's strip, menu bar included. 0% shows none.")
+            SettingsRow(label: "Opacity", alignment: .center) {
+                // As wide as the font field, so the column keeps its width; the percentage keeps room for 100%, so the
+                // slider does not change length as it is dragged.
+                HStack(spacing: SettingsMetrics.columnSpacing) {
+                    Slider(value: $editor.draft.background.opacity, in: SidebarSettings.Background.opacityRange)
+                        .accessibilityLabel("Background opacity")
+                    ZStack(alignment: .trailing) {
+                        Text(1.0.formatted(.percent)).hidden()
+                        Text(editor.draft.background.opacity.formatted(.percent.precision(.fractionLength(0))))
+                    }
+                    .monospacedDigit()
+                    .fixedSize()
+                }
+                .frame(width: SettingsMetrics.fieldWidth * typography.scale)
+            }
+            SettingsHint(text: "Fills the sidebar's strip from the top of the screen down. 0% shows none.")
         }
-    }
-
-    /// The background's opacity in whole percent.
-    private var backgroundOpacity: Binding<Int> {
-        Binding(
-            get: { Int((editor.draft.background.opacity * 100).rounded()) },
-            set: { editor.draft.background.opacity = Double($0) / 100 }
-        )
     }
 }
 

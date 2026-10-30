@@ -26,6 +26,9 @@ public struct OutputWriteError: Error, Equatable {
 /// Delivers notifications to the sidebar app.
 public protocol NotificationSending: Sendable {
     func push(_ payload: NotificationPayload) async throws
+    /// Shows a notification whose choices answer it and waits for the answer, for at most `timeout` (nil waits as
+    /// long as it takes).
+    func ask(_ payload: NotificationPayload, timeout: Duration?) async throws -> AskAnswer
 }
 
 /// Process-level inputs for one CLI invocation.

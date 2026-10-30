@@ -14,7 +14,7 @@ struct SocketNotificationSenderTests {
                 defer { close(listener); unlink(path) }
                 let connection = accept(listener, nil, nil)
                 defer { close(connection) }
-                let request = try JSONDecoder().decode(ControlRequest.self, from: UnixSocket.readAll(from: connection))
+                let request = try JSONDecoder().decode(ControlRequest.self, from: readMessage(from: connection))
                 try UnixSocket.writeAll(JSONEncoder().encode(response), to: connection)
                 return request
             }
@@ -28,7 +28,7 @@ struct SocketNotificationSenderTests {
         let received = Task {
             try await onBlockingQueue {
                 let connection = accept(listener, nil, nil)
-                return (connection, try JSONDecoder().decode(ControlRequest.self, from: UnixSocket.readAll(from: connection)))
+                return (connection, try JSONDecoder().decode(ControlRequest.self, from: readMessage(from: connection)))
             }
         }
         return (listener, received)
@@ -147,6 +147,26 @@ struct SocketNotificationSenderTests {
         #expect(!Self.hasPendingConnection(listener))
     }
 
+    /// An ask the app did not confirm leaves no card: the CLI closes the connection, which withdraws one the app
+    /// shows anyway, so the failure says it can be asked again.
+    @Test func reportsUnconfirmedAsksAsSafeToAskAgain() async throws {
+        let path = Self.socketPath()
+        let (listener, received) = try Self.listenWithoutReplying(at: path)
+        defer { close(listener); unlink(path) }
+        let payload = try NotificationPayload(title: "once", choices: [PushedChoice(title: "Yes", action: .answer)])
+        let sender = SocketNotificationSender(socketPath: path, launchApp: { Issue.record("launched") }, timeout: Self.shortTimeout)
+
+        await #expect(throws: CLIError.askNotConfirmed(SocketError("read", code: EAGAIN).description)) {
+            try await sender.ask(payload, timeout: nil)
+        }
+
+        let (connection, request) = try await received.value
+        defer { close(connection) }
+        #expect(request == .askNotification(payload))
+        var byte: UInt8 = 0
+        #expect(read(connection, &byte, 1) == 0)
+    }
+
     /// The same holds for an app the CLI launched: only connecting is tried again while it starts.
     @Test func neverSendsAnUnconfirmedRequestAgainAfterLaunching() async throws {
         let path = Self.socketPath()
@@ -166,6 +186,76 @@ struct SocketNotificationSenderTests {
         close(connection)
         #expect(request == .pushNotification(payload))
         #expect(!Self.hasPendingConnection(listener))
+    }
+
+    /// Confirms one ask on `path`, then hands its connection to `finish`, which may answer it; returns the request.
+    static func serveAsk(at path: String, finish: @escaping @Sendable (Int32) throws -> Void) throws -> Task<ControlRequest, any Error> {
+        let listener = try UnixSocket.listen(on: path)
+        return Task {
+            try await onBlockingQueue {
+                defer { close(listener); unlink(path) }
+                let connection = accept(listener, nil, nil)
+                let request = try JSONDecoder().decode(ControlRequest.self, from: readMessage(from: connection))
+                try UnixSocket.writeMessage(JSONEncoder().encode(ControlResponse(error: nil)), to: connection)
+                try finish(connection)
+                return request
+            }
+        }
+    }
+
+    static func askPayload() throws -> NotificationPayload {
+        try NotificationPayload(title: "Deploy?", choices: [PushedChoice(title: "Yes", action: .answer)])
+    }
+
+    @Test func asksAndReturnsTheAnswer() async throws {
+        let path = Self.socketPath()
+        let server = try Self.serveAsk(at: path) { connection in
+            defer { close(connection) }
+            try UnixSocket.writeMessage(JSONEncoder().encode(AskAnswer.answered(choice: "Yes", reply: nil)), to: connection)
+        }
+        let payload = try Self.askPayload()
+
+        let answer = try await SocketNotificationSender(socketPath: path, launchApp: { Issue.record("launched") }).ask(payload, timeout: nil)
+
+        #expect(answer == .answered(choice: "Yes", reply: nil))
+        #expect(try await server.value == .askNotification(payload))
+    }
+
+    /// Giving up closes the connection, which tells the app to withdraw the notification.
+    @Test func closesTheConnectionWhenTheTimeoutPasses() async throws {
+        let path = Self.socketPath()
+        let withdrawn = LockedBox(false)
+        let server = try Self.serveAsk(at: path) { connection in
+            defer { close(connection) }
+            var buffer = [UInt8](repeating: 0, count: 16)
+            var timeout = timeval(tv_sec: 5, tv_usec: 0)
+            setsockopt(connection, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+            withdrawn.value = read(connection, &buffer, buffer.count) == 0
+        }
+
+        await #expect(throws: CLIError.timedOut) {
+            try await SocketNotificationSender(socketPath: path, launchApp: {}).ask(Self.askPayload(), timeout: .milliseconds(100))
+        }
+        _ = try await server.value
+        #expect(withdrawn.value)
+    }
+
+    @Test func reportsAnAppThatStopsWaitingForTheAnswer() async throws {
+        let path = Self.socketPath()
+        _ = try Self.serveAsk(at: path) { close($0) }
+
+        await #expect(throws: CLIError.noAnswer("the sidebar closed the connection")) {
+            try await SocketNotificationSender(socketPath: path, launchApp: {}).ask(Self.askPayload(), timeout: .seconds(5))
+        }
+    }
+
+    @Test func reportsRejectedAsks() async throws {
+        let path = Self.socketPath()
+        _ = try Self.serveOnce(at: path, response: ControlResponse(error: "nope"))
+
+        await #expect(throws: CLIError.rejected("nope")) {
+            try await SocketNotificationSender(socketPath: path, launchApp: {}).ask(Self.askPayload(), timeout: nil)
+        }
     }
 
     /// A request larger than the app reads is refused before connecting, not sent and cut off.

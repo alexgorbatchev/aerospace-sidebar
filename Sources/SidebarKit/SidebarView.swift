@@ -24,7 +24,9 @@ struct SidebarView: View {
     @Environment(\.typography) private var typography
     @Environment(\.pointerIsOnSidebar) private var pointerIsOnSidebar
     @State private var scrollPosition = ScrollPosition(edge: .top)
-    @State private var scrollMetrics = ScrollMetrics()
+    /// The list's scroll geometry, which changes on every frame of a scroll. Only the views drawn from it read it, so
+    /// a scroll does not evaluate this body, and with it every visible card's, on every frame.
+    @State private var listScroll = ListScroll()
     @State private var scrollPhase = ScrollPhase.idle
     @State private var isComposing = false
     @State private var arrivalScroll = ArrivalScroll()
@@ -69,7 +71,7 @@ struct SidebarView: View {
                     ForEach(model.notifications, id: \.viewIdentity) { notification in
                         NotificationCard(
                             notification: notification,
-                            offeredChoices: model.offeredChoices(of: notification),
+                            choices: model.cardChoices(of: notification),
                             isAnswering: model.answering.contains(notification.id),
                             clickDescription: model.clickDescription(of: notification),
                             isHovered: hoveredID == notification.id,
@@ -78,7 +80,8 @@ struct SidebarView: View {
                             choose: { model.choose($0, for: notification.id) },
                             reply: { model.reply($0, text: $1, for: notification.id) },
                             openLink: { model.openLink($0) },
-                            dismiss: { model.dismiss(notification.id) }
+                            dismiss: { model.dismiss(notification.id) },
+                            composingChanged: { model.setComposing($0, on: notification.id) }
                         )
                         .transition(cardTransition)
                         // Later cards draw above earlier ones, so when a card is removed the card
@@ -110,22 +113,20 @@ struct SidebarView: View {
             // hiding the room above it for its dismiss button.
             .onChange(of: model.arrivals) { old, new in
                 let step = arrivalScroll.arrived(
-                    on: new.cards(after: old.count), in: model.notifications, offset: scrollMetrics.offset, isUsingList: activity.isUsingList
+                    on: new.cards(after: old.count), in: model.notifications, offset: listScroll.metrics.offset, isUsingList: activity.isUsingList
                 )
                 if let step { scroll(by: step) }
             }
             .onGeometryChange(for: CGFloat.self, of: \.size.height) { arrivalScroll.visibleHeight = $0 }
-            .onScrollGeometryChange(for: ScrollMetrics.self, of: ScrollMetrics.init) { scrollMetrics = $1 }
+            .onScrollGeometryChange(for: ScrollMetrics.self, of: ScrollMetrics.init) { listScroll.metrics = $1 }
             .onScrollPhaseChange {
                 scrollPhase = $1
                 if $1.isUserScrolling { arrivalScroll.cancel() }
             }
             .onPreferenceChange(ComposingReplyKey.self) { isComposing = $0 }
-            .mask { EdgeFadeMask(fadesTop: scrollMetrics.hasContentAbove, fadesBottom: scrollMetrics.hasContentBelow) }
+            .mask { ListEdgeFade(scroll: listScroll) }
             .overlay(alignment: Alignment(horizontal: screenEdge, vertical: .center)) {
-                if scrollMetrics.isScrollable {
-                    ScrollIndicator(metrics: scrollMetrics, isScrolling: scrollPhase.isScrolling) { scrollPosition.scrollTo(y: $0) }
-                }
+                ListScrollIndicator(scroll: listScroll, isScrolling: scrollPhase.isScrolling) { scrollPosition.scrollTo(y: $0) }
             }
             .overlay {
                 if model.notifications.isEmpty {
@@ -274,6 +275,37 @@ private struct StatusNote<Actions: View>: View {
     }
 }
 
+/// The list's scroll geometry (`ScrollMetrics`), observed by the views drawn from it alone (`ListEdgeFade`,
+/// `ListScrollIndicator`).
+@MainActor
+@Observable
+final class ListScroll {
+    var metrics = ScrollMetrics()
+}
+
+/// `EdgeFadeMask` for the list as it is scrolled.
+struct ListEdgeFade: View {
+    let scroll: ListScroll
+
+    var body: some View {
+        EdgeFadeMask(fadesTop: scroll.metrics.hasContentAbove, fadesBottom: scroll.metrics.hasContentBelow)
+    }
+}
+
+/// The list's `ScrollIndicator` while it scrolls at all.
+struct ListScrollIndicator: View {
+    let scroll: ListScroll
+    let isScrolling: Bool
+    /// Scrolls the list to an offset from the top.
+    let scrollTo: (CGFloat) -> Void
+
+    var body: some View {
+        if scroll.metrics.isScrollable {
+            ScrollIndicator(metrics: scroll.metrics, isScrolling: isScrolling, scrollTo: scrollTo)
+        }
+    }
+}
+
 /// Opaque except for its top and bottom `height` points, which fade out while cards are hidden past that
 /// edge, so cards cut off by the edge fade instead of ending abruptly.
 struct EdgeFadeMask: View {
@@ -301,8 +333,9 @@ struct EdgeFadeMask: View {
 
 struct NotificationCard: View {
     let notification: SidebarNotification
-    /// The macOS notification whose choices the card offers (`SidebarModel.offeredChoices(of:)`).
-    let offeredChoices: SidebarNotification.NativeChoices?
+    /// The choices the card offers (`SidebarModel.cardChoices(of:)`): the macOS notification's, or those pushed
+    /// with it.
+    let choices: [NativeChoice]
     /// One of its choices is being performed; the others wait for it.
     let isAnswering: Bool
     /// What a click does (`SidebarModel.clickDescription(of:)`).
@@ -316,6 +349,9 @@ struct NotificationCard: View {
     /// Opens a link in the notification's body.
     let openLink: (URL) -> Void
     let dismiss: () -> Void
+    /// Reports whether a reply is being typed on the card (`isComposing`), which keeps it from stacking: a stack
+    /// gets a new card, without this one's field and text.
+    var composingChanged: (Bool) -> Void = { _ in }
 
     nonisolated static let cornerRadius: CGFloat = 10
     /// How far each layer under a stacked card shows, and how much narrower it is per side.
@@ -397,6 +433,7 @@ struct NotificationCard: View {
         .animation(.easeOut(duration: 0.15), value: isHovered)
         .onHover(perform: hover)
         .preference(key: ComposingReplyKey.self, value: isComposing)
+        .onChange(of: isComposing) { composingChanged($1) }
     }
 
     private var scale: CGFloat { isHovered && !reduceMotion ? Self.hoverScale : 1 }
@@ -417,7 +454,7 @@ struct NotificationCard: View {
 
     /// Whether a reply is being typed. The card is then no button, so that the field and its send button are
     /// controls of their own, which VoiceOver reaches; inside a button's label it reaches none.
-    var isComposing: Bool { offeredChoices != nil && draft.choice?.textInput != nil }
+    var isComposing: Bool { !choices.isEmpty && draft.choice?.textInput != nil }
 
     @ViewBuilder private var card: some View {
         if isComposing {
@@ -436,14 +473,12 @@ struct NotificationCard: View {
             .help(helpText)
             .accessibilityLabel(accessibilitySummary)
             .accessibilityActions {
-                if let offeredChoices {
-                    ForEach(offeredChoices.choices, id: \.title) { choice in
-                        // A choice that asks for text opens its field, which the card then shows as a control.
-                        Button(choice.title) {
-                            guard choice.textInput != nil else { return choose(choice.title) }
-                            draft.open(choice)
-                            requestKeyboard()
-                        }
+                ForEach(choices, id: \.title) { choice in
+                    // A choice that asks for text opens its field, which the card then shows as a control.
+                    Button(choice.title) {
+                        guard choice.textInput != nil else { return choose(choice.title) }
+                        draft.open(choice)
+                        requestKeyboard()
                     }
                 }
                 // Links in the text are not separate elements inside the card's button.
@@ -528,12 +563,12 @@ struct NotificationCard: View {
                 .font(typography.font(.caption2))
                 .foregroundStyle(.secondary)
         }
-        if let offeredChoices {
+        if !choices.isEmpty {
             // Buttons inside the card's button take their own clicks. VoiceOver cannot reach them
             // there: it sees the card as one button, and pressing a nested button through
             // accessibility runs the card's action. It gets the choices as the card's actions, until a
             // reply is typed and the card is no button.
-            CardChoices(choices: offeredChoices.choices, draft: draft, choose: choose, reply: reply)
+            CardChoices(choices: choices, draft: draft, choose: choose, reply: reply, acceptsReply: acceptsReply)
                 .disabled(isAnswering)
                 .padding(.top, 2)
                 .accessibilityHidden(!isComposing)
@@ -587,12 +622,18 @@ struct NotificationCard: View {
         ].filter { !$0.text.characters.isEmpty }
     }
 
+    /// Whether a reply can be sent: any text for a macOS notification, which sets no limit, and for a pushed
+    /// choice text within `PushedChoice.maxReplyLength`.
+    func acceptsReply(_ text: String) -> Bool {
+        !text.isEmpty && (notification.pushedChoices.isEmpty || PushedChoice.fits(reply: text))
+    }
+
     /// The web links in the notification's body.
     var bodyLinks: [URL] { NotificationLinks.links(in: notification.body).map(\.url) }
 
     /// What a click does, and that Option-click only dismisses, unless a click does nothing else.
     var helpText: String {
-        if offeredChoices != nil {
+        if notification.nativeChoices != nil, !choices.isEmpty {
             return "Click to open, as clicking the macOS notification would\nOption-click to dismiss"
         }
         guard notification.action != nil else { return clickDescription }

@@ -12,7 +12,7 @@ struct UnixSocketTests {
         async let served = onBlockingQueue {
             let connection = accept(listener, nil, nil)
             defer { close(connection) }
-            let request = try JSONDecoder().decode(ControlRequest.self, from: UnixSocket.readAll(from: connection))
+            let request = try JSONDecoder().decode(ControlRequest.self, from: readMessage(from: connection))
             try UnixSocket.writeAll(JSONEncoder().encode(ControlResponse(error: nil)), to: connection)
             return request
         }
@@ -49,7 +49,7 @@ struct UnixSocketTests {
         #expect(throws: SocketError.self) { try UnixSocket.listen(on: "/nonexistent-dir/x.sock") }
     }
 
-    @Test func readAllRejectsOversizedMessages() async throws {
+    @Test func readerRejectsOversizedMessages() async throws {
         var descriptors: [Int32] = [0, 0]
         #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0)
         descriptors.forEach(UnixSocket.disableSIGPIPE)
@@ -62,10 +62,40 @@ struct UnixSocketTests {
         await #expect(throws: SocketError("read", code: EMSGSIZE)) {
             try await onBlockingQueue {
                 defer { close(reader) }
-                return try UnixSocket.readAll(from: reader)
+                return try readMessage(from: reader)
             }
         }
         await written
+    }
+
+    /// The limit is on the message, wherever its newline falls in what one read brought.
+    @Test(arguments: [UnixSocket.maxMessageSize, UnixSocket.maxMessageSize + 1])
+    func readerLimitsTheMessageItself(size: Int) async throws {
+        var descriptors: [Int32] = [0, 0]
+        #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0)
+        descriptors.forEach(UnixSocket.disableSIGPIPE)
+        let (reader, writer) = (descriptors[0], descriptors[1])
+        async let written: Void = onBlockingQueue {
+            defer { close(writer) }
+            try? UnixSocket.writeMessage(Data(repeating: UInt8(ascii: "a"), count: size), to: writer)
+        }
+
+        let read: Result<Data, SocketError>
+        do {
+            read = .success(try await onBlockingQueue {
+                defer { close(reader) }
+                return try readMessage(from: reader)
+            })
+        } catch let error as SocketError {
+            read = .failure(error)
+        }
+        await written
+
+        if size > UnixSocket.maxMessageSize {
+            #expect(throws: SocketError("read", code: EMSGSIZE)) { try read.get() }
+        } else {
+            #expect(try read.get().count == size)
+        }
     }
 
     /// The request was sent in full, so the server may have it: the failure is told apart from one before sending.
@@ -146,7 +176,7 @@ struct UnixSocketTests {
 
     @Test func writeAndReadReportClosedDescriptors() {
         #expect(throws: SocketError("write", code: EBADF)) { try UnixSocket.writeAll(Data([1]), to: -1) }
-        #expect(throws: SocketError("read", code: EBADF)) { try UnixSocket.readAll(from: -1) }
+        #expect(throws: SocketError("read", code: EBADF)) { try readMessage(from: -1) }
     }
 
     @Test func writingToClosedPeerFailsInsteadOfKillingProcess() {
@@ -164,11 +194,140 @@ struct UnixSocketTests {
         }
     }
 
+    /// Messages end at a newline, so one read may hold several; what is left when the stream ends is the last.
+    @Test func readerSplitsMessagesAtNewlines() throws {
+        var descriptors: [Int32] = [0, 0]
+        #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0)
+        defer { close(descriptors[0]) }
+        try UnixSocket.writeMessage(Data("one".utf8), to: descriptors[1])
+        try UnixSocket.writeAll(Data("two\nthree".utf8), to: descriptors[1])
+        close(descriptors[1])
+        var reader = MessageReader(descriptor: descriptors[0])
+
+        #expect(try reader.next() == Data("one".utf8))
+        #expect(try reader.next() == Data("two".utf8))
+        #expect(try reader.next() == Data("three".utf8))
+        #expect(try reader.next() == nil)
+    }
+
+    @Test func readerGivesUpAtItsDeadline() throws {
+        var descriptors: [Int32] = [0, 0]
+        #expect(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0)
+        defer { descriptors.forEach { close($0) } }
+        var reader = MessageReader(descriptor: descriptors[0])
+
+        #expect(throws: SocketError("read", code: EAGAIN)) { try reader.next(deadline: .now + .milliseconds(50)) }
+        #expect(throws: SocketError("read", code: ETIMEDOUT)) { try reader.next(deadline: .now - .seconds(1)) }
+    }
+
+    /// After confirming an ask, the server answers on the same connection.
+    @Test func readsTheAnswerAfterTheReply() async throws {
+        let path = Self.temporarySocketPath()
+        let listener = try UnixSocket.listen(on: path)
+        defer { close(listener); unlink(path) }
+        let payload = try NotificationPayload(title: "t", choices: [PushedChoice(title: "Reply", action: .answer, asksForText: true)])
+
+        async let served: Void = onBlockingQueue {
+            let connection = accept(listener, nil, nil)
+            defer { close(connection) }
+            _ = try readMessage(from: connection)
+            try UnixSocket.writeMessage(JSONEncoder().encode(ControlResponse(error: nil)), to: connection)
+            try UnixSocket.writeMessage(JSONEncoder().encode(AskAnswer.answered(choice: "Reply", reply: "on my way")), to: connection)
+        }
+        let connection = try await UnixSocket.send(.askNotification(payload), path: path)
+        try await served
+
+        #expect(connection.response == ControlResponse(error: nil))
+        #expect(try await connection.answer(within: nil) == .answered(choice: "Reply", reply: "on my way"))
+    }
+
+    /// The send timeout bounds sending the request and reading its reply, not the wait for the answer, which
+    /// without a timeout of its own lasts as long as it takes.
+    @Test func answerWithoutTimeoutOutlastsTheSendTimeout() async throws {
+        let path = Self.temporarySocketPath()
+        let listener = try UnixSocket.listen(on: path)
+        defer { close(listener); unlink(path) }
+        let payload = try NotificationPayload(title: "t", choices: [PushedChoice(title: "Yes", action: .answer)])
+
+        // Served from a Dispatch thread started before the client connects, so that a busy cooperative pool cannot
+        // delay the reply past the client's short timeout.
+        let served = DispatchGroup()
+        DispatchQueue.global().async(group: served) {
+            let connection = accept(listener, nil, nil)
+            defer { close(connection) }
+            _ = try? readMessage(from: connection)
+            try? UnixSocket.writeMessage(JSONEncoder().encode(ControlResponse(error: nil)), to: connection)
+            usleep(1_000_000)
+            try? UnixSocket.writeMessage(JSONEncoder().encode(AskAnswer.answered(choice: "Yes", reply: nil)), to: connection)
+        }
+        let connection = try await UnixSocket.send(.askNotification(payload), path: path, timeout: timeval(tv_sec: 0, tv_usec: 500_000))
+
+        #expect(try await connection.answer(within: nil) == .answered(choice: "Yes", reply: nil))
+        await onBlockingQueue { served.wait() }
+    }
+
+    @Test func answerWaitsAtMostItsTimeoutAndReportsClosedConnections() async throws {
+        let path = Self.temporarySocketPath()
+        let listener = try UnixSocket.listen(on: path)
+        defer { close(listener); unlink(path) }
+        let request = ControlRequest.askNotification(try NotificationPayload(title: "t", choices: [PushedChoice(title: "Yes", action: .answer)]))
+        func serve(then finish: @escaping @Sendable (Int32) throws -> Void) async throws -> ControlConnection {
+            async let served: Void = onBlockingQueue {
+                let connection = accept(listener, nil, nil)
+                _ = try readMessage(from: connection)
+                try UnixSocket.writeMessage(JSONEncoder().encode(ControlResponse(error: nil)), to: connection)
+                try finish(connection)
+            }
+            let connection = try await UnixSocket.send(request, path: path)
+            try await served
+            return connection
+        }
+
+        let open = Mutable<Int32>(-1)
+        let waiting = try await serve { open.value = $0 }
+        await #expect(throws: AnswerError.timedOut) { try await waiting.answer(within: .milliseconds(100)) }
+        close(open.value)
+
+        let closed = try await serve { close($0) }
+        await #expect(throws: AnswerError.noAnswer("the sidebar closed the connection")) { try await closed.answer(within: .seconds(5)) }
+
+        let garbled = try await serve { connection in
+            try UnixSocket.writeMessage(Data("{}".utf8), to: connection)
+            close(connection)
+        }
+        let error = await #expect(throws: AnswerError.self) { try await garbled.answer(within: .seconds(5)) }
+        guard case .noAnswer = error else {
+            Issue.record("expected noAnswer, got \(String(describing: error))")
+            return
+        }
+    }
+
     @Test func describesErrorWithStrerror() {
         #expect(SocketError("connect", code: ECONNREFUSED).description == "connect failed: Connection refused")
     }
 
     static func temporarySocketPath() -> String {
         "/tmp/as-test-\(UUID().uuidString.prefix(8)).sock"
+    }
+}
+
+/// Reads one message from `descriptor`; empty when the stream ended without one.
+func readMessage(from descriptor: Int32) throws(SocketError) -> Data {
+    var reader = MessageReader(descriptor: descriptor)
+    return try reader.next() ?? Data()
+}
+
+/// A value shared with a closure that runs on another thread.
+final class Mutable<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value
+
+    init(_ value: Value) {
+        stored = value
+    }
+
+    var value: Value {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
     }
 }

@@ -22,17 +22,33 @@ final class BufferOutput: TextOutput, @unchecked Sendable {
 final class RecordingSender: NotificationSending, @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [NotificationPayload] = []
+    private var recordedTimeouts: [Duration?] = []
     let error: (any Error)?
+    /// What every ask is answered.
+    let answer: AskAnswer
 
-    init(error: (any Error)? = nil) {
+    init(error: (any Error)? = nil, answer: AskAnswer = .dismissed) {
         self.error = error
+        self.answer = answer
     }
 
+    /// Pushed and asked payloads alike, in order.
     var payloads: [NotificationPayload] { lock.withLock { recorded } }
+    /// The timeout of each ask.
+    var timeouts: [Duration?] { lock.withLock { recordedTimeouts } }
 
     func push(_ payload: NotificationPayload) async throws {
         if let error { throw error }
         lock.withLock { recorded.append(payload) }
+    }
+
+    func ask(_ payload: NotificationPayload, timeout: Duration?) async throws -> AskAnswer {
+        if let error { throw error }
+        lock.withLock {
+            recorded.append(payload)
+            recordedTimeouts.append(timeout)
+        }
+        return answer
     }
 }
 
@@ -64,4 +80,10 @@ func invoke(
     )
     let status = await SidebarCLI.main(arguments: arguments, context: context)
     return Invocation(status: status, output: output.text, errorOutput: errorOutput.text)
+}
+
+/// Reads one message from `descriptor`; empty when the stream ended without one.
+func readMessage(from descriptor: Int32) throws(SocketError) -> Data {
+    var reader = MessageReader(descriptor: descriptor)
+    return try reader.next() ?? Data()
 }

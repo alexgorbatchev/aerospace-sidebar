@@ -13,6 +13,23 @@ struct NotificationLinksTests {
         #expect(urls == ["https://ci.example.com/runs/42?tab=log", "HTTP://example.org/guide"])
     }
 
+    /// A text is searched once: a card's body runs again on every hover change and scroll phase, and a later search
+    /// uses what the first one found. The cache never holds more than `cacheLimit` texts.
+    @Test func searchesEachTextOnce() {
+        let text = "Deploy \(UUID()) at https://ci.example.com/runs/42"
+        #expect(NotificationLinks.links(in: text).map(\.url.absoluteString) == ["https://ci.example.com/runs/42"])
+
+        // What a search found stands for the text until the cache starts over.
+        NotificationLinks.found.withLock { $0[text] = [] }
+        #expect(NotificationLinks.links(in: text).isEmpty)
+
+        for index in 0...NotificationLinks.cacheLimit {
+            _ = NotificationLinks.links(in: "Filler \(index) \(UUID())")
+        }
+        #expect(NotificationLinks.found.withLock { $0.count } <= NotificationLinks.cacheLimit)
+        #expect(NotificationLinks.links(in: text).map(\.url.absoluteString) == ["https://ci.example.com/runs/42"])
+    }
+
     /// Other schemes could launch apps, and bare names are not meant as links.
     @Test(arguments: [
         "Run deploy.sh on zoom.us",

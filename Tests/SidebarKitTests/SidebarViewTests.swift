@@ -47,7 +47,7 @@ struct SidebarViewTests {
     func card(_ notification: SidebarNotification, hovered: Bool, draft: ReplyDraft = ReplyDraft()) -> NotificationCard {
         NotificationCard(
             notification: notification,
-            offeredChoices: model.offeredChoices(of: notification),
+            choices: model.cardChoices(of: notification),
             isAnswering: model.answering.contains(notification.id),
             clickDescription: model.clickDescription(of: notification),
             isHovered: hovered,
@@ -260,6 +260,60 @@ struct SidebarViewTests {
         #expect(model.notifications.isEmpty)
     }
 
+    /// A pushed notification's choices show and work like a native one's, without interception, and VoiceOver
+    /// reaches them as the card's actions. The card's help says what each does.
+    @Test func offersPushedChoices() throws {
+        let logs = URL(string: "https://ci.example/logs")!
+        model.add(SidebarNotification(source: "cli", title: "Build", pushedChoices: [
+            try PushedChoice(title: "Deploy", action: .run(command: "make deploy", workingDirectory: "/repo")),
+            try PushedChoice(title: "Note", action: .run(command: "notes", workingDirectory: "/repo"), asksForText: true),
+            try PushedChoice(title: "Logs", action: .open(logs)),
+        ]))
+        model.add(SidebarNotification(source: "cli", title: "Docs", pushedChoices: [try PushedChoice(title: "Logs", action: .open(logs))]))
+        let build = try #require(model.notifications.first { $0.title == "Build" })
+        let docs = try #require(model.notifications.first { $0.title == "Docs" })
+
+        let buildCard = try card(build, hovered: false).inspect().find(ViewType.Button.self)
+        #expect(try buildCard.help().string() == "Click to dismiss\nDeploy runs in /repo:\nmake deploy\nNote asks for text, then runs in /repo:\nnotes\nLogs opens https://ci.example/logs")
+        try buildCard.labelView().find(button: "Deploy").tap()
+        try card(docs, hovered: false).inspect().find(ViewType.Button.self).accessibilityActions().find(button: "Logs").tap()
+
+        #expect(performer.runs.map(\.command) == ["make deploy"])
+        #expect(performer.actions == [.open(logs)])
+        #expect(model.notifications.isEmpty)
+    }
+
+    /// A pushed reply is sent only while it fits `PushedChoice.maxReplyLength`; the field's Send button says so.
+    @Test func sendsPushedRepliesWithinTheirLimit() throws {
+        let note = try PushedChoice(title: "Note", action: .run(command: "notes", workingDirectory: "/repo"), asksForText: true)
+        model.add(SidebarNotification(source: "cli", title: "Build", pushedChoices: [note]))
+        let draft = ReplyDraft()
+        draft.open(note.shown)
+        draft.text = String(repeating: "x", count: PushedChoice.maxReplyLength + 1)
+
+        let composer = card(model.notifications[0], hovered: false, draft: draft)
+        #expect(try composer.inspect().find(button: "Send").isDisabled())
+        draft.text = "ship it"
+        try card(model.notifications[0], hovered: false, draft: draft).inspect().find(button: "Send").tap()
+
+        #expect(performer.runs == [.init(command: "notes", workingDirectory: "/repo", environment: [
+            "AEROSPACE_SIDEBAR_CHOICE": "Note", "AEROSPACE_SIDEBAR_REPLY": "ship it",
+        ])])
+    }
+
+    /// A card tells the model while a reply is typed on it, so that a repeat does not stack onto it: the stack
+    /// would get a new card, without the open field and its text.
+    @Test func cardsBeingRepliedOnTakeNoRepeats() throws {
+        let note = try PushedChoice(title: "Note", action: .run(command: "notes", workingDirectory: "/repo"), asksForText: true)
+        func build() -> SidebarNotification { SidebarNotification(source: "cli", title: "Build", pushedChoices: [note]) }
+        model.add(build())
+
+        try view().inspect().find(NotificationCard.self).vStack().callOnChange(oldValue: false, newValue: true)
+        model.add(build())
+
+        #expect(model.notifications.map(\.occurrences) == [1, 1])
+    }
+
     /// A card the notification database gave its notification's choices shows them in place of the note that macOS
     /// shows the notification for its buttons.
     @Test func showsChoicesTheDatabaseNamedInPlaceOfTheMacOSNote() throws {
@@ -386,7 +440,7 @@ struct SidebarViewTests {
         func card(hovered: Bool) throws -> InspectableView<ViewType.ClassifiedView> {
             try NotificationCard(
                 notification: SidebarNotification(source: "s", title: "t"),
-                offeredChoices: nil,
+                choices: [],
                 isAnswering: false,
                 clickDescription: "Click to dismiss",
                 isHovered: hovered,

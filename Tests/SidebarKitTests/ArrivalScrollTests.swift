@@ -443,7 +443,7 @@ struct ArrivalScrollHostedTests {
         let isComposing = Mutable(false)
         let card = NotificationCard(
             notification: notification,
-            offeredChoices: model.offeredChoices(of: notification),
+            choices: model.cardChoices(of: notification),
             isAnswering: false,
             clickDescription: "",
             isHovered: false,

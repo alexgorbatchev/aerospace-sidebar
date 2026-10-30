@@ -1,8 +1,24 @@
 import Foundation
 
-/// A request sent over the control socket: one JSON document per connection.
+/// A request sent over the control socket: one JSON message per connection (see `UnixSocket.writeMessage`).
 public enum ControlRequest: Codable, Equatable, Sendable {
     case pushNotification(NotificationPayload)
+    /// Shows a notification whose choices answer the client, which keeps the connection open after the
+    /// `ControlResponse` and reads an `AskAnswer` from it. Closing the connection withdraws the notification.
+    case askNotification(NotificationPayload)
+
+    /// - Throws: `SidebarRequestError.answerOutsideAsk` for a push with a choice that answers an ask, and
+    ///   `.askNeedsAnswers` for an ask without choices or with one that does not answer it.
+    public func validate() throws(SidebarRequestError) {
+        switch self {
+        case .pushNotification(let payload):
+            guard !payload.asks else { throw .answerOutsideAsk }
+        case .askNotification(let payload):
+            guard !payload.choices.isEmpty, payload.choices.allSatisfy({ $0.action == .answer }) else {
+                throw .askNeedsAnswers
+            }
+        }
+    }
 }
 
 /// The reply to a `ControlRequest`; `error` is nil on success.
@@ -12,6 +28,23 @@ public struct ControlResponse: Codable, Equatable, Sendable {
     public init(error: String?) {
         self.error = error
     }
+}
+
+/// What became of an asked notification: the second message on its connection, after the `ControlResponse`.
+public enum AskAnswer: Codable, Equatable, Sendable {
+    /// The user chose `choice`; `reply` is the text sent with a choice that asks for it.
+    case answered(choice: String, reply: String?)
+    /// The card went without an answer: dismissed, cleared, expired, dropped for the history limits, or hidden
+    /// by a rule.
+    case dismissed
+}
+
+/// Why waiting for an `AskAnswer` ended without one.
+public enum AnswerError: Error, Equatable, Sendable {
+    /// No answer came within the time given.
+    case timedOut
+    /// The connection closed or failed first, such as when the app quit; the detail says how.
+    case noAnswer(String)
 }
 
 /// Why `UnixSocket.exchange` failed, by how far the request got. Only a request that never reached the
@@ -104,18 +137,17 @@ public enum UnixSocket {
         }
     }
 
-    /// Reads until the peer closes its write side.
-    public static func readAll(from descriptor: Int32) throws(SocketError) -> Data {
-        var data = Data()
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        while true {
-            let count = read(descriptor, &buffer, buffer.count)
-            guard count >= 0 else { throw SocketError("read", code: errno) }
-            if count == 0 { return data }
-            data.append(contentsOf: buffer[..<count])
-            guard data.count <= maxMessageSize else { throw SocketError("read", code: EMSGSIZE) }
-        }
+    /// Writes one message (`message(_:)`).
+    public static func writeMessage(_ data: Data, to descriptor: Int32) throws(SocketError) {
+        try writeAll(message(data), to: descriptor)
     }
+
+    /// The bytes of one message: `data`, which must hold no newline (compact JSON has none), and a newline.
+    public static func message(_ data: Data) -> Data {
+        data + [newline]
+    }
+
+    static let newline = UInt8(ascii: "\n")
 
     /// Sends one request and waits for the reply, on a Dispatch thread (see `onBlockingQueue`).
     /// - Throws: `ExchangeError`, which tells whether the server may have received the request.
@@ -124,6 +156,17 @@ public enum UnixSocket {
         path: String,
         timeout: timeval = clientTimeout
     ) async throws -> ControlResponse {
+        try await send(request, path: path, timeout: timeout).response
+    }
+
+    /// Sends one request and reads the reply, on a Dispatch thread, keeping the connection open for the answer
+    /// an ask request waits for (`ControlConnection.answer(within:)`).
+    /// - Throws: `ExchangeError`, which tells whether the server may have received the request.
+    public static func send(
+        _ request: ControlRequest,
+        path: String,
+        timeout: timeval = clientTimeout
+    ) async throws -> ControlConnection {
         let data = try JSONEncoder().encode(request)
         guard data.count <= maxMessageSize else { throw ExchangeError.tooLarge(size: data.count) }
         return try await onBlockingQueue {
@@ -133,19 +176,33 @@ public enum UnixSocket {
             } catch {
                 throw ExchangeError.notConnected(error)
             }
-            defer { close(descriptor) }
             do throws(SocketError) {
-                try writeAll(data, to: descriptor)
+                try writeMessage(data, to: descriptor)
             } catch {
+                close(descriptor)
                 throw ExchangeError.notSent(error)
             }
-            shutdown(descriptor, SHUT_WR)
+            var reader = MessageReader(descriptor: descriptor)
             do {
-                return try JSONDecoder().decode(ControlResponse.self, from: readAll(from: descriptor))
+                guard let reply = try reader.next() else { throw SocketError("read", code: ECONNRESET) }
+                let response = try JSONDecoder().decode(ControlResponse.self, from: reply)
+                return ControlConnection(descriptor: descriptor, reader: reader, response: response)
             } catch {
+                close(descriptor)
                 throw ExchangeError.noReply(String(describing: error))
             }
         }
+    }
+
+    /// Sets how long each read on `descriptor` may wait; nil waits as long as it takes.
+    static func setReceiveTimeout(_ timeout: Duration?, on descriptor: Int32) {
+        var value = timeval(tv_sec: 0, tv_usec: 0)
+        if let timeout {
+            let (seconds, attoseconds) = timeout.components
+            // A zero timeval waits forever, so the shortest wait is a microsecond.
+            value = timeval(tv_sec: Int(seconds), tv_usec: Int32(max(attoseconds / 1_000_000_000_000, seconds == 0 ? 1 : 0)))
+        }
+        setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &value, socklen_t(MemoryLayout<timeval>.size))
     }
 
     private static func makeSocket() throws(SocketError) -> Int32 {
@@ -169,5 +226,87 @@ public enum UnixSocket {
         guard bytes.count < capacity else { throw SocketError("socket path", code: ENAMETOOLONG) }
         withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: bytes) }
         return address
+    }
+}
+
+/// Reads newline-terminated messages (`UnixSocket.writeMessage`) from a socket, keeping what it read past the
+/// end of one message for the next.
+public struct MessageReader: Sendable {
+    public let descriptor: Int32
+    private var buffer = Data()
+
+    public init(descriptor: Int32) {
+        self.descriptor = descriptor
+    }
+
+    /// The next message, without its newline. At the end of the stream it is what is left, or nil when nothing
+    /// is, so a peer may also end its last message by closing its write side.
+    /// - Parameter deadline: When reading gives up with `ETIMEDOUT`; nil keeps the socket's receive timeout,
+    ///   which ends a read with `EAGAIN`.
+    /// - Throws: `SocketError`, with `EMSGSIZE` for a message longer than `UnixSocket.maxMessageSize`.
+    public mutating func next(deadline: ContinuousClock.Instant? = nil) throws(SocketError) -> Data? {
+        var chunk = [UInt8](repeating: 0, count: 4096)
+        while true {
+            // The limit applies to the message, not to what one read brought, which can run past its end.
+            let end = buffer.prefix(UnixSocket.maxMessageSize + 1).firstIndex(of: UnixSocket.newline)
+            if let end {
+                let message = buffer[buffer.startIndex..<end]
+                buffer = Data(buffer[buffer.index(after: end)...])
+                return Data(message)
+            }
+            guard buffer.count <= UnixSocket.maxMessageSize else { throw SocketError("read", code: EMSGSIZE) }
+            if let deadline {
+                let remaining = ContinuousClock.now.duration(to: deadline)
+                guard remaining > .zero else { throw SocketError("read", code: ETIMEDOUT) }
+                UnixSocket.setReceiveTimeout(remaining, on: descriptor)
+            }
+            let count = read(descriptor, &chunk, chunk.count)
+            guard count >= 0 else { throw SocketError("read", code: errno) }
+            guard count > 0 else {
+                defer { buffer = Data() }
+                return buffer.isEmpty ? nil : buffer
+            }
+            buffer.append(contentsOf: chunk[..<count])
+        }
+    }
+}
+
+/// A connection to the control socket that sent a request and read its reply; closed when released.
+public final class ControlConnection: @unchecked Sendable {
+    /// The server's reply to the request.
+    public let response: ControlResponse
+    private let descriptor: Int32
+    /// Only `answer(within:)` reads it, once.
+    private var reader: MessageReader
+
+    init(descriptor: Int32, reader: MessageReader, response: ControlResponse) {
+        self.descriptor = descriptor
+        self.reader = reader
+        self.response = response
+    }
+
+    deinit {
+        close(descriptor)
+    }
+
+    /// Waits on a Dispatch thread for the answer to an ask request, for at most `timeout` (nil waits as long as
+    /// it takes). Closing the connection afterwards, as releasing it does, withdraws a notification still waiting.
+    /// - Throws: `AnswerError`.
+    public func answer(within timeout: Duration?) async throws -> AskAnswer {
+        try await onBlockingQueue { [self] in
+            do {
+                UnixSocket.setReceiveTimeout(nil, on: descriptor)
+                guard let message = try reader.next(deadline: timeout.map { ContinuousClock.now.advanced(by: $0) }) else {
+                    throw AnswerError.noAnswer("the sidebar closed the connection")
+                }
+                return try JSONDecoder().decode(AskAnswer.self, from: message)
+            } catch let error as SocketError where [ETIMEDOUT, EAGAIN].contains(error.code) {
+                throw AnswerError.timedOut
+            } catch let error as AnswerError {
+                throw error
+            } catch {
+                throw AnswerError.noAnswer(String(describing: error))
+            }
+        }
     }
 }

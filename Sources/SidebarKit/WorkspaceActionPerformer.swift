@@ -47,6 +47,14 @@ public struct WorkspaceActionPerformer: NotificationActionPerforming {
         }
     }
 
+    public func run(_ command: String, in workingDirectory: String, environment: [String: String]) {
+        do {
+            try Self.run(command, in: workingDirectory, environment: environment)
+        } catch {
+            Self.logger.error("Cannot run choice command: \(String(describing: error), privacy: .public)")
+        }
+    }
+
     /// Brings the app that posted a notification forward, launching it when it is not running, as a click on
     /// the notification in macOS would. The app is the one with `bundleIdentifier`, a running copy before the
     /// one LaunchServices prefers (Xcode and Xcode-beta share theirs), else the running app called `name`; a
@@ -104,20 +112,29 @@ public struct WorkspaceActionPerformer: NotificationActionPerforming {
         }
     }
 
-    /// Starts `command` with the user's login shell, which loads the PATH a terminal would have.
-    /// Output is discarded; the exit status is logged.
+    /// Starts `command` with the user's login shell, which loads the PATH a terminal would have, with
+    /// `environment` added to the sidebar's own. Values reach the command only through its environment, never
+    /// its text. Output is discarded; the exit status is logged.
+    /// - Throws: `CocoaError(.fileReadInvalidFileName)` for a NUL character in the command, the directory or an added
+    ///   variable, which `Process` would raise as an Objective-C exception and abort the app with; and whatever
+    ///   starting the process throws, such as for a missing directory.
     @discardableResult
-    public static func run(_ command: String, in workingDirectory: String) throws -> Process {
+    public static func run(_ command: String, in workingDirectory: String, environment: [String: String] = [:]) throws -> Process {
+        let values = [command, workingDirectory] + environment.flatMap { [$0.key, $0.value] }
+        guard !values.contains(where: { $0.utf8.contains(0) }) else { throw CocoaError(.fileReadInvalidFileName) }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: loginShell)
         process.arguments = ["-lc", command]
+        if !environment.isEmpty {
+            process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, added in added }
+        }
         process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory, isDirectory: true)
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         process.terminationHandler = { process in
             if process.terminationStatus != 0 {
-                logger.error("Click command exited with status \(process.terminationStatus)")
+                logger.error("Command exited with status \(process.terminationStatus)")
             }
         }
         try process.run()

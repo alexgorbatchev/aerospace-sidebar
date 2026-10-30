@@ -311,8 +311,10 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     ) -> ControlServer {
         ControlServer(path: path) { request in
             switch request {
-            case .pushNotification(let payload):
+            case .push(let payload):
                 model.add(SidebarNotification(payload: payload, source: "aerospace-sidebar", icons: icons))
+            case .ask(let payload, let asker):
+                model.ask(SidebarNotification(payload: payload, source: "aerospace-sidebar", icons: icons), asker: asker)
             }
         }
     }

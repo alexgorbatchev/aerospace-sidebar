@@ -1,15 +1,17 @@
 import SwiftUI
 
-/// A native notification's choices on its card: one button each, wrapping onto more lines when they do not fit
-/// beside each other, and for a choice that asks for text, such as Reply, a field with its send button under
-/// them. macOS shows more than two choices under an Options menu; a card has room to show them all, and a menu
-/// would not draw in the configured font.
+/// A notification's choices on its card, a native notification's or those pushed with it: one button each,
+/// wrapping onto more lines when they do not fit beside each other, and for a choice that asks for text, such as
+/// Reply, a field with its send button under them. macOS shows more than two choices under an Options menu; a card
+/// has room to show them all, and a menu would not draw in the configured font.
 struct CardChoices: View {
     let choices: [NativeChoice]
     @Bindable var draft: ReplyDraft
     let choose: (String) -> Void
     /// Sends the text typed for a choice that asks for it.
     let reply: (_ choice: String, _ text: String) -> Void
+    /// Whether the typed text can be sent; empty text never is.
+    var acceptsReply: (String) -> Bool = { !$0.isEmpty }
 
     @FocusState private var fieldFocused: Bool
     @Environment(\.typography) private var typography
@@ -43,7 +45,7 @@ struct CardChoices: View {
                             fieldFocused = true
                         }
                     ChoiceButton(title: input.sendTitle.isEmpty ? replying.title : input.sendTitle, action: send)
-                        .disabled(draft.text.isEmpty)
+                        .disabled(!acceptsReply(draft.text))
                 }
             }
         }
@@ -62,7 +64,7 @@ struct CardChoices: View {
     }
 
     func send() {
-        guard let choice = draft.choice, !draft.text.isEmpty else { return }
+        guard let choice = draft.choice, acceptsReply(draft.text) else { return }
         reply(choice.title, draft.text)
     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import os
 import SwiftUI
 
 /// Web links in notification text, which cards make clickable. Only links written out with `http://` or
@@ -10,8 +11,30 @@ enum NotificationLinks {
 
     private static let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
 
-    /// The web links in `text`, in order, with where each is written.
+    /// More texts than the list ever shows (`max_count` cards with a body each); past it the cache starts over.
+    static let cacheLimit = 512
+    /// Texts already searched, with their links. A card evaluates its body whenever the list does, on every hover
+    /// change for one, and `NSDataDetector` takes long enough that searching every visible card's body each time kept
+    /// the sidebar busy.
+    static let found = OSAllocatedUnfairLock(initialState: [String: [(range: NSRange, url: URL)]]())
+
+    /// The web links in `text`, in order, with where each is written. Each text is searched once while it stays among
+    /// the last `cacheLimit` searched.
     static func links(in text: String) -> [(range: NSRange, url: URL)] {
+        if let links = found.withLock({ $0[text] }) {
+            return links
+        }
+        let links = search(text)
+        found.withLock { found in
+            if found.count >= cacheLimit {
+                found.removeAll(keepingCapacity: true)
+            }
+            found[text] = links
+        }
+        return links
+    }
+
+    private static func search(_ text: String) -> [(range: NSRange, url: URL)] {
         let whole = NSRange(text.startIndex..., in: text)
         return (detector?.matches(in: text, range: whole) ?? []).compactMap { match in
             guard let url = match.url, let scheme = url.scheme?.lowercased(), schemes.contains(scheme),

@@ -55,7 +55,7 @@ public enum SidebarCLI {
         let agent = context.isAgent
         switch error {
         case let error as CLIError:
-            return (agent ? "ERR: \(agentDescription(error, context))\n" : "[ERROR] \(humanDescription(error, context))\n", 1)
+            return (agent ? "ERR: \(agentDescription(error, context))\n" : "[ERROR] \(humanDescription(error, context))\n", error.exitStatus)
         case let error as OutputWriteError:
             return (agent ? "ERR: output_write_failed: \(error.underlying)\n" : "[ERROR] Cannot write output: \(error.underlying)\n", EX_IOERR)
         case let error as SidebarRequestError:
@@ -89,12 +89,20 @@ public enum SidebarCLI {
             "Cannot launch the sidebar app: \(reason)"
         case .noReply(let reason):
             "The sidebar app did not confirm the notification (\(reason)). It may still show it, so sending it again could list it twice."
+        case .askNotConfirmed(let reason):
+            "The sidebar app did not confirm the question (\(reason)). It removes a question whose command stopped waiting, so you can ask again."
         case .rejected(let message):
             "The sidebar refused the notification: \(message)."
         case .tooLarge(let size):
             "The notification is too large to send: \(size) bytes encoded, at most \(UnixSocket.maxMessageSize)."
         case .unreachable(_, let reason):
             "Cannot reach the sidebar app: \(reason)."
+        case .dismissed:
+            "The notification was dismissed without an answer."
+        case .timedOut:
+            "No answer came in time, so the notification was withdrawn."
+        case .noAnswer(let reason):
+            "The sidebar app stopped waiting for an answer (\(reason))."
         }
     }
 
@@ -108,12 +116,20 @@ public enum SidebarCLI {
             "launch_failed: \(reason)"
         case .noReply(let reason):
             "no_reply: sent but not confirmed (\(reason)); it may still show, do not send it again"
+        case .askNotConfirmed(let reason):
+            "no_reply: sent but not confirmed (\(reason)); the connection is closed, so no card stays, ask again"
         case .rejected(let message):
             "rejected: \(message)"
         case .tooLarge(let size):
             "too_large: request is \(size) bytes encoded, the socket takes at most \(UnixSocket.maxMessageSize)"
         case .unreachable(let path, let reason):
             "unreachable: \(context.displayPath(path)): \(reason)"
+        case .dismissed:
+            "dismissed: the card went without an answer"
+        case .timedOut:
+            "timeout: no answer within --timeout; the card was withdrawn"
+        case .noAnswer(let reason):
+            "no_answer: the connection ended without an answer (\(reason))"
         }
     }
 }

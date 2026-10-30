@@ -522,6 +522,60 @@ struct WorkspaceActionPerformerTests {
         #expect(try String(contentsOf: directory.url.appendingPathComponent("marker.txt"), encoding: .utf8) == "ran\n")
     }
 
+    /// Text a user typed reaches the command as an environment variable, never as part of its text.
+    @Test func runsCommandsWithAddedEnvironment() throws {
+        let directory = try TemporaryDirectory()
+        let reply = "it's $HOME; `touch hacked`"
+
+        let process = try WorkspaceActionPerformer.run(
+            #"printf '%s|%s|%s' "$AEROSPACE_SIDEBAR_CHOICE" "$AEROSPACE_SIDEBAR_REPLY" "$HOME" > choice.txt"#,
+            in: directory.url.path,
+            environment: ["AEROSPACE_SIDEBAR_CHOICE": "Note", "AEROSPACE_SIDEBAR_REPLY": reply]
+        )
+        process.waitUntilExit()
+
+        let written = try String(contentsOf: directory.url.appendingPathComponent("choice.txt"), encoding: .utf8)
+        #expect(written == "Note|\(reply)|\(NSHomeDirectory())")
+        #expect(!FileManager.default.fileExists(atPath: directory.url.appendingPathComponent("hacked").path))
+    }
+
+    @Test func performingAChoiceStartsItsCommand() async throws {
+        let directory = try TemporaryDirectory()
+        let marker = directory.url.appendingPathComponent("Deploy")
+
+        WorkspaceActionPerformer().run(#"touch "$AEROSPACE_SIDEBAR_CHOICE""#, in: directory.url.path, environment: ["AEROSPACE_SIDEBAR_CHOICE": "Deploy"])
+
+        for _ in 0..<100 where !FileManager.default.fileExists(atPath: marker.path) {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(FileManager.default.fileExists(atPath: marker.path))
+    }
+
+    /// A command is started only where it was asked to run.
+    @Test func refusesMissingWorkingDirectories() {
+        #expect(throws: (any Error).self) { try WorkspaceActionPerformer.run("true", in: "/nonexistent-directory") }
+    }
+
+    /// A command is never started with a NUL character, which `Process` would raise as an Objective-C exception
+    /// that aborts the app. It runs in a process of its own, which such an exception ends.
+    @Test func refusesNULCharactersInsteadOfAborting() async {
+        await #expect(processExitsWith: .success) {
+            let directory = try TemporaryDirectory()
+            for (command, workingDirectory, environment) in [
+                ("touch marker\u{0}", directory.url.path, [:]),
+                ("touch marker", directory.url.path + "\u{0}", [:]),
+                ("touch marker", directory.url.path, ["AEROSPACE_SIDEBAR_REPLY": "a\u{0}b"]),
+                ("touch marker", directory.url.path, ["A\u{0}": "b"]),
+            ] {
+                do {
+                    try await MainActor.run { _ = try WorkspaceActionPerformer.run(command, in: workingDirectory, environment: environment) }
+                    exit(EXIT_FAILURE)
+                } catch let error as CocoaError where error.code == .fileReadInvalidFileName {}
+            }
+            guard try FileManager.default.contentsOfDirectory(atPath: directory.url.path).isEmpty else { exit(EXIT_FAILURE) }
+        }
+    }
+
     @Test func runsWithLoginShell() {
         #expect(WorkspaceActionPerformer.loginShell == String(cString: getpwuid(getuid()).pointee.pw_shell))
     }
@@ -615,5 +669,226 @@ struct WorkspaceActionPerformerTests {
         )
         await performer.activateApp(named: "Browser", bundleIdentifier: "com.example.browser.framework.AlertNotificationService")?.value
         #expect(opened.value.map(\.path) == [browser.path])
+    }
+}
+
+/// Choices pushed with a notification: commands, link buttons and asks.
+@MainActor
+struct PushedChoicesTests {
+    static let directory = "/repo"
+    static let logs = URL(string: "https://ci.example/logs")!
+
+    static func choices() throws -> [PushedChoice] {
+        [
+            try PushedChoice(title: "Deploy", action: .run(command: "make deploy", workingDirectory: directory)),
+            try PushedChoice(title: "Note", action: .run(command: "echo \"$AEROSPACE_SIDEBAR_REPLY\"", workingDirectory: directory), asksForText: true),
+            try PushedChoice(title: "Logs", action: .open(logs)),
+        ]
+    }
+
+    static func ask(_ title: String = "Deploy?", receivedAt: Date = Date()) throws -> SidebarNotification {
+        SidebarNotification(source: "aerospace-sidebar", title: title, pushedChoices: [
+            try PushedChoice(title: "Yes", action: .answer),
+            try PushedChoice(title: "Why?", action: .answer, asksForText: true),
+        ], receivedAt: receivedAt)
+    }
+
+    /// A command learns which choice started it, and the text sent with it, only through its environment.
+    @Test func runsCommandsWithTheChoiceAndReplyInTheirEnvironment() throws {
+        let performer = RecordingPerformer()
+        let model = SidebarModel(performer: performer, store: InMemoryStore())
+        for title in ["one", "two", "three"] {
+            model.add(SidebarNotification(source: "cli", title: title, pushedChoices: try Self.choices()))
+        }
+        let (three, two, one) = (model.notifications[0], model.notifications[1], model.notifications[2])
+
+        // A choice that asks for text needs its field, text within the limit and without NUL, which no
+        // environment can carry, and only it takes a reply.
+        model.choose("Note", for: one.id)
+        model.reply("Note", text: "", for: one.id)
+        model.reply("Note", text: String(repeating: "x", count: PushedChoice.maxReplyLength + 1), for: one.id)
+        model.reply("Note", text: "pasted\u{0}text", for: one.id)
+        model.reply("Deploy", text: "x", for: one.id)
+        #expect(performer.runs.isEmpty)
+        #expect(model.notifications.count == 3)
+
+        model.choose("Deploy", for: one.id)
+        model.reply("Note", text: "ship it; rm -rf /", for: two.id)
+        model.choose("Logs", for: three.id)
+
+        #expect(performer.runs == [
+            .init(command: "make deploy", workingDirectory: Self.directory, environment: ["AEROSPACE_SIDEBAR_CHOICE": "Deploy"]),
+            .init(command: "echo \"$AEROSPACE_SIDEBAR_REPLY\"", workingDirectory: Self.directory, environment: [
+                "AEROSPACE_SIDEBAR_CHOICE": "Note", "AEROSPACE_SIDEBAR_REPLY": "ship it; rm -rf /",
+            ]),
+        ])
+        #expect(performer.actions == [.open(Self.logs)])
+        #expect(model.notifications.isEmpty)
+    }
+
+    /// Pushed choices show like a native notification's, a reply field with a Send button; a native
+    /// notification's choices come first while it offers them.
+    @Test func cardsShowPushedChoices() throws {
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        let pushed = SidebarNotification(source: "cli", title: "t", pushedChoices: try Self.choices())
+
+        #expect(model.cardChoices(of: pushed) == [
+            NativeChoice(title: "Deploy"),
+            NativeChoice(title: "Note", textInput: NativeChoice.TextInput(sendTitle: "Send")),
+            NativeChoice(title: "Logs"),
+        ])
+        let native = SidebarNotification(source: "Calendar", title: "t", nativeChoices: .init(identifier: "a", choices: ["Allow…"]), nativeIdentifiers: ["a"])
+        #expect(model.cardChoices(of: native).isEmpty)
+        model.interception = .active
+        #expect(model.cardChoices(of: native) == ["Allow…"])
+        #expect(model.cardChoices(of: SidebarNotification(source: "cli", title: "plain")).isEmpty)
+    }
+
+    @Test func answersTheAskerOnce() throws {
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        let chosen = RecordingAsker()
+        let replied = RecordingAsker()
+        model.ask(try Self.ask("one"), asker: chosen)
+        model.ask(try Self.ask("two"), asker: replied)
+
+        model.choose("Yes", for: model.notifications[1].id)
+        model.reply("Why?", text: "tests are red", for: model.notifications[0].id)
+
+        #expect(chosen.answers == [.answered(choice: "Yes", reply: nil)])
+        #expect(replied.answers == [.answered(choice: "Why?", reply: "tests are red")])
+        #expect(model.notifications.isEmpty)
+    }
+
+    /// Every way a card goes without an answer tells its asker, once.
+    @Test func cardsThatGoWithoutAnAnswerAnswerDismissed() throws {
+        let now = Mutable(Date())
+        let model = SidebarModel(
+            performer: RecordingPerformer(), store: InMemoryStore(), history: SidebarSettings.History(retentionHours: 1, maxCount: 10),
+            rules: [SidebarSettings.Rule(title: "spam", action: .hide)], now: { now.value }
+        )
+        func asked(_ title: String, receivedAt: Date? = nil) throws -> (RecordingAsker, SidebarNotification.ID) {
+            let asker = RecordingAsker()
+            let notification = try Self.ask(title, receivedAt: receivedAt ?? now.value)
+            model.ask(notification, asker: asker)
+            return (asker, notification.id)
+        }
+        func isListed(_ id: SidebarNotification.ID) -> Bool { model.notifications.contains { $0.id == id } }
+
+        let (hidden, hiddenID) = try asked("spam")
+        #expect(hidden.answers == [.dismissed])
+        #expect(!isListed(hiddenID))
+        let (old, oldID) = try asked("old", receivedAt: now.value.addingTimeInterval(-2 * 3600))
+        #expect(old.answers == [.dismissed])
+        #expect(!isListed(oldID))
+
+        let (dismissed, dismissedID) = try asked("dismissed")
+        model.dismiss(dismissedID)
+        let (clicked, clickedID) = try asked("clicked")
+        model.activate(clickedID)
+        let (ruled, _) = try asked("ruled out")
+        model.apply(rules: [SidebarSettings.Rule(title: "ruled", action: .hide)])
+        let (cleared, _) = try asked("cleared")
+        model.clear()
+        let (expired, expiredID) = try asked("expired")
+        #expect(isListed(expiredID))
+        now.value = now.value.addingTimeInterval(2 * 3600)
+        model.pruneExpired()
+        let (dropped, droppedID) = try asked("dropped")
+        #expect(isListed(droppedID))
+        for index in 0..<10 {
+            #expect(dropped.answers.isEmpty)
+            model.add(SidebarNotification(source: "cli", title: "\(index)", severity: .high, receivedAt: now.value))
+        }
+        #expect(!isListed(droppedID))
+        #expect(model.notifications.count == 10)
+
+        for asker in [dismissed, clicked, ruled, cleared, expired, dropped] {
+            #expect(asker.answers == [.dismissed])
+        }
+    }
+
+    /// An asker that stops waiting takes its card with it, unanswered.
+    @Test func askersThatHangUpWithdrawTheirCards() throws {
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        let asker = RecordingAsker()
+        model.ask(try Self.ask(), asker: asker)
+        model.add(SidebarNotification(source: "cli", title: "other"))
+
+        asker.hangUp()
+        asker.hangUp()
+
+        #expect(model.notifications.map(\.title) == ["other"])
+        #expect(asker.answers.isEmpty)
+    }
+
+    /// Each ask has its own asker, so identical asks never stack; other pushed notifications stack only with the
+    /// same choices.
+    @Test func stacksOnlyNotificationsWithTheSameChoices() throws {
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        let first = RecordingAsker()
+        let second = RecordingAsker()
+        model.ask(try Self.ask(), asker: first)
+        model.ask(try Self.ask(), asker: second)
+        #expect(model.notifications.count == 2)
+        #expect(model.received.count == 2)
+
+        let choices = try Self.choices()
+        model.add(SidebarNotification(source: "cli", title: "build", pushedChoices: choices))
+        model.add(SidebarNotification(source: "cli", title: "build", pushedChoices: choices))
+        model.add(SidebarNotification(source: "cli", title: "build", pushedChoices: Array(choices.prefix(1))))
+        #expect(model.notifications.filter { $0.title == "build" }.map(\.occurrences) == [1, 2])
+        #expect(first.answers.isEmpty && second.answers.isEmpty)
+    }
+
+    /// A stack gets a new card, which would drop a reply being typed on the old one, so cards being replied on
+    /// neither take repeats nor stack onto other cards, also when saved rules restack the list.
+    @Test func cardsBeingRepliedOnDoNotStack() throws {
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        let choices = try Self.choices()
+        func build() -> SidebarNotification { SidebarNotification(source: "cli", title: "build", pushedChoices: choices) }
+        model.add(build())
+        let composing = model.notifications[0].id
+
+        model.setComposing(true, on: composing)
+        model.add(build())
+        #expect(model.notifications.map(\.occurrences) == [1, 1])
+        model.apply(rules: [])
+        #expect(model.notifications.map(\.occurrences) == [1, 1])
+        #expect(model.notifications.contains { $0.id == composing })
+
+        model.setComposing(false, on: composing)
+        model.add(build())
+        #expect(model.notifications.map(\.occurrences) == [2, 1])
+    }
+
+    /// A relaunch loses the askers, so restored cards keep only the choices that do not answer one.
+    @Test func restoredCardsDropTheChoicesThatAnswerAsks() throws {
+        let link = try PushedChoice(title: "Logs", action: .open(Self.logs))
+        let ask = try Self.ask()
+        let mixed = SidebarNotification(source: "cli", title: "mixed", pushedChoices: [link])
+        let store = InMemoryStore([ask, mixed])
+
+        let model = SidebarModel(performer: RecordingPerformer(), store: store)
+
+        let restored = try #require(model.notifications.first { $0.id == ask.id })
+        #expect(restored.pushedChoices.isEmpty)
+        #expect(model.clickDescription(of: restored) == "Click to dismiss")
+        #expect(model.notifications.first { $0.id == mixed.id }?.pushedChoices == [link])
+    }
+
+    @Test func describesWhatEachChoiceDoes() throws {
+        let notification = SidebarNotification(
+            source: "cli", title: "t", action: .open(Self.logs), pushedChoices: try Self.choices() + [PushedChoice(title: "Yes", action: .answer)]
+        )
+
+        #expect(notification.clickDescription == """
+            Click to open https://ci.example/logs
+            Deploy runs in /repo:
+            make deploy
+            Note asks for text, then runs in /repo:
+            echo "$AEROSPACE_SIDEBAR_REPLY"
+            Logs opens https://ci.example/logs
+            """)
+        #expect(try Self.ask().clickDescription == "Click to dismiss without answering")
     }
 }

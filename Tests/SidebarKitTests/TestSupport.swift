@@ -3,6 +3,7 @@ import ApplicationServices
 import Foundation
 import PermissionFlow
 @testable import SidebarKit
+import SidebarProtocol
 
 /// In-memory accessibility element.
 @MainActor
@@ -142,9 +143,44 @@ final class RecordingPerformer: NotificationActionPerforming {
     /// The bundle identifier passed with each of `actions`.
     var bundleIdentifiers: [String?] = []
 
+    /// The pushed choices' commands run, with their directories and added environments.
+    var runs: [Run] = []
+
+    struct Run: Equatable {
+        let command: String
+        let workingDirectory: String
+        let environment: [String: String]
+    }
+
     func perform(_ action: SidebarNotification.ClickAction, bundleIdentifier: String?) {
         actions.append(action)
         bundleIdentifiers.append(bundleIdentifier)
+    }
+
+    func run(_ command: String, in workingDirectory: String, environment: [String: String]) {
+        runs.append(Run(command: command, workingDirectory: workingDirectory, environment: environment))
+    }
+}
+
+/// Stands in for the client of an ask; `hangUp()` acts as if it stopped waiting.
+final class RecordingAsker: NotificationAsking, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [AskAnswer] = []
+    private var hangUpHandler: (@MainActor @Sendable () -> Void)?
+
+    var answers: [AskAnswer] { lock.withLock { recorded } }
+
+    func answer(_ answer: AskAnswer) {
+        lock.withLock { recorded.append(answer) }
+    }
+
+    func onHangUp(_ handler: @escaping @MainActor @Sendable () -> Void) {
+        lock.withLock { hangUpHandler = handler }
+    }
+
+    @MainActor
+    func hangUp() {
+        lock.withLock { hangUpHandler }?()
     }
 }
 

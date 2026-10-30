@@ -654,17 +654,17 @@ struct SettingsPaneTests {
         #expect(throws: Never.self) { try general().inspect().find(text: problem) }
     }
 
-    /// The opacity field edits the background in whole percent.
-    @Test func editsTheBackgroundsOpacityInPercent() throws {
+    /// The opacity slider edits the background, previewed at once, and the percentage beside it follows.
+    @Test func slidesTheBackgroundsOpacity() throws {
         editor.draft.background.opacity = 0.25
         let sut = try appearance().inspect()
-        let field = try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Background opacity" })
+        #expect(throws: Never.self) { try sut.find(text: "25%") }
 
-        #expect(try field.input() == "25")
-        try field.setInput("40")
+        try sut.find(ViewType.Slider.self).setValue(0.4)
 
         #expect(editor.draft.background.opacity == 0.4)
         #expect(store.background.opacity == 0.4)
+        #expect(throws: Never.self) { try appearance().inspect().find(text: "40%") }
     }
 
     /// The well shows the draft's color and puts the color picked in the panel into the draft, as sRGB.
@@ -695,7 +695,7 @@ struct SettingsPaneTests {
         let panes: [any View] = [sidebarPane(), history(), appearance()]
         let steppers = try panes.map { try AnyView($0).inspect().findAll(ViewType.Stepper.self).count }
 
-        #expect(steppers == [1, 2, 2])
+        #expect(steppers == [1, 2, 1])
     }
 
     @Test func numberFieldShowsUnit() throws {
@@ -711,7 +711,7 @@ struct SettingsPaneTests {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: host.fittingSize), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
         host.layoutSubtreeIfNeeded()
-        // Size is the pane's first number field; the background's opacity follows.
+        // Size is the pane's only number field.
         let stepper = try #require(Self.subviews(of: host).compactMap { $0 as? NSStepper }.first)
 
         Self.click(stepper, up: true)

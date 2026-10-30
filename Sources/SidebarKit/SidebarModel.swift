@@ -62,6 +62,8 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
     public let shownByMacOS: Bool
     /// The macOS notification this entry stands for, whose choices the card offers (`SidebarModel.offeredChoices(of:)`).
     public let nativeChoices: NativeChoices?
+    /// Buttons a push put on the card besides its click action (`SidebarModel.cardChoices(of:)`).
+    public let pushedChoices: [PushedChoice]
     /// The NotificationCenter notifications this entry stands for, newest first: their `AXIdentifier`s, which
     /// are also their UUIDs in the notification database. A click opens the newest one that still exists, as
     /// clicking it in macOS would, so the posting app learns which notification was clicked.
@@ -70,6 +72,31 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
     public let receivedAt: Date
     /// How many identical notifications this entry stands for (see `SidebarModel.add(_:)`).
     public let occurrences: Int
+
+    /// Reads a saved entry. An entry without pushed choices may leave out their key, like `nativeChoices`: every
+    /// entry in a list saved before cards carried them does, and none of those has any.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(UUID.self, forKey: .id),
+            source: try container.decode(String.self, forKey: .source),
+            title: try container.decode(String.self, forKey: .title),
+            subtitle: try container.decode(String.self, forKey: .subtitle),
+            body: try container.decode(String.self, forKey: .body),
+            severity: try container.decode(NotificationSeverity.self, forKey: .severity),
+            postedSeverity: try container.decodeIfPresent(NotificationSeverity.self, forKey: .postedSeverity),
+            icon: try container.decodeIfPresent(Icon.self, forKey: .icon),
+            bundleIdentifier: try container.decodeIfPresent(String.self, forKey: .bundleIdentifier),
+            invalidIcon: try container.decodeIfPresent(String.self, forKey: .invalidIcon),
+            action: try container.decodeIfPresent(ClickAction.self, forKey: .action),
+            shownByMacOS: try container.decode(Bool.self, forKey: .shownByMacOS),
+            nativeChoices: try container.decodeIfPresent(NativeChoices.self, forKey: .nativeChoices),
+            pushedChoices: try container.decodeIfPresent([PushedChoice].self, forKey: .pushedChoices) ?? [],
+            nativeIdentifiers: try container.decode([String].self, forKey: .nativeIdentifiers),
+            receivedAt: try container.decode(Date.self, forKey: .receivedAt),
+            occurrences: try container.decode(Int.self, forKey: .occurrences)
+        )
+    }
 
     public init(
         id: UUID = UUID(),
@@ -85,6 +112,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         action: ClickAction? = nil,
         shownByMacOS: Bool = false,
         nativeChoices: NativeChoices? = nil,
+        pushedChoices: [PushedChoice] = [],
         nativeIdentifiers: [String] = [],
         receivedAt: Date = Date(),
         occurrences: Int = 1
@@ -102,6 +130,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         self.action = action
         self.shownByMacOS = shownByMacOS
         self.nativeChoices = nativeChoices
+        self.pushedChoices = pushedChoices
         self.nativeIdentifiers = nativeIdentifiers
         self.receivedAt = receivedAt
         self.occurrences = occurrences
@@ -126,21 +155,50 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
             bundleIdentifier: payload.bundleIdentifier,
             invalidIcon: icon == nil ? payload.icon : nil,
             action: action,
+            pushedChoices: payload.choices,
             receivedAt: receivedAt
         )
     }
 }
 
 extension SidebarNotification {
-    /// Same sender and its app, text, severity, icon, click action and presentation as shown; only identity, time,
-    /// count and the native notifications it stands for may differ. Two alerts with choices are never the same
-    /// content: each card answers its own alert. A stack keeps the severity its first card arrived with
-    /// (`postedSeverity`).
+    /// Same sender and its app, text, severity, icon, click action, choices and presentation as shown; only
+    /// identity, time, count and the native notifications it stands for may differ. Two alerts with choices are
+    /// never the same content: each card answers its own alert. Neither are two asks: each card answers its own
+    /// asker. A stack keeps the severity its first card arrived with (`postedSeverity`).
     func hasSameContent(as other: SidebarNotification) -> Bool {
         source == other.source && bundleIdentifier == other.bundleIdentifier && title == other.title
             && subtitle == other.subtitle && body == other.body
             && severity == other.severity && icon == other.icon && invalidIcon == other.invalidIcon
             && action == other.action && shownByMacOS == other.shownByMacOS && nativeChoices == other.nativeChoices
+            && pushedChoices == other.pushedChoices && !asks && !other.asks
+    }
+
+    /// Whether a choice answers the `notification ask` command waiting for the card.
+    var asks: Bool { pushedChoices.contains { $0.action == .answer } }
+
+    /// This entry without the choices that answer an ask, whose asker a relaunch lost.
+    var withoutAnswers: SidebarNotification {
+        guard asks else { return self }
+        return SidebarNotification(
+            id: id,
+            source: source,
+            title: title,
+            subtitle: subtitle,
+            body: body,
+            severity: severity,
+            postedSeverity: postedSeverity,
+            icon: icon,
+            bundleIdentifier: bundleIdentifier,
+            invalidIcon: invalidIcon,
+            action: action,
+            shownByMacOS: shownByMacOS,
+            nativeChoices: nativeChoices,
+            pushedChoices: pushedChoices.filter { $0.action != .answer },
+            nativeIdentifiers: nativeIdentifiers,
+            receivedAt: receivedAt,
+            occurrences: occurrences
+        )
     }
 
     /// The most native notifications one entry stands for. A click opens the newest one NotificationCenter
@@ -165,6 +223,7 @@ extension SidebarNotification {
             action: action,
             shownByMacOS: shownByMacOS,
             nativeChoices: nativeChoices,
+            pushedChoices: pushedChoices,
             nativeIdentifiers: Array((newer.nativeIdentifiers + nativeIdentifiers.filter { !newer.nativeIdentifiers.contains($0) })
                 .prefix(Self.maxNativeIdentifiers)),
             receivedAt: max(receivedAt, newer.receivedAt),
@@ -191,6 +250,7 @@ extension SidebarNotification {
             action: action,
             shownByMacOS: false,
             nativeChoices: nativeChoices,
+            pushedChoices: pushedChoices,
             nativeIdentifiers: nativeIdentifiers,
             receivedAt: receivedAt,
             occurrences: occurrences
@@ -213,21 +273,44 @@ extension SidebarNotification {
             action: action,
             shownByMacOS: shownByMacOS,
             nativeChoices: nativeChoices,
+            pushedChoices: pushedChoices,
             nativeIdentifiers: nativeIdentifiers,
             receivedAt: receivedAt,
             occurrences: occurrences
         )
     }
 
-    /// What a click does, shown before it happens; includes the full command for `run` actions.
+    /// What a click does, shown before it happens, then what each pushed choice does; includes the full command
+    /// for `run` actions and choices.
     public var clickDescription: String {
-        switch action {
+        let click = switch action {
+        case nil where asks: "Click to dismiss without answering"
         case nil: "Click to dismiss"
         case .open(let url): "Click to open \(url.absoluteString)"
         case .run(let command, let directory): "Click to run in \(directory):\n\(command)"
         case .activateApp(let name) where nativeIdentifiers.isEmpty: "Click to switch to \(name)"
         case .activateApp(let name): "Click to open in \(name)"
         }
+        return ([click] + pushedChoices.compactMap(\.description)).joined(separator: "\n")
+    }
+}
+
+extension PushedChoice {
+    /// What the choice's button does, for a card's help; nil for a choice that only answers an ask, whose
+    /// button says it all.
+    var description: String? {
+        switch action {
+        case .run(let command, let directory) where asksForText: "\(title) asks for text, then runs in \(directory):\n\(command)"
+        case .run(let command, let directory): "\(title) runs in \(directory):\n\(command)"
+        case .open(let url): "\(title) opens \(url.absoluteString)"
+        case .answer: nil
+        }
+    }
+
+    /// The choice as the card shows it: a choice that asks for text opens a field whose placeholder is its title
+    /// and whose send button reads Send.
+    var shown: NativeChoice {
+        NativeChoice(title: title, textInput: asksForText ? NativeChoice.TextInput(sendTitle: "Send") : nil)
     }
 }
 
@@ -252,6 +335,17 @@ public protocol NotificationActionPerforming {
     /// Performs `action` for a notification from the app with `bundleIdentifier` (the notification's own),
     /// which `activateApp` brings forward; the app's name in the action serves only without one.
     func perform(_ action: SidebarNotification.ClickAction, bundleIdentifier: String?)
+    /// Runs a pushed choice's `command` with the user's login shell in `workingDirectory`, with `environment`
+    /// added to the sidebar's own.
+    func run(_ command: String, in workingDirectory: String, environment: [String: String])
+}
+
+/// The client waiting for the answer to an asked notification; `AskConnection` is the real implementation.
+public protocol NotificationAsking: AnyObject, Sendable {
+    /// Sends the answer; only the first one counts.
+    func answer(_ answer: AskAnswer)
+    /// Calls `handler` on the main actor once the client stops waiting before an answer.
+    func onHangUp(_ handler: @escaping @MainActor @Sendable () -> Void)
 }
 
 /// What the sidebar can do to a macOS notification a card stands for, on screen, hidden or in the history.
@@ -330,6 +424,12 @@ public final class SidebarModel {
     @ObservationIgnored private var rules: NotificationRules
     /// The native notifications listed after the last change, to tell when a change drops one.
     @ObservationIgnored private var listedNotifications: Set<String> = []
+    /// Cards on which the user is typing a reply. Nothing stacks onto them, nor they onto another card: a stack
+    /// gets a new card (`SidebarView`), which would drop the open field and its text.
+    @ObservationIgnored private var composing: Set<SidebarNotification.ID> = []
+    /// The clients waiting for the answers to asked notifications, by card. A card that goes without an answer
+    /// answers `dismissed` (`settleAsks()`).
+    @ObservationIgnored private var askers: [SidebarNotification.ID: any NotificationAsking] = [:]
 
     public init(
         performer: any NotificationActionPerforming = WorkspaceActionPerformer(),
@@ -349,7 +449,9 @@ public final class SidebarModel {
         self.rules = NotificationRules(rules)
         self.now = now
         let cutoff = now().addingTimeInterval(-history.retention)
+        // A relaunch lost the clients waiting for asks, so their cards no longer offer the choices that answer them.
         notifications = Array(store.load()
+            .map(\.withoutAnswers)
             .filter { $0.receivedAt >= cutoff }
             .sorted { ($0.severity, $0.receivedAt) > ($1.severity, $1.receivedAt) }
             .prefix(history.maxCount))
@@ -406,11 +508,36 @@ public final class SidebarModel {
     /// relaunch, is not added at all: the next prune would drop it, after it had pushed newer notifications
     /// past `history.maxCount`.
     public func add(_ notification: SidebarNotification) {
-        guard notification.receivedAt >= now().addingTimeInterval(-history.retention) else { return }
+        guard notification.receivedAt >= now().addingTimeInterval(-history.retention) else { return settleAsks() }
         record(notification)
-        guard let card = insert(notification) else { return }
+        guard let card = insert(notification) else { return settleAsks() }
         arrivals.record(card, listed: notifications)
         didChange()
+    }
+
+    /// Adds a notification whose choices answer `asker`, like `add(_:)`. Its card goes once it is answered;
+    /// when it goes without an answer, or never shows because a rule hides it, `asker` gets `dismissed`; when
+    /// `asker` stops waiting first, the card goes.
+    public func ask(_ notification: SidebarNotification, asker: any NotificationAsking) {
+        let id = notification.id
+        askers[id] = asker
+        asker.onHangUp { [weak self] in self?.withdraw(id) }
+        add(notification)
+    }
+
+    /// Removes the card of an ask whose client stopped waiting, without answering it.
+    private func withdraw(_ id: SidebarNotification.ID) {
+        guard askers.removeValue(forKey: id) != nil, notifications.contains(where: { $0.id == id }) else { return }
+        dismiss(id)
+    }
+
+    /// Answers `dismissed` to every asker whose card is gone.
+    private func settleAsks() {
+        let listed = Set(notifications.map(\.id))
+        for (id, asker) in askers where !listed.contains(id) {
+            askers[id] = nil
+            asker.answer(.dismissed)
+        }
     }
 
     /// Adds an arriving notification to `received`, as the newest, stacked onto a copy with the same content.
@@ -433,7 +560,9 @@ public final class SidebarModel {
     @discardableResult
     private func insert(_ notification: SidebarNotification) -> SidebarNotification.ID? {
         guard var notification = rules.apply(to: notification) else { return nil }
-        if let existing = notifications.firstIndex(where: { $0.hasSameContent(as: notification) }) {
+        if !composing.contains(notification.id), let existing = notifications.firstIndex(where: {
+            $0.hasSameContent(as: notification) && !composing.contains($0.id)
+        }) {
             notification = notifications.remove(at: existing).stacking(notification)
         }
         let index = notifications.firstIndex {
@@ -444,6 +573,15 @@ public final class SidebarModel {
             notifications.removeLast(notifications.count - history.maxCount)
         }
         return notification.id
+    }
+
+    /// Tells whether the user is typing a reply on the card, which keeps it from stacking (`composing`).
+    public func setComposing(_ isComposing: Bool, on id: SidebarNotification.ID) {
+        if isComposing {
+            composing.insert(id)
+        } else {
+            composing.remove(id)
+        }
     }
 
     public func dismiss(_ id: SidebarNotification.ID) {
@@ -513,6 +651,9 @@ public final class SidebarModel {
     /// Performs one of the notification's choices, then dismisses the card. The card stays when the notification
     /// is gone or refuses the choice.
     public func choose(_ choice: String, for id: SidebarNotification.ID) {
+        if let pushed = pushedChoice(choice, of: id), !pushed.asksForText {
+            return perform(pushed, reply: nil, for: id)
+        }
         answer(id) { alert in
             alert.choices.contains { $0.title == choice && $0.textInput == nil } ? .choice(choice) : nil
         }
@@ -521,10 +662,42 @@ public final class SidebarModel {
     /// Answers a choice that asks for text, such as Reply, with `text`, then dismisses the card. The card stays
     /// when the notification is gone or refuses the reply.
     public func reply(_ choice: String, text: String, for id: SidebarNotification.ID) {
+        if let pushed = pushedChoice(choice, of: id) {
+            guard pushed.asksForText, !text.isEmpty, PushedChoice.fits(reply: text) else { return }
+            return perform(pushed, reply: text, for: id)
+        }
         answer(id) { alert in
             guard !text.isEmpty, let input = alert.choices.first(where: { $0.title == choice })?.textInput else { return nil }
             return .reply(choice: choice, text: text, send: input.sendTitle)
         }
+    }
+
+    /// The pushed choice titled `title` on the card. Pushed choices are performed at once, so a card never waits
+    /// for one (`answering`).
+    private func pushedChoice(_ title: String, of id: SidebarNotification.ID) -> PushedChoice? {
+        notifications.first { $0.id == id }?.pushedChoices.first { $0.title == title }
+    }
+
+    /// Performs a pushed choice, with `reply` for one that asks for text, then dismisses the card: runs its
+    /// command with the choice (and the reply) in its environment, opens its link, or answers the asker.
+    private func perform(_ choice: PushedChoice, reply: String?, for id: SidebarNotification.ID) {
+        switch choice.action {
+        case .run(let command, let workingDirectory):
+            var environment = [PushedChoice.choiceVariable: choice.title]
+            environment[PushedChoice.replyVariable] = reply
+            performer.run(command, in: workingDirectory, environment: environment)
+        case .open(let url):
+            performer.perform(.open(url), bundleIdentifier: nil)
+        case .answer:
+            askers.removeValue(forKey: id)?.answer(.answered(choice: choice.title, reply: reply))
+        }
+        dismiss(id)
+    }
+
+    /// The choices the card shows: those of the macOS notification it stands for (`offeredChoices(of:)`), else
+    /// those pushed with it.
+    public func cardChoices(of notification: SidebarNotification) -> [NativeChoice] {
+        offeredChoices(of: notification)?.choices ?? notification.pushedChoices.map(\.shown)
     }
 
     /// Performs what `action` makes of the card's notification, one answer at a time per card
@@ -582,6 +755,8 @@ public final class SidebarModel {
     /// Saves the list and reports native notifications whose cards it no longer holds, so they do not stay
     /// hidden.
     private func didChange() {
+        settleAsks()
+        composing.formIntersection(notifications.map(\.id))
         store.save(notifications)
         let listed = Self.nativeIdentifiers(in: notifications)
         let released = !listedNotifications.isSubset(of: listed)

@@ -1,4 +1,4 @@
-`aerospace-sidebar` is a permanent notification sidebar for macOS users of the [AeroSpace](https://github.com/nikitabobko/AeroSpace) tiling window manager. It takes over the right or left edge of the main display, replaces macOS notification banners with a list that stays until you deal with it, and lets scripts, agents and web pages push their own notifications with click actions.
+`aerospace-sidebar` is a permanent notification sidebar for macOS users of the [AeroSpace](https://github.com/nikitabobko/AeroSpace) tiling window manager. It takes over the right or left edge of the main display, replaces macOS notification banners with a list that stays until you deal with it, and lets scripts, agents and web pages push their own notifications with click actions and buttons, or ask you a question and wait for the answer.
 
 # What It Does
 
@@ -7,6 +7,7 @@
 - **Notification buttons on cards**: a notification with buttons, such as Reply, Approve or Delete, is hidden and listed with those buttons on its card, any number of them and banners included, when its app declared them to macOS (this needs Full Disk Access). Buttons the app marks destructive, such as Delete, look destructive. Reply opens a field on the card that sends your text as if you had typed it into the notification. The buttons keep working after a banner has timed out into Notification Center: the sidebar acts on it there, off-screen. Notifications listed from macOS's database because they showed no banner (during Focus or Do Not Disturb, or from apps whose banner style is None) get their buttons too. So does an alert with an actions menu, once macOS records it a few seconds after it appears: the alert then leaves the screen, and its card offers the menu's items. Without Full Disk Access, only alerts with one or two buttons get theirs, such as Allow… on macOS's "Privacy & Security" alert. Clicking the card does what clicking the notification does, and dismissing the card closes it.
 - **Other interactive notifications left alone**: notifications whose buttons a card cannot offer stay on screen as macOS shows them, and are also listed. These are banners with buttons their app did not declare to macOS (every banner with buttons while the sidebar lacks Full Disk Access), alerts with three or more such buttons, alerts with an actions menu until macOS records them a few seconds later (with Full Disk Access, see above), and notifications showing a text field or another control. With the sidebar on the right, macOS's notifications move left of it so it does not cover them. Turn this off in Settings to list them without their buttons instead. Notifications without buttons are listed like any other notification.
 - **Push from anywhere**: the `aerospace-sidebar` command and `aerospace-sidebar://` links add notifications.
+- **Buttons and questions**: a pushed notification can carry up to eight buttons beside its click action: one that runs a shell command, one that opens a field on the card and hands the text you send to a command, or one that opens a web link. `aerospace-sidebar notification ask` shows a notification with buttons and waits until you pick one, then prints your choice or the text you typed, so a script or an agent can ask you something and act on the answer.
 - **Click actions**: a notification can run a shell command or open a link when clicked. Web links in a notification's text are clickable on their own, underlined faintly, and in white under the pointer.
 - **Severity**: `low`, `normal`, `high` and `critical` notifications sort and look different, with critical ones always on top.
 - **Rules**: regular expressions on a notification's sender, title, subtitle or body raise or lower its severity, or hide it, such as every Slack message as `high`. Saving rules also applies them to the notifications already listed, which move, stack or go accordingly; removing a rule gives them back the severity they arrived with. Settings › Rules shows which recent notifications each rule matches, including ones you dismissed and ones a rule hid.
@@ -23,9 +24,11 @@
 - AeroSpace leaves an empty strip on one edge of the main display, and the sidebar fills it.
 - When an app posts a macOS notification, its banner vanishes and the notification appears at the top of its severity group in the sidebar.
 - `aerospace-sidebar notification push` sends a notification from the terminal, starting the sidebar first when it is not running.
-- A notification with the same sender, text, severity, icon and click action as a listed one is stacked onto it: the card moves up as the newest, shows `×2`, `×3`, … next to its time, and gets layered edges below it. Clicking or dismissing a stack removes all of its copies.
+- `aerospace-sidebar notification ask` does the same and then waits: picking a button on the card prints it, and dismissing the card ends the command with exit code `2`.
+- A notification with the same sender, text, severity, icon, click action and buttons as a listed one is stacked onto it (questions from `notification ask` never are): the card moves up as the newest, shows `×2`, `×3`, … next to its time, and gets layered edges below it. Clicking or dismissing a stack removes all of its copies.
 - Clicking a notification runs its action, or opens it in the app that posted it as clicking it in macOS would (a browser shows the page that sent it), and removes it. Option-click, or the × button that appears on hover, removes it without acting.
-- Hovering a notification shows what a click will do, including the full command.
+- Clicking one of a card's buttons does what the button says and removes the card. A button that asks for text opens a field on the card; Return or its Send button sends the text.
+- Hovering a notification shows what a click will do, including the full command, and what each button runs or opens.
 
 # How it Really Works
 
@@ -38,15 +41,15 @@
 - A notification's buttons come from what its app declared to macOS, which the sidebar reads from the same notification database (see below), so it needs Full Disk Access to offer them for banners and for more than two buttons; that is also how it knows which button asks for text and which one is destructive. Without Full Disk Access, an alert with one or two buttons is offered with them by name.
 - A notification listed with its buttons stays open off-screen until you act on its card, so its buttons still work later. A banner that times out meanwhile moves to Notification Center's history, where the sidebar presses its buttons off-screen. Quitting the sidebar brings a hidden notification back on screen, and the card restored at the next launch takes it over again. Cards keep their buttons across a relaunch. A card stops showing them once its notification turns out to be gone: an alert that left the screen without the sidebar, or a notification a button can no longer find in Notification Center. Clicking the card still opens the notification wherever it is.
 - Focus and Do Not Disturb suppress banners entirely. With Full Disk Access, the sidebar also reads the database in which macOS records every delivered notification (`~/Library/Group Containers/group.com.apple.usernoted/db2/db`, read-only) and lists the ones no banner showed. Their cards offer the notification's buttons, which the sidebar presses in Notification Center's history. That database is private to macOS and may change with a macOS update; the sidebar then logs the error and keeps intercepting banners.
-- `aerospace-sidebar notification push` talks to the app over a socket in your private temporary directory (`$(getconf DARWIN_USER_TEMP_DIR)com.alexgorbatchev.aerospace-sidebar.sock`) that only your user account can open. This is the only way to attach a `--run` command.
-- `aerospace-sidebar://` links can be opened by any app, and by web pages after your browser asks for permission. They therefore never carry commands, and their `open` links must be `http` or `https`. A notification from a link is labeled with the app that opened it when macOS reports one, otherwise `URL`.
+- `aerospace-sidebar notification push` talks to the app over a socket in your private temporary directory (`$(getconf DARWIN_USER_TEMP_DIR)com.alexgorbatchev.aerospace-sidebar.sock`) that only your user account can open. This is the only way to attach a `--run` command or buttons that run commands or take text. `notification ask` keeps its connection open until the answer arrives; when the command stops waiting (Ctrl-C or its `--timeout`), the sidebar notices the closed connection and removes the card. A question's card does not survive quitting the sidebar with its buttons: after a relaunch it is listed without them, and the waiting command ends with `no_answer`. Buttons that run commands or open links keep working after a relaunch.
+- `aerospace-sidebar://` links can be opened by any app, and by web pages after your browser asks for permission. They therefore never carry commands, text fields or questions; their `open` links and link buttons must be `http` or `https`. A notification from a link is labeled with the app that opened it when macOS reports one, otherwise `URL`.
 - App icons come from sketchybar-app-font (CC0), which ships inside the app, so nothing needs installing. An icon id is written `slack` or `:slack:`; one the font does not have leaves the notification without an icon and adds a small `Invalid icon: <id>` note under its text. Several apps can share one icon, such as `mail` for Mail, Spark and HEY. [`icon_map.json`](Resources/sketchybar-app-font/icon_map.json) lists every id with the apps it stands for.
-- `--run` commands run with your login shell (the one set for your account, with `-lc`) in the directory where you ran `aerospace-sidebar`. Their output is discarded.
+- `--run` commands and the commands of `--choice` and `--reply` buttons run with your login shell (the one set for your account, with `-lc`) in the directory where you ran `aerospace-sidebar`. Their output is discarded. A button's command finds the button's title in `AEROSPACE_SIDEBAR_CHOICE` and, for a `--reply` button, the text you sent in `AEROSPACE_SIDEBAR_REPLY`; the text never becomes part of the command itself, so quote the variable (`"$AEROSPACE_SIDEBAR_REPLY"`) like any other.
 - The list is saved to `~/Library/Application Support/com.alexgorbatchev.aerospace-sidebar/notifications.json` on every change and holds at most 200 notifications by default; a stack counts as one. Every notification received is also kept in `received.json` beside it, under the same limits, after you dismiss it or a rule hides it, so Settings › Rules can test rules against it.
 - The list draws its own thin scroll indicator in the margin on the sidebar's screen edge instead of the system scroll bar, so the cards keep their width when a mouse is attached. It appears while scrolling or when the pointer is over that margin, and can be dragged. A new notification scrolls its card into view, unless the pointer is over the sidebar, a reply is being typed on a card, or you are scrolling the list.
 - Settings live in `${XDG_CONFIG_HOME:-~/.config}/aerospace-sidebar/config.toml`. Edits to that file apply immediately; saving from the Settings window rewrites it and drops comments. Edits made to the file while Settings is open are kept when you save, unless you also changed the same group in Settings. In that case, and when the file no longer loads, Save warns first and a second Save replaces the file's version.
 - Each edit keeps the rest of your AeroSpace config and its comments, saves the previous version next to it as `aerospace.toml.bak`, checks the config with `aerospace reload-config --dry-run` before and after the edit, and puts the previous version back if the edit adds a problem AeroSpace reports. Problems the config already had, such as a key your AeroSpace version does not know or an invalid monitor pattern, are shown but do not undo the edit. A rejected edit is not retried automatically until the config or the sidebar changes. While AeroSpace is not running the edit is kept unchecked, and AeroSpace reads it when it starts. Settings › Sidebar shows the AeroSpace config file and the result, **Update Config** runs the same edit on demand, also after a rejection, and **Write Again** rewrites the block and reloads AeroSpace even when the config already matches.
-- Success messages go to stdout and errors to stderr. Exit codes: `0` success, `1` notification invalid, undeliverable or not confirmed, `64` invalid arguments, `74` output could not be written (also when the reader of a pipe has exited). With `AGENT=1`, output is compact: `OK: pushed`, or one `ERR: <code>: <detail>` line. `no_reply` means the notification was sent but not confirmed in time; it may still appear, so do not send it again.
+- Success messages and the answer to `notification ask` go to stdout, errors to stderr. Exit codes: `0` success, `1` notification invalid, undeliverable or not confirmed, or the app stopped waiting for an answer (`no_answer`, such as when it quit), `2` a question got no answer (its card was dismissed, cleared, expired, dropped or hidden by a rule, or `--timeout` passed), `64` invalid arguments, `74` output could not be written (also when the reader of a pipe has exited). With `AGENT=1`, output is compact: `OK: pushed`, `OK: ` and the answer to a question as JSON, or one `ERR: <code>: <detail>` line. `no_reply` means the notification was sent but not confirmed in time; a pushed notification may still appear, so do not send it again, while an unconfirmed question leaves no card and can be asked again.
 
 # Installation
 
@@ -90,6 +93,12 @@ aerospace-sidebar notification push --icon ghostty --title "Tests passed" --body
 # A critical notification that reopens the CI run when clicked
 aerospace-sidebar notification push --severity critical --title "Deploy failed" --run "open https://ci.example.com/runs/42"
 
+# Buttons that run a command, or send what you type to one
+aerospace-sidebar notification push --title "Release ready" --choice "Tag it=git tag v1.2.0" --reply 'Note=echo "$AEROSPACE_SIDEBAR_REPLY" >> notes.txt'
+
+# Ask a question and print the button you pick
+aerospace-sidebar notification ask --title "Deploy to production?" --choice Deploy --choice Wait
+
 # A link that shows a notification when opened, for web pages, Shortcuts or Raycast
 aerospace-sidebar notification url --title "Backup finished" --severity low
 
@@ -101,6 +110,8 @@ Sample Output:
 ```
 [OK] Notification sent to the sidebar.
 [OK] Notification sent to the sidebar.
+[OK] Notification sent to the sidebar.
+Deploy
 aerospace-sidebar://notification/push?title=Backup%20finished&severity=low
 Install the aerospace-sidebar skill using the Skills CLI:
 
@@ -128,8 +139,11 @@ Skill:
 | `--icon <id>` | | terminal's icon | sketchybar-app-font icon id such as `slack` or `:slack:`, up to 64 characters |
 | `--open <url>` | | none | URL to open when the notification is clicked, up to 8192 characters |
 | `--run <command>` | | none | Shell command to run in the current directory when the notification is clicked, up to 4096 characters |
+| `--choice <title=command>` | | none | A button that runs a shell command in the current directory; repeatable |
+| `--reply <title=command>` | | none | A button that opens a text field; sending the text runs a shell command in the current directory; repeatable |
+| `--choice-link <title=url>` | | none | A button that opens an `http` or `https` link; repeatable |
 
-A notification needs `--title` or `--body`. Each value may also take at most four bytes of UTF-8 per character of its limit, which only text stacking many combining marks or emoji sequences reaches. `--open` and `--run` cannot be combined. Without `--icon`, the notification shows the icon of the app the command runs in: `__CFBundleIdentifier`, set by macOS for processes an app starts, else the terminal named by `TERM_PROGRAM` (Terminal, Ghostty, iTerm2, VS Code, Warp, WezTerm). Outside any of them it shows a terminal icon.
+A notification needs `--title` or `--body`. Button values split at the first `=` into a title of up to 64 characters and a command (up to 4096 characters) or URL (up to 8192 characters). A notification takes at most 8 buttons with different titles, shown in the order `--choice`, `--reply`, `--choice-link`. A `--reply` field shows the button's title as its placeholder and a **Send** button, and sends at most 4096 characters. Each value may also take at most four bytes of UTF-8 per character of its limit, which only text stacking many combining marks or emoji sequences reaches. `--open` and `--run` cannot be combined. Without `--icon`, the notification shows the icon of the app the command runs in: `__CFBundleIdentifier`, set by macOS for processes an app starts, else the terminal named by `TERM_PROGRAM` (Terminal, Ghostty, iTerm2, VS Code, Warp, WezTerm). Outside any of them it shows a terminal icon.
 
 `aerospace-sidebar notification url`
 
@@ -141,6 +155,23 @@ A notification needs `--title` or `--body`. Each value may also take at most fou
 | `--severity <severity>` | | `normal` | `low`, `normal`, `high` or `critical` |
 | `--icon <id>` | | none | sketchybar-app-font icon id such as `slack` or `:slack:` |
 | `--open <url>` | | none | `http` or `https` URL to open when the notification is clicked, up to 8192 characters |
+| `--choice-link <title=url>` | | none | A button that opens an `http` or `https` link; repeatable |
+
+`aerospace-sidebar notification ask`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--title <title>` | | empty | Bold first line, up to 256 characters |
+| `--subtitle <subtitle>` | | empty | Line under the title, up to 256 characters |
+| `--body <body>` | | empty | Main text, up to 4096 characters |
+| `--severity <severity>` | | `normal` | `low`, `normal`, `high` or `critical` |
+| `--icon <id>` | | terminal's icon | sketchybar-app-font icon id such as `slack` or `:slack:`, up to 64 characters |
+| `--choice <title>` | | none | A button; picking it prints its title (with `AGENT=1`, `OK: ` and the answer as JSON); repeatable |
+| `--reply <title>` | | none | A button that opens a text field; sending it prints the text; repeatable |
+| `--timeout <seconds>` | | none | Give up and remove the card after this many seconds; without it the command waits until you answer |
+| `--json` | | `false` | Print `{"choice":"<title>","reply":"<text>"}`, with `null` for `reply` when the button asks for no text |
+
+A question needs `--title` or `--body` and at least one `--choice` or `--reply`, at most 8 in all, with different, non-empty titles of up to 64 characters. Clicking the card itself, rather than a button, dismisses it without an answer.
 
 # Configuration
 
@@ -178,7 +209,9 @@ A missing file or key uses the defaults shown. A key or table not shown here, su
 
 # URL Scheme
 
-Opening `aerospace-sidebar://notification/push` with any of the query parameters `title`, `subtitle`, `body`, `severity`, `icon` and `open` shows a notification, for example from a web page link, the Shortcuts Open URL action, or `open -g "<url>"` in a script. Values are percent-encoded; `aerospace-sidebar notification url` builds the link for you. Opening a link without `-g` brings the sidebar app forward for a moment; it hands activation straight back to the app you were working in (launchers such as Spotlight, Raycast and Alfred are passed over).
+Opening `aerospace-sidebar://notification/push` with any of the query parameters `title`, `subtitle`, `body`, `severity`, `icon`, `open` and `choice` shows a notification, for example from a web page link, the Shortcuts Open URL action, or `open -g "<url>"` in a script. Values are percent-encoded; `aerospace-sidebar notification url` builds the link for you. Opening a link without `-g` brings the sidebar app forward for a moment; it hands activation straight back to the app you were working in (launchers such as Spotlight, Raycast and Alfred are passed over).
+
+Each `choice` adds a link button: its value is the button's title, `=`, and the `http` or `https` URL it opens, such as `choice=Logs%3Dhttps%3A%2F%2Fci.example.com%2Flogs`. Links cannot add buttons that run commands, take text or answer a question.
 
 ```html
 <a href="aerospace-sidebar://notification/push?title=Build%20done&severity=high&open=https%3A%2F%2Fci.example.com">Notify me</a>

@@ -136,6 +136,23 @@ struct SidebarAppDelegateTests {
         #expect(delegate.monitor?.isRunning == false)
     }
 
+    /// An ask over the control socket lists a card whose choice answers the client on its connection.
+    @Test func answersAsksOverTheControlSocket() async throws {
+        let path = ControlServerTests.socketPath()
+        let delegate = makeDelegate(socketPath: path)
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
+        let payload = try NotificationPayload(title: "Deploy?", choices: [PushedChoice(title: "Yes", action: .answer)])
+
+        let connection = try await UnixSocket.send(.askNotification(payload), path: path)
+        try await waitUntil { delegate.model.notifications.contains { $0.title == "Deploy?" } }
+        let card = try #require(delegate.model.notifications.first { $0.title == "Deploy?" })
+        delegate.model.choose("Yes", for: card.id)
+
+        #expect(card.source == "aerospace-sidebar")
+        #expect(try await connection.answer(within: .seconds(5)) == .answered(choice: "Yes", reply: nil))
+    }
+
     /// The database source runs while macOS notifications are replaced, and stops with interception.
     @Test func readsTheNotificationDatabaseWhileReplacingNotifications() throws {
         try database.create()
@@ -457,6 +474,15 @@ struct SidebarAppDelegateTests {
         #expect(delegate.model.notifications.map(\.title) == ["From a page"])
         #expect(delegate.model.notifications.first?.source == "Safari")
         #expect(delegate.model.notifications.first?.icon == SidebarNotification.Icon(id: "safari"))
+    }
+
+    @Test func urlsPushLinkChoices() throws {
+        let delegate = makeDelegate()
+        let docs = try PushedChoice(title: "Docs", action: .open(URL(string: "https://example.com/docs")!))
+
+        delegate.application(NSApplication.shared, open: [URL(string: "aerospace-sidebar://notification/push?title=t&choice=Docs=https://example.com/docs")!])
+
+        #expect(delegate.model.notifications.first?.pushedChoices == [docs])
     }
 
     @Test func changingSideOrWidthUpdatesAndReloadsAeroSpace() async throws {
