@@ -20,6 +20,10 @@ import Foundation
 /// name = "Menlo"
 /// size = 13
 ///
+/// [background]
+/// color = "#1E1E1E"
+/// opacity = 0.6
+///
 /// [[rules]]
 /// source = "^Slack$"
 /// action = "high"
@@ -171,15 +175,88 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
         }
     }
 
+    /// A color filling the sidebar's strip from the top of the screen to the bottom, behind the cards
+    /// (`SidebarBackground`).
+    public struct Background: Codable, Equatable, Sendable {
+        public static let opacityRange: ClosedRange<Double> = 0...1
+
+        public var color = RGBColor.black
+        /// From 0, which shows no background, to 1, which hides the desktop under the strip.
+        public var opacity = 0.0
+
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case color, opacity
+        }
+
+        public init(color: RGBColor = .black, opacity: Double = 0) {
+            self.color = color
+            self.opacity = opacity
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.strictContainer(keyedBy: CodingKeys.self)
+            color = try container.decodeIfPresent(RGBColor.self, forKey: .color) ?? .black
+            opacity = try container.decodeIfPresent(Double.self, forKey: .opacity) ?? 0
+            guard Self.opacityRange.contains(opacity) else {
+                throw DecodingError.dataCorruptedError(forKey: .opacity, in: container, debugDescription: "opacity must be between 0 and 1")
+            }
+        }
+
+        /// Whether there is anything to show.
+        public var isVisible: Bool { opacity > 0 }
+    }
+
+    /// An opaque sRGB color, written `#RRGGBB` in `config.toml`.
+    public struct RGBColor: Codable, Equatable, Sendable, CustomStringConvertible {
+        public static let black = RGBColor(red: 0, green: 0, blue: 0)
+
+        public var red: UInt8
+        public var green: UInt8
+        public var blue: UInt8
+
+        public init(red: UInt8, green: UInt8, blue: UInt8) {
+            self.red = red
+            self.green = green
+            self.blue = blue
+        }
+
+        /// The color `#RRGGBB` names, in either case; nil for any other text.
+        public init?(hex: String) {
+            guard hex.count == 7, hex.first == "#", let value = UInt32(hex.dropFirst(), radix: 16),
+                  hex.dropFirst().allSatisfy(\.isHexDigit)
+            else { return nil }
+            self.init(red: UInt8(value >> 16), green: UInt8(value >> 8 & 0xFF), blue: UInt8(value & 0xFF))
+        }
+
+        public var description: String {
+            String(format: "#%02X%02X%02X", red, green, blue)
+        }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            let text = try container.decode(String.self)
+            guard let color = RGBColor(hex: text) else {
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: "color must be written #RRGGBB, not \(text)")
+            }
+            self = color
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encode(description)
+        }
+    }
+
     public var sidebar = Sidebar()
     public var notifications = Notifications()
     public var history = History()
     public var font = Font()
+    public var background = Background()
     /// Applied in order to every notification as it arrives; see `Rule`.
     public var rules: [Rule] = []
 
     enum CodingKeys: String, CodingKey, CaseIterable {
-        case sidebar, notifications, history, font, rules
+        case sidebar, notifications, history, font, background, rules
     }
 
     public init(
@@ -187,12 +264,14 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
         notifications: Notifications = Notifications(),
         history: History = History(),
         font: Font = Font(),
+        background: Background = Background(),
         rules: [Rule] = []
     ) {
         self.sidebar = sidebar
         self.notifications = notifications
         self.history = history
         self.font = font
+        self.background = background
         self.rules = rules
     }
 
@@ -202,6 +281,7 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
         notifications = try container.decodeIfPresent(Notifications.self, forKey: .notifications) ?? Notifications()
         history = try container.decodeIfPresent(History.self, forKey: .history) ?? History()
         font = try container.decodeIfPresent(Font.self, forKey: .font) ?? Font()
+        background = try container.decodeIfPresent(Background.self, forKey: .background) ?? Background()
         rules = try container.decodeIfPresent([Rule].self, forKey: .rules) ?? []
     }
 
@@ -212,6 +292,7 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
         try container.encode(notifications, forKey: .notifications)
         try container.encode(history, forKey: .history)
         try container.encode(font, forKey: .font)
+        try container.encode(background, forKey: .background)
         if !rules.isEmpty {
             try container.encode(rules, forKey: .rules)
         }

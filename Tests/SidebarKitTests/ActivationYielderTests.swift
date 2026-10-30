@@ -19,12 +19,12 @@ struct ActivationYielderTests {
     }
 
     func makeYielder(
-        frontmostApp: NSRunningApplication?, pointerOverFontPanel: Bool = false, activationAllowed: Bool = true
+        frontmostApp: NSRunningApplication?, pointerOverPickerPanel: Bool = false, activationAllowed: Bool = true
     ) -> ActivationYielder {
         ActivationYielder(
             workspaceCenter: workspaceCenter,
             frontmostApp: frontmostApp,
-            isPointerOverFontPanel: { pointerOverFontPanel },
+            isPointerOverPickerPanel: { pointerOverPickerPanel },
             handOver: { [handedOver] in
                 handedOver.apps.append($0.processIdentifier)
                 return activationAllowed
@@ -74,9 +74,9 @@ struct ActivationYielderTests {
         #expect(handedOver.deactivations == 1)
     }
 
-    /// A click on the font panel activates the app so that its fields take the keyboard.
-    @Test func leavesActivationByAClickOnTheFontPanelAlone() {
-        let yielder = makeYielder(frontmostApp: regularApp, pointerOverFontPanel: true)
+    /// A click on the font or color panel activates the app so that its fields take the keyboard.
+    @Test func leavesActivationByAClickOnAPickerPanelAlone() {
+        let yielder = makeYielder(frontmostApp: regularApp, pointerOverPickerPanel: true)
 
         yielder.appDidBecomeActive()
 

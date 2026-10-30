@@ -4,12 +4,16 @@ import Observation
 /// The Settings window's working copy. Edits stay in `draft` until `save()` writes `config.toml`;
 /// `revert()` discards them. Changes to the file, made by hand or by another tool, replace the groups of
 /// the draft that hold no edits; Save warns before replacing a group that changed in both places, or a file
-/// that does not load. The draft font is previewed right away, so font edits show before they are saved.
+/// that does not load. The draft font and background are previewed right away, so their edits show before they
+/// are saved.
 @MainActor
 @Observable
 public final class SettingsEditor {
     public var draft: SidebarSettings {
-        didSet { store.preview(font: draft.font == store.settings.font ? nil : draft.font) }
+        didSet {
+            store.preview(font: draft.font == store.settings.font ? nil : draft.font)
+            store.preview(background: draft.background == store.settings.background ? nil : draft.background)
+        }
     }
 
     /// Problems to show in the window's status line: why the last Save did not save, else load failures,
@@ -84,7 +88,10 @@ public final class SettingsEditor {
         var changedInFile: [SettingsGroup] = []
         for group in Self.groups where !group.isEqual(draft, start) {
             if !group.isEqual(updated, start), !group.isEqual(updated, draft) {
-                changedInFile.append(group.settingsGroup)
+                // Appearance holds two tables: the font and the background.
+                if !changedInFile.contains(group.settingsGroup) {
+                    changedInFile.append(group.settingsGroup)
+                }
                 // The warning names the file's version; saving again replaces it.
                 group.copy(updated, &start)
             }
@@ -105,6 +112,7 @@ public final class SettingsEditor {
             return false
         }
         store.preview(font: nil)
+        store.preview(background: nil)
         start = store.settings
         problem = nil
         replacedLoadError = nil
@@ -161,6 +169,7 @@ public final class SettingsEditor {
 
     private static let groups = [
         Group(\.font, .appearance),
+        Group(\.background, .appearance),
         Group(\.sidebar, .sidebar),
         Group(\.notifications, .notifications),
         Group(\.rules, .rules),
@@ -170,7 +179,7 @@ public final class SettingsEditor {
     private static func loadStatus(_ store: SettingsStore) -> String? {
         let fontName = store.settings.font.name
         let problems = [
-            store.loadError.map { "config.toml is invalid, so the previous settings stay in effect: \($0)" },
+            store.loadProblem,
             !fontName.isEmpty && Typography.installedFamily(named: fontName) == nil
                 ? "Font “\(fontName)” is not installed, so the system font is used." : nil,
         ].compactMap { $0 }

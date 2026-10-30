@@ -115,7 +115,7 @@ struct FontChooserTests {
 
     /// Asks the window server rather than AppKit, whose `isVisible` is true for a panel the window
     /// server keeps hidden because its app is inactive.
-    @Test(.enabled(if: !NSScreen.screens.isEmpty, "requires a display"))
+    @Test(.showsWindowsOnScreen)
     func realFontPanelReachesTheScreenWhileTheAppIsInactive() async throws {
         let screen = try #require(NSScreen.screens.first)
         // The app this guards is never active. Only a key window would activate the test process, and

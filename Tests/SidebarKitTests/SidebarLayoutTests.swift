@@ -27,6 +27,15 @@ struct SidebarLayoutTests {
         #expect(frame == visibleFrame)
     }
 
+    /// The background runs the strip's columns from the top of the screen, behind the menu bar, to its bottom,
+    /// behind the Dock.
+    @Test func backgroundSpansTheScreensFullHeight() {
+        let screen = CGRect(x: 1920, y: 0, width: 2560, height: 1440)
+
+        #expect(SidebarLayout(width: 300, side: .right).fullHeightFrame(in: visibleFrame, of: screen) == CGRect(x: 4180, y: 0, width: 300, height: 1440))
+        #expect(SidebarLayout(width: 250, side: .left).fullHeightFrame(in: visibleFrame, of: screen) == CGRect(x: 1920, y: 0, width: 250, height: 1440))
+    }
+
     /// A right-side strip covers the right edge of the visible frame, where NotificationCenter draws, by
     /// its clamped width; a left-side strip covers nothing.
     @Test func coversTheRightEdgeOnlyFromTheRightSide() {

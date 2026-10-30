@@ -43,6 +43,18 @@ extension Trait where Self == LeavesDesktopAlone {
     static var leavesDesktopAlone: Self { Self() }
 }
 
+extension Trait where Self == ConditionTrait {
+    /// Runs a test that shows a window on a display, which only the window server can check, only when
+    /// `AEROSPACE_SIDEBAR_SCREEN_TESTS` is 1 and a display exists. CI sets it; on a desk such windows flash in front
+    /// of the user's work, so local runs leave them out unless asked.
+    static var showsWindowsOnScreen: Self {
+        .enabled(
+            if: ProcessInfo.processInfo.environment["AEROSPACE_SIDEBAR_SCREEN_TESTS"] == "1" && !NSScreen.screens.isEmpty,
+            "shows windows on screen; set AEROSPACE_SIDEBAR_SCREEN_TESTS=1"
+        )
+    }
+}
+
 extension NSUserInterfaceItemIdentifier {
     /// Marks a window that a test shows on a display on purpose, because only the window server can answer
     /// what it checks. Such a window must never become key and must leave the screen when the test ends.
@@ -91,17 +103,19 @@ extension SidebarPanelController {
         model: SidebarModel,
         settings: SettingsStore,
         targetVisibleFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenVisibleFrame,
+        targetScreenFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenFrame,
         notificationCenter: NotificationCenter = NotificationCenter(),
         workspaceCenter: NotificationCenter = NotificationCenter(),
         openSettings: @escaping @MainActor (SettingsGroup) -> Void = { _ in },
         setUp: @escaping @MainActor (PermissionFlowPane, CGRect?) -> Void = { _, _ in }
     ) -> SidebarPanelController {
         let controller = SidebarPanelController(
-            model: model, settings: settings, targetVisibleFrame: targetVisibleFrame,
+            model: model, settings: settings, targetVisibleFrame: targetVisibleFrame, targetScreenFrame: targetScreenFrame,
             notificationCenter: notificationCenter, workspaceCenter: workspaceCenter,
             openSettings: openSettings, setUp: setUp
         )
         controller.panel.alphaValue = 0
+        controller.background.window.alphaValue = 0
         return controller
     }
 }

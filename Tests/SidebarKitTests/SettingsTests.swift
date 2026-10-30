@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 @testable import SidebarKit
 import Testing
@@ -24,7 +25,8 @@ struct SettingsFileTests {
             sidebar: .init(side: .left, width: 420),
             notifications: .init(replaceSystem: false, actionableLeftToMacOS: false, appsLeftToMacOS: ["zoom.us", "Calendar"]),
             history: .init(retentionHours: 48, maxCount: 500),
-            font: .init(name: "Menlo", size: 14.5)
+            font: .init(name: "Menlo", size: 14.5),
+            background: .init(color: SidebarSettings.RGBColor(red: 0x1E, green: 0x2A, blue: 0x3B), opacity: 0.6)
         )
 
         try file.save(settings)
@@ -37,6 +39,7 @@ struct SettingsFileTests {
         #expect(text.contains("[font]") && text.contains("name = \"Menlo\""))
         #expect(text.contains("apps_left_to_macos = [") && text.contains("\"zoom.us\""))
         #expect(text.contains("actionable_left_to_macos = false"))
+        #expect(text.contains("[background]") && text.contains("color = \"#1E2A3B\"") && text.contains("opacity = 0.6"))
         // Without rules there is no `rules = []` above the tables.
         #expect(!text.contains("rules"))
         #expect(try file.load() == settings)
@@ -69,6 +72,9 @@ struct SettingsFileTests {
         ("[sidebar]\nwidth = 100\n", "sidebar.width: width must be between 150 and 1000"),
         ("[sidebar]\nside = \"top\"\n", "sidebar.side"),
         ("[notifications]\nreplace_system = \"yes\"\n", "notifications.replace_system"),
+        ("[background]\nopacity = 1.5\n", "background.opacity: opacity must be between 0 and 1"),
+        ("[background]\ncolor = \"red\"\n", "background.color: color must be written #RRGGBB, not red"),
+        ("[background]\ncolor = \"#+12345\"\n", "background.color: color must be written #RRGGBB, not #+12345"),
     ])
     func rejectsInvalidValues(toml: String, fragment: String) throws {
         let directory = try TemporaryDirectory()
@@ -83,8 +89,9 @@ struct SettingsFileTests {
 
     /// A misspelled key or table would otherwise be ignored and leave its setting at the default.
     @Test(arguments: [
-        ("[notification]\nreplace_system = false\n", "unknown key notification; expected sidebar, notifications, history, font, or rules"),
-        ("replace_system = false\n", "unknown key replace_system; expected sidebar, notifications, history, font, or rules"),
+        ("[notification]\nreplace_system = false\n", "unknown key notification; expected sidebar, notifications, history, font, background, or rules"),
+        ("replace_system = false\n", "unknown key replace_system; expected sidebar, notifications, history, font, background, or rules"),
+        ("[background]\nalpha = 0.5\n", "background: unknown key alpha; expected color or opacity"),
         ("[notifications]\nreplace_sytem = false\n", "notifications: unknown key replace_sytem; expected replace_system, actionable_left_to_macos, or apps_left_to_macos"),
         ("[sidebar]\nwdth = 300\nsid = \"left\"\n", "sidebar: unknown keys sid and wdth; expected side or width"),
         ("sidebar.wide = 300\n", "sidebar: unknown key wide; expected side or width"),
@@ -158,6 +165,26 @@ struct SettingsStoreTests {
 
         #expect(store.font == SidebarSettings.Font())
         #expect(fonts == [menlo, SidebarSettings.Font()])
+    }
+
+    @Test func backgroundPreviewShowsUntilClearedWithoutWritingTheFile() throws {
+        let store = SettingsStore(file: file)
+        var backgrounds: [SidebarSettings.Background] = []
+        store.observeBackground { backgrounds.append($0) }
+        let gray = SidebarSettings.Background(color: SidebarSettings.RGBColor(red: 40, green: 40, blue: 40), opacity: 0.5)
+
+        store.preview(background: gray)
+        store.preview(background: gray)
+        store.update { $0.history.maxCount = 300 }
+
+        #expect(store.background == gray)
+        #expect(store.settings.background == SidebarSettings.Background())
+        #expect(!(try String(contentsOf: file.url, encoding: .utf8)).contains("#282828"))
+
+        store.preview(background: nil)
+        store.update { $0.background.opacity = 0.2 }
+
+        #expect(backgrounds == [gray, SidebarSettings.Background(), SidebarSettings.Background(opacity: 0.2)])
     }
 
     @Test func savedFontChangesNotifyFontObservers() {
@@ -266,13 +293,18 @@ struct SettingsStoreTests {
 
         #expect(launched.settings == SidebarSettings())
         #expect(launched.loadError == message)
+        #expect(launched.loadProblem == "config.toml is invalid, so the default settings are in effect: \(message)")
+        launched.reload()
+        #expect(launched.loadProblem == "config.toml is invalid, so the default settings are in effect: \(message)")
 
         launched.update { $0.rules = [rule] }
+        #expect(launched.loadProblem == nil)
         try directory.write(typo, to: "config.toml")
         launched.reload()
 
         #expect(launched.settings.rules == [rule])
         #expect(launched.loadError == message)
+        #expect(launched.loadProblem == "config.toml is invalid, so the previous settings stay in effect: \(message)")
     }
 
     @Test func watchingAppliesExternalEdits() async throws {
@@ -314,5 +346,26 @@ struct SettingsStoreTests {
 
     @Test func describesNonDecodingErrors() {
         #expect(SettingsStore.describe(CocoaError(.fileReadNoPermission)).contains("CocoaError"))
+    }
+}
+
+struct RGBColorTests {
+    @Test(arguments: [("#1e2A3b", "#1E2A3B"), ("#000000", "#000000"), ("#FFFFFF", "#FFFFFF")])
+    func readsAndWritesHex(hex: String, written: String) throws {
+        #expect(try #require(SidebarSettings.RGBColor(hex: hex)).description == written)
+    }
+
+    @Test(arguments: ["", "#12345", "#1234567", "123456#", "#12345G", "#+12345", "#-12345", "#１２３４５６"])
+    func refusesOtherText(hex: String) {
+        #expect(SidebarSettings.RGBColor(hex: hex) == nil)
+    }
+
+    /// Colors from the color panel come in any color space; settings keep them as sRGB.
+    @Test @MainActor func convertsToAndFromAppKitColors() {
+        let color = SidebarSettings.RGBColor(red: 0x1E, green: 0x2A, blue: 0x3B)
+
+        #expect(SidebarSettings.RGBColor(color.nsColor) == color)
+        #expect(SidebarSettings.RGBColor(NSColor(deviceWhite: 1, alpha: 0.5)) == SidebarSettings.RGBColor(red: 255, green: 255, blue: 255))
+        #expect(SidebarSettings.RGBColor(NSColor(displayP3Red: 1, green: 0, blue: 0, alpha: 1)) == SidebarSettings.RGBColor(red: 255, green: 0, blue: 0))
     }
 }

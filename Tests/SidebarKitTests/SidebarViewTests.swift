@@ -17,10 +17,11 @@ struct SidebarViewTests {
 
     func view(
         side: SidebarSettings.Sidebar.Side = .right,
+        settingsProblem: String? = nil,
         openSettings: @escaping (SettingsGroup) -> Void = { _ in },
         setUp: @escaping (PermissionFlowPane, CGRect?) -> Void = { _, _ in }
     ) -> SidebarView {
-        SidebarView(model: model, side: side, openSettings: openSettings, setUp: setUp)
+        SidebarView(model: model, side: side, settingsProblem: settingsProblem, openSettings: openSettings, setUp: setUp)
     }
 
     func button(_ title: String, in sut: InspectableView<ViewType.ClassifiedView>) throws -> InspectableView<ViewType.Button> {
@@ -463,6 +464,20 @@ struct SidebarViewTests {
 
         #expect(model.fullDiskAccessNoteDismissed)
         #expect(throws: (any Error).self) { try view().inspect().find(text: SidebarView.fullDiskAccessNote) }
+    }
+
+    /// A `config.toml` that does not load moves the sidebar to the default strip and drops the user's rules, so
+    /// the sidebar says why and opens Settings on General, which shows the file.
+    @Test func saysWhenTheSettingsFileDoesNotLoad() throws {
+        let problem = "config.toml is invalid, so the default settings are in effect: sidebar: unknown key wide"
+        var opened: [SettingsGroup] = []
+
+        let sut = try view(settingsProblem: problem, openSettings: { opened.append($0) }).inspect()
+        try button("Open Settings", in: sut).tap()
+
+        #expect(throws: Never.self) { try sut.find(text: problem) }
+        #expect(opened == [.general])
+        #expect(throws: (any Error).self) { try view().inspect().find(viewWithAccessibilityLabel: "Open Settings") }
     }
 
     @Test func asksForFullDiskAccessOnlyWhileMacOSRefusesIt() throws {

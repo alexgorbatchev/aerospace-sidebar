@@ -177,6 +177,35 @@ struct SettingsEditorTests {
         #expect(editor.status == nil)
     }
 
+    /// Appearance holds the font and the background; the warning names it once when both changed in the file.
+    @Test func namesAGroupOnceWhenSeveralOfItsTablesChangedInTheFile() throws {
+        let editor = SettingsEditor(store: store)
+        editor.draft.font.size = 15
+        editor.draft.background.opacity = 0.3
+        try directory.write("[font]\nsize = 16\n[background]\nopacity = 0.5\n", to: "config.toml")
+        store.reload()
+
+        #expect(!editor.save())
+        #expect(editor.status == "Appearance settings changed in config.toml while you edited them. Save again to replace those changes, or Cancel to keep them.")
+    }
+
+    /// Like the font, the background shows as it is edited, before it is saved.
+    @Test func draftBackgroundPreviewsUntilSavedOrReverted() throws {
+        let editor = SettingsEditor(store: store)
+
+        editor.draft.background.opacity = 0.4
+        #expect(store.background.opacity == 0.4)
+        #expect(store.settings.background == SidebarSettings.Background())
+
+        editor.revert()
+        #expect(store.backgroundPreview == nil)
+
+        editor.draft.background = SidebarSettings.Background(color: SidebarSettings.RGBColor(red: 9, green: 9, blue: 9), opacity: 1)
+        #expect(editor.save())
+        #expect(store.backgroundPreview == nil)
+        #expect(try store.file.load().background == SidebarSettings.Background(color: SidebarSettings.RGBColor(red: 9, green: 9, blue: 9), opacity: 1))
+    }
+
     /// The status line shows a file that stopped loading while Settings is open, and Save replaces it only
     /// when pressed again.
     @Test func warnsBeforeReplacingAnInvalidFile() throws {
@@ -292,8 +321,8 @@ struct SettingsPaneTests {
         AppearancePane(editor: editor, chooseFont: chooseFont, close: close)
     }
 
-    func general(configURL: URL? = nil, reveal: @escaping (URL) -> Void = { _ in }, quit: @escaping () -> Void = {}) -> GeneralPane {
-        GeneralPane(configURL: configURL ?? store.file.url, reveal: reveal, quit: quit)
+    func general(store: SettingsStore? = nil, reveal: @escaping (URL) -> Void = { _ in }, quit: @escaping () -> Void = {}) -> GeneralPane {
+        GeneralPane(store: store ?? self.store, reveal: reveal, quit: quit)
     }
 
     func history(close: @escaping () -> Void = {}) -> HistoryPane {
@@ -606,16 +635,67 @@ struct SettingsPaneTests {
     }
 
     @Test func settingsFileUnderHomeIsShownWithTilde() throws {
-        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/aerospace-sidebar/config.toml")
+        // Never loaded or watched: a store only reads its file when made, and this one is missing.
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/aerospace-sidebar-tests-missing/config.toml")
 
-        #expect(throws: Never.self) { try general(configURL: url).inspect().find(text: "~/.config/aerospace-sidebar/config.toml") }
+        #expect(throws: Never.self) {
+            try general(store: SettingsStore(file: SettingsFile(url: url))).inspect().find(text: "~/.config/aerospace-sidebar-tests-missing/config.toml")
+        }
+    }
+
+    /// General shows why the file does not load under the file itself, where the sidebar's note sends the user.
+    @Test func generalSaysWhyTheSettingsFileDoesNotLoad() throws {
+        #expect(throws: (any Error).self) { try general().inspect().find(textWhere: { text, _ in text.hasPrefix("config.toml is invalid") }) }
+
+        try directory.write("[history\n", to: "config.toml")
+        store.reload()
+
+        let problem = try #require(store.loadProblem)
+        #expect(throws: Never.self) { try general().inspect().find(text: problem) }
+    }
+
+    /// The opacity field edits the background in whole percent.
+    @Test func editsTheBackgroundsOpacityInPercent() throws {
+        editor.draft.background.opacity = 0.25
+        let sut = try appearance().inspect()
+        let field = try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Background opacity" })
+
+        #expect(try field.input() == "25")
+        try field.setInput("40")
+
+        #expect(editor.draft.background.opacity == 0.4)
+        #expect(store.background.opacity == 0.4)
+    }
+
+    /// The well shows the draft's color and puts the color picked in the panel into the draft, as sRGB.
+    @Test func colorWellShowsAndPicksTheBackgroundColor() throws {
+        _ = NSApplication.shared
+        editor.draft.background.color = SidebarSettings.RGBColor(red: 0x1E, green: 0x2A, blue: 0x3B)
+        let host = NSHostingView(rootView: appearance())
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: host.fittingSize), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        let well = try #require(Self.subviews(of: host).compactMap { $0 as? SettingsColorWell }.first)
+
+        #expect(SidebarSettings.RGBColor(well.color) == editor.draft.background.color)
+        #expect(!well.supportsAlpha)
+        #expect(well.accessibilityLabel() == "Background color")
+
+        well.color = NSColor(displayP3Red: 1, green: 0, blue: 0, alpha: 1)
+        well.sendAction(well.action, to: well.target)
+        #expect(editor.draft.background.color == SidebarSettings.RGBColor(red: 255, green: 0, blue: 0))
+
+        editor.draft.background.color = .black
+        host.layoutSubtreeIfNeeded()
+        #expect(SidebarSettings.RGBColor(well.color) == .black)
+        #expect(well.sidebarSide() == .right)
     }
 
     @Test func everyNumberFieldHasArrows() throws {
         let panes: [any View] = [sidebarPane(), history(), appearance()]
         let steppers = try panes.map { try AnyView($0).inspect().findAll(ViewType.Stepper.self).count }
 
-        #expect(steppers == [1, 2, 1])
+        #expect(steppers == [1, 2, 2])
     }
 
     @Test func numberFieldShowsUnit() throws {
@@ -631,7 +711,7 @@ struct SettingsPaneTests {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: host.fittingSize), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
         host.layoutSubtreeIfNeeded()
-        // Size is the pane's only number field.
+        // Size is the pane's first number field; the background's opacity follows.
         let stepper = try #require(Self.subviews(of: host).compactMap { $0 as? NSStepper }.first)
 
         Self.click(stepper, up: true)
@@ -888,12 +968,19 @@ struct SettingsWindowControllerTests {
         let controller = SettingsWindowController.forTesting(store: store, aeroSpace: .fake(store: store, home: directory.url))
         controller.show()
         let before = controller.window.frame
+        let panes = controller.paneSizes
+        let list = controller.sidebarHeight
 
         controller.editor.draft.font.size = 26
         #expect(controller.window.frame.height > before.height)
 
         controller.editor.revert()
-        #expect(controller.window.frame == before)
+        // Failed once in about 50 full runs (650 points tall instead of 594) and never since; the sizes the window
+        // is fitted to tell which pane or the group list reported a different size.
+        #expect(
+            controller.window.frame == before,
+            "panes \(panes) became \(controller.paneSizes); group list \(list) became \(controller.sidebarHeight)"
+        )
         controller.window.close()
     }
 

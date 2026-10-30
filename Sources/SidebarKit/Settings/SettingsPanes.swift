@@ -159,6 +159,8 @@ struct AppearancePane: View {
     @Bindable var editor: SettingsEditor
     /// Opens the font panel on the draft font.
     let chooseFont: () -> Void
+    /// The sidebar's saved side, which the color panel opens away from.
+    var sidebarSide: @MainActor () -> SidebarSettings.Sidebar.Side = { .right }
     let close: () -> Void
 
     @Environment(\.typography) private var typography
@@ -176,7 +178,24 @@ struct AppearancePane: View {
                 NumberField(title: "Size", value: $editor.draft.font.size, stepRange: SidebarSettings.Font.sizeRange, unit: "points")
             }
             SettingsHint(text: "Empty for the system font. All text scales with Size.")
+            SettingsRow(label: "Background") {
+                HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.columnSpacing) {
+                    ColorWell(title: "Background color", color: $editor.draft.background.color, sidebarSide: sidebarSide)
+                        .frame(width: SettingsMetrics.numberFieldWidth * typography.scale)
+                    NumberField(title: "Background opacity", value: backgroundOpacity, stepRange: 0...100, unit: "% opacity")
+                }
+                .fixedSize()
+            }
+            SettingsHint(text: "Fills the sidebar's strip, menu bar included. 0% shows none.")
         }
+    }
+
+    /// The background's opacity in whole percent.
+    private var backgroundOpacity: Binding<Int> {
+        Binding(
+            get: { Int((editor.draft.background.opacity * 100).rounded()) },
+            set: { editor.draft.background.opacity = Double($0) / 100 }
+        )
     }
 }
 

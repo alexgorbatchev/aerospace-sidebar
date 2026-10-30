@@ -10,14 +10,24 @@ public final class SidebarPanelController: NSObject {
         NSScreen.screens.first?.visibleFrame
     }
 
-    /// The panel's window level, above other apps' windows and the menu bar.
-    public static let level: NSWindow.Level = .statusBar
+    /// Frame of the primary screen, menu bar and Dock included.
+    public static let primaryScreenFrame: @MainActor () -> CGRect? = {
+        NSScreen.screens.first?.frame
+    }
+
+    /// The panel's window level: just below the menu bar's, above other apps' windows, the Dock and
+    /// NotificationCenter's window (layer 21). The screenshot thumbnail's full-screen window sits at the menu bar's
+    /// level (layer 24, measured on macOS 26.6), so the thumbnail in the bottom corner shows above the sidebar.
+    public static let level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue - 1)
 
     public let panel: NSPanel
     /// Steps behind System Settings while it is in front.
     let follower: SystemSettingsFollower
+    /// Fills the strip from the top of the screen to the bottom when `[background]` asks for it.
+    let background = SidebarBackground()
     private let settings: SettingsStore
     private let targetVisibleFrame: @MainActor () -> CGRect?
+    private let targetScreenFrame: @MainActor () -> CGRect?
     private var pinnedSidebar: SidebarSettings.Sidebar
 
     /// - Parameters:
@@ -30,6 +40,7 @@ public final class SidebarPanelController: NSObject {
         model: SidebarModel,
         settings: SettingsStore,
         targetVisibleFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenVisibleFrame,
+        targetScreenFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenFrame,
         notificationCenter: NotificationCenter = .default,
         workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
         openSettings: @escaping @MainActor (SettingsGroup) -> Void = { _ in },
@@ -37,6 +48,7 @@ public final class SidebarPanelController: NSObject {
     ) {
         self.settings = settings
         self.targetVisibleFrame = targetVisibleFrame
+        self.targetScreenFrame = targetScreenFrame
         self.pinnedSidebar = settings.settings.sidebar
         // SwiftUI lays the content out first at the panel's initial size. Starting on the strip keeps that
         // layout final, so a change the sidebar animates soon after launch does not also grow every card
@@ -47,10 +59,13 @@ public final class SidebarPanelController: NSObject {
         )
         follower = SystemSettingsFollower(window: panel, level: Self.level, workspaceCenter: workspaceCenter)
         super.init()
+        follower.onFollow = { [weak self] in self?.showBackground() }
         settings.observe { [weak self] settings in
             guard let self, settings.sidebar != self.pinnedSidebar else { return }
             self.pin()
         }
+        // Settings previews the background while it is edited, before it is saved.
+        settings.observeBackground { [weak self] _ in self?.showBackground() }
         notificationCenter.addObserver(
             self,
             selector: #selector(screenParametersDidChange(_:)),
@@ -62,12 +77,22 @@ public final class SidebarPanelController: NSObject {
     /// Moves the panel onto the reserved strip and shows it, or hides it when no target screen exists.
     public func pin() {
         pinnedSidebar = settings.settings.sidebar
+        // After the panel, which the background goes under.
+        defer { showBackground() }
         guard let visibleFrame = targetVisibleFrame() else {
             panel.orderOut(nil)
             return
         }
         panel.setFrame(SidebarLayout(pinnedSidebar).frame(in: visibleFrame), display: true)
         follower.orderIn()
+    }
+
+    /// Shows the background on the strip the panel is pinned to, from the top of the screen to the bottom.
+    private func showBackground() {
+        let frame = targetVisibleFrame().flatMap { visibleFrame in
+            targetScreenFrame().map { SidebarLayout(pinnedSidebar).fullHeightFrame(in: visibleFrame, of: $0) }
+        }
+        background.show(settings.background, in: frame, under: panel, floats: follower.floats)
     }
 
     @objc private func screenParametersDidChange(_ notification: Notification) {
@@ -101,7 +126,8 @@ public final class SidebarPanelController: NSObject {
 
         let content = NSHostingView(rootView: SidebarPanelContent(
             model: model, settings: settings, openSettings: openSettings, setUp: setUp,
-            requestKeyboard: { [weak panel] in panel?.takeKeyboard() }
+            requestKeyboard: { [weak panel] in panel?.takeKeyboard() },
+            pointerIsOn: { [weak panel] in panel?.hasPointer ?? false }
         ))
         panel.contentView = content
         return panel
@@ -116,11 +142,17 @@ struct SidebarPanelContent: View {
     let setUp: (PermissionFlowPane, CGRect?) -> Void
     /// Makes the panel the key window, so that typing reaches a field the user opened (`requestKeyboard`).
     let requestKeyboard: @MainActor () -> Void
+    /// Whether the pointer is on the panel (`pointerIsOnSidebar`).
+    let pointerIsOn: @MainActor () -> Bool
 
     var body: some View {
-        SidebarView(model: model, side: settings.settings.sidebar.side, openSettings: openSettings, setUp: setUp)
+        SidebarView(
+            model: model, side: settings.settings.sidebar.side, settingsProblem: settings.loadProblem,
+            openSettings: openSettings, setUp: setUp
+        )
             .typography(settings)
             .environment(\.requestKeyboard, requestKeyboard)
+            .environment(\.pointerIsOnSidebar, pointerIsOn)
     }
 }
 
@@ -158,6 +190,39 @@ final class SidebarPanel: NSPanel {
     }
 
     private static let clicks: Set<NSEvent.EventType> = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+
+    /// Where the pointer is, in screen coordinates; tests place it.
+    var pointerLocation: @MainActor () -> CGPoint = { NSEvent.mouseLocation }
+    /// A press that began on the panel is held, so the pointer drags from it, perhaps past the strip, as when it
+    /// drags the scroll indicator's knob.
+    private(set) var isPressed = false
+
+    /// Whether the pointer is on the panel: where a click would reach it, or dragging from a press on it.
+    var hasPointer: Bool { isPressed || receivesClicks(at: pointerLocation()) }
+
+    /// Whether a click at `point`, in screen coordinates, reaches the panel: anywhere on the strip, gaps between
+    /// cards included, where the backing takes the click, unless another window covers the point, such as
+    /// System Settings while the panel steps behind it (`SystemSettingsFollower`).
+    func receivesClicks(at point: CGPoint) -> Bool {
+        NSWindow.windowNumber(at: point, belowWindowWithWindowNumber: 0) == windowNumber
+    }
+
+    override func sendEvent(_ event: NSEvent) {
+        track(event)
+        super.sendEvent(event)
+    }
+
+    /// Notes a press on the panel and its release. AppKit sends the drags and the release of a press to the window
+    /// that took the press, wherever the pointer goes.
+    func track(_ event: NSEvent) {
+        if Self.clicks.contains(event.type) {
+            isPressed = true
+        } else if Self.releases.contains(event.type) {
+            isPressed = false
+        }
+    }
+
+    private static let releases: Set<NSEvent.EventType> = [.leftMouseUp, .rightMouseUp, .otherMouseUp]
 }
 
 extension EnvironmentValues {

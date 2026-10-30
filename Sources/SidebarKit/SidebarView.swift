@@ -7,21 +7,27 @@ struct SidebarView: View {
     let model: SidebarModel
     /// The screen edge the sidebar is pinned to; the top buttons and the scroll indicator align to it.
     let side: SidebarSettings.Sidebar.Side
+    /// Why `config.toml` did not load (`SettingsStore.loadProblem`): the sidebar may sit on the default strip
+    /// with the default rules, and Settings is the only other place that says so.
+    var settingsProblem: String?
     /// Shows the Settings window on a group.
     let openSettings: (SettingsGroup) -> Void
     /// Starts granting a permission from the clicked button's frame on screen.
     let setUp: (PermissionFlowPane, CGRect?) -> Void
 
-    static let margin: CGFloat = 16
+    nonisolated static let margin: CGFloat = 16
     /// The panel starts right under the menu bar, which already leaves room above the buttons.
     static let topMargin: CGFloat = 2
     static let motion: Animation = .snappy
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.typography) private var typography
+    @Environment(\.pointerIsOnSidebar) private var pointerIsOnSidebar
     @State private var scrollPosition = ScrollPosition(edge: .top)
     @State private var scrollMetrics = ScrollMetrics()
-    @State private var isScrolling = false
+    @State private var scrollPhase = ScrollPhase.idle
+    @State private var isComposing = false
+    @State private var arrivalScroll = ArrivalScroll()
     @State private var isRevealed = false
     @State private var hoveredID: SidebarNotification.ID?
     /// PermissionFlow's drag panel flies from the clicked Set Up… button to System Settings.
@@ -38,6 +44,13 @@ struct SidebarView: View {
                             .screenFrameAnchor(accessibilityAnchor)
                             .accessibilityLabel("Set Up Accessibility")
                     }
+                }
+            }
+            if let settingsProblem {
+                StatusNote(text: settingsProblem) {
+                    // General shows the file with Show in Finder; any group with Save replaces it.
+                    Button("Settings…", font: typography.font(.body)) { openSettings(.general) }
+                        .accessibilityLabel("Open Settings")
                 }
             }
             if asksForFullDiskAccess {
@@ -71,22 +84,47 @@ struct SidebarView: View {
                         // Later cards draw above earlier ones, so when a card is removed the card
                         // sliding up into its place covers it while it fades out.
                         .zIndex(notification.drawingOrder)
+                        // Where the card sits, for scrolling it into view when it arrives: outside the transition,
+                        // which still holds an arriving card above its place as it reports its first frame. The
+                        // scroll waits a turn of the main actor: the list scrolls to a card by identity during the
+                        // layout that lays the card out, and an offset set then is lost (measured on macOS 26.6).
+                        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(ArrivalScroll.space)) }) { frame in
+                            let identity = notification.viewIdentity
+                            guard let offset = arrivalScroll.laidOut(identity, at: frame, isUsingList: { activity.isUsingList }) else { return }
+                            Task { @MainActor in scroll(by: .offset(offset)) }
+                        }
+                        .onDisappear { arrivalScroll.disappeared(notification.viewIdentity) }
                     }
                 }
                 // Room for the first card's dismiss button, which overhangs its top edge.
                 .padding(.top, NotificationCard.dismissOverhang)
                 .padding(.horizontal, Self.margin)
+                .coordinateSpace(.named(ArrivalScroll.space))
             }
             // The list runs to the screen edge; scrolled to the end, the last card keeps a margin under it.
             .contentMargins(.bottom, Self.margin, for: .scrollContent)
             .scrollIndicators(.never)
             .scrollPosition($scrollPosition)
+            // Notifications arriving while the user is elsewhere scroll into view. `scrollPosition` finds a card by
+            // its `ForEach` identity; `scrollTargetLayout()` would also hold the top edge at the first card's top,
+            // hiding the room above it for its dismiss button.
+            .onChange(of: model.arrivals) { old, new in
+                let step = arrivalScroll.arrived(
+                    on: new.cards(after: old.count), in: model.notifications, offset: scrollMetrics.offset, isUsingList: activity.isUsingList
+                )
+                if let step { scroll(by: step) }
+            }
+            .onGeometryChange(for: CGFloat.self, of: \.size.height) { arrivalScroll.visibleHeight = $0 }
             .onScrollGeometryChange(for: ScrollMetrics.self, of: ScrollMetrics.init) { scrollMetrics = $1 }
-            .onScrollPhaseChange { isScrolling = $1.isScrolling }
+            .onScrollPhaseChange {
+                scrollPhase = $1
+                if $1.isUserScrolling { arrivalScroll.cancel() }
+            }
+            .onPreferenceChange(ComposingReplyKey.self) { isComposing = $0 }
             .mask { EdgeFadeMask(fadesTop: scrollMetrics.hasContentAbove, fadesBottom: scrollMetrics.hasContentBelow) }
             .overlay(alignment: Alignment(horizontal: screenEdge, vertical: .center)) {
                 if scrollMetrics.isScrollable {
-                    ScrollIndicator(metrics: scrollMetrics, isScrolling: isScrolling) { scrollPosition.scrollTo(y: $0) }
+                    ScrollIndicator(metrics: scrollMetrics, isScrolling: scrollPhase.isScrolling) { scrollPosition.scrollTo(y: $0) }
                 }
             }
             .overlay {
@@ -105,10 +143,18 @@ struct SidebarView: View {
         .scaleEffect(reveal.scale, anchor: reveal.anchor)
         .opacity(reveal.opacity)
         .onAppear { withAnimation(Self.motion) { isRevealed = true } }
+        // With Reduce Motion an arrival's jump goes again once the cards are in place (`ArrivalScroll.scroll`).
+        .transaction(value: model.notifications) { transaction in
+            let change = arrivalScroll.layoutWillMove()
+            transaction.addAnimationCompletion(criteria: .removed) {
+                if let step = arrivalScroll.layoutMoved(change, isUsingList: { activity.isUsingList }) { scroll(by: step) }
+            }
+        }
         // Changes arrive from the model, outside any view action, so the view animates them itself.
         .animation(Self.motion, value: model.notifications)
         .animation(Self.motion, value: model.interception)
         .animation(Self.motion, value: asksForFullDiskAccess)
+        .animation(Self.motion, value: settingsProblem)
         .animation(Self.motion, value: model.unavailableChoices)
     }
 
@@ -117,6 +163,16 @@ struct SidebarView: View {
 
     private var reveal: SidebarReveal {
         SidebarReveal(isRevealed: isRevealed, side: side, reduceMotion: reduceMotion)
+    }
+
+    /// What the user is doing in the sidebar, which an arriving notification leaves alone.
+    private var activity: SidebarActivity {
+        SidebarActivity(pointerIsOn: pointerIsOnSidebar(), scrollPhase: scrollPhase, isComposing: isComposing)
+    }
+
+    /// Scrolls the list to show an arriving card (`ArrivalScroll`).
+    private func scroll(by step: ArrivalScroll.Step) {
+        arrivalScroll.scroll($scrollPosition, by: step, reduceMotion: reduceMotion)
     }
 
     /// Clear All and Settings as small round icon buttons in the top corner on the sidebar's screen edge,
@@ -224,7 +280,7 @@ struct EdgeFadeMask: View {
     let fadesTop: Bool
     let fadesBottom: Bool
 
-    static let height: CGFloat = 48
+    nonisolated static let height: CGFloat = 48
 
     var body: some View {
         VStack(spacing: 0) {
@@ -340,6 +396,7 @@ struct NotificationCard: View {
         }
         .animation(.easeOut(duration: 0.15), value: isHovered)
         .onHover(perform: hover)
+        .preference(key: ComposingReplyKey.self, value: isComposing)
     }
 
     private var scale: CGFloat { isHovered && !reduceMotion ? Self.hoverScale : 1 }
@@ -610,7 +667,7 @@ extension View {
     }
 }
 
-private extension SidebarNotification {
+extension SidebarNotification {
     struct ViewIdentity: Hashable {
         let id: UUID
         let occurrences: Int

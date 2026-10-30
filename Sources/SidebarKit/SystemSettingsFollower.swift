@@ -14,6 +14,9 @@ final class SystemSettingsFollower {
     private let level: NSWindow.Level
     private let workspaceCenter: NotificationCenter
     private var activationObserver: NSObjectProtocol?
+    /// Called after the window moved to or from behind System Settings, for windows that keep their place relative
+    /// to it, such as the sidebar's background.
+    var onFollow: @MainActor () -> Void = {}
 
     /// - Parameter frontmostApp: The bundle identifier of the app in front now.
     init(
@@ -47,8 +50,10 @@ final class SystemSettingsFollower {
         let floats = Self.floats(bundleIdentifier)
         guard self.floats != floats else { return }
         window.level = floats ? level : .normal
-        guard window.isVisible else { return }
-        orderIn()
+        if window.isVisible {
+            orderIn()
+        }
+        onFollow()
     }
 
     /// Orders the window in where it belongs: in front, or behind System Settings while that is in front.

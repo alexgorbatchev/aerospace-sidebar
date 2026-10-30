@@ -17,7 +17,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let split = NSSplitViewController()
     private let detail = BelowTitleBarController()
     /// What the group list needs to show every group, as `SettingsSidebar` last reported it.
-    private var sidebarHeight: CGFloat = 0
+    private(set) var sidebarHeight: CGFloat = 0
     let editor: SettingsEditor
     private let store: SettingsStore
     private let onboarding: OnboardingModel
@@ -29,7 +29,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// Visible frame of the screen the sidebar is on.
     private let sidebarScreenFrame: @MainActor () -> CGRect?
     /// What each pane needs to show all of its content, as it last reported it.
-    private var paneSizes: [SettingsGroup: CGSize] = [:]
+    private(set) var paneSizes: [SettingsGroup: CGSize] = [:]
     /// Set by opening the window until `sizeWindow` can center it: panes report their sizes after the
     /// event that opens it.
     private var centersOnNextSize = false
@@ -99,14 +99,15 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         let close: () -> Void = { [weak self] in
             self?.window.orderOut(nil)
             self?.fontChooser.close()
+            self.map { SettingsColorWell.closePanel(of: $0.window) }
         }
         let chooseFont: () -> Void = { [weak self] in self?.chooseFont() }
         tabs.tabStyle = .unspecified
         tabs.transitionOptions = []
         for group in SettingsGroup.allCases {
             let pane = switch group {
-            case .general: pane(group, GeneralPane(configURL: store.file.url, reveal: reveal, quit: { terminate(nil) }))
-            case .appearance: pane(group, AppearancePane(editor: editor, chooseFont: chooseFont, close: close))
+            case .general: pane(group, GeneralPane(store: store, reveal: reveal, quit: { terminate(nil) }))
+            case .appearance: pane(group, AppearancePane(editor: editor, chooseFont: chooseFont, sidebarSide: { [store] in store.settings.sidebar.side }, close: close))
             case .sidebar: pane(group, SidebarPane(editor: editor, aeroSpace: aeroSpace, reveal: reveal, close: close))
             case .permissions: pane(group, PermissionsPane(onboarding: onboarding))
             case .notifications: pane(group, NotificationsPane(editor: editor, appNotifications: appNotifications, close: close))
@@ -172,6 +173,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     public func windowWillClose(_ notification: Notification) {
         editor.revert()
         fontChooser.close()
+        SettingsColorWell.closePanel(of: window)
     }
 
     /// Fonts picked in the font panel go into the draft, like any other edit.

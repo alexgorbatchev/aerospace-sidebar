@@ -293,6 +293,10 @@ public final class SidebarModel {
     /// Every notification as it arrived, before any rule, newest first, also after its card was dismissed or a
     /// rule hid it: what Settings › Rules tests rules against. Repeats stack, and the history limits apply.
     public private(set) var received: [SidebarNotification] = []
+    /// The notifications that arrived and were listed, whose cards the sidebar scrolls into view. Only `add(_:)`
+    /// changes it, and only for a notification that no rule hides and the history limits keep, so restoring the
+    /// list at launch, applying rules, pruning and dismissals scroll nothing.
+    public private(set) var arrivals = Arrivals()
     public var interception: InterceptionStatus = .starting
     /// Whether notifications that showed no banner are listed from the notification database.
     public var database: NotificationDatabaseStatus = .stopped
@@ -404,7 +408,8 @@ public final class SidebarModel {
     public func add(_ notification: SidebarNotification) {
         guard notification.receivedAt >= now().addingTimeInterval(-history.retention) else { return }
         record(notification)
-        guard insert(notification) else { return }
+        guard let card = insert(notification) else { return }
+        arrivals.record(card, listed: notifications)
         didChange()
     }
 
@@ -423,10 +428,11 @@ public final class SidebarModel {
         receivedStore?.save(received)
     }
 
-    /// `add(_:)` without saving; false when a rule hides the notification.
+    /// `add(_:)` without saving: the card the notification was listed on, which the history limits may have
+    /// dropped at once; nil when a rule hides the notification.
     @discardableResult
-    private func insert(_ notification: SidebarNotification) -> Bool {
-        guard var notification = rules.apply(to: notification) else { return false }
+    private func insert(_ notification: SidebarNotification) -> SidebarNotification.ID? {
+        guard var notification = rules.apply(to: notification) else { return nil }
         if let existing = notifications.firstIndex(where: { $0.hasSameContent(as: notification) }) {
             notification = notifications.remove(at: existing).stacking(notification)
         }
@@ -437,7 +443,7 @@ public final class SidebarModel {
         if notifications.count > history.maxCount {
             notifications.removeLast(notifications.count - history.maxCount)
         }
-        return true
+        return notification.id
     }
 
     public func dismiss(_ id: SidebarNotification.ID) {

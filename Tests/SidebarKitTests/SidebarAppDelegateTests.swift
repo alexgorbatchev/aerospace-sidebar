@@ -93,7 +93,7 @@ struct SidebarAppDelegateTests {
             },
             urlSender: { sender },
             activation: activation ?? ActivationYielder(
-                workspaceCenter: NotificationCenter(), frontmostApp: nil, isPointerOverFontPanel: { false },
+                workspaceCenter: NotificationCenter(), frontmostApp: nil, isPointerOverPickerPanel: { false },
                 handOver: { _ in false }, deactivate: {}
             )
         )
@@ -485,7 +485,7 @@ struct SidebarAppDelegateTests {
         })
         let handedOver = HandedOver()
         let delegate = makeDelegate(activation: ActivationYielder(
-            workspaceCenter: NotificationCenter(), frontmostApp: previous, isPointerOverFontPanel: { false },
+            workspaceCenter: NotificationCenter(), frontmostApp: previous, isPointerOverPickerPanel: { false },
             handOver: {
                 handedOver.apps.append($0.processIdentifier)
                 return true

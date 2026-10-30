@@ -176,7 +176,7 @@ struct AeroSpaceRows: View {
 
 /// General: the settings file and Quit.
 struct GeneralPane: View {
-    let configURL: URL
+    let store: SettingsStore
     let reveal: (URL) -> Void
     /// Quits the app, which hands notifications back to macOS.
     let quit: () -> Void
@@ -185,7 +185,8 @@ struct GeneralPane: View {
 
     var body: some View {
         SettingsPage {
-            SettingsFileRow(label: "Settings file", url: configURL, reveal: reveal)
+            SettingsFileRow(label: "Settings file", url: store.file.url, reveal: reveal)
+            SettingsHint(text: store.loadProblem, color: .orange, wraps: true)
             SettingsRow(label: "Sidebar") {
                 Button("Quit Sidebar", font: typography.font(.body), action: quit)
                     .keyboardShortcut("q", modifiers: .command)

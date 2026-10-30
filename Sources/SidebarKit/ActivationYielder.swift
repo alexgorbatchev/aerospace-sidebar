@@ -1,7 +1,7 @@
 import AppKit
 
-/// Hands activation back to the app the user was in whenever something other than a click on the font panel
-/// activates the sidebar.
+/// Hands activation back to the app the user was in whenever something other than a click on the font or color
+/// panel activates the sidebar.
 ///
 /// Launch Services activates an app it launches or opens a URL in unless the opener asks it not to (`open -g`), so
 /// a web page's link or a Shortcuts action that pushes an `aerospace-sidebar://` notification, and `open` at launch,
@@ -12,14 +12,14 @@ import AppKit
 /// open such a URL, are accessory apps that are in front for a moment and close their window as they run the
 /// command, so activating one would again leave no key window.
 ///
-/// A click on the font panel leaves activation alone: it is the one window that activates the app when clicked,
-/// and its fields need the app active to take the keyboard. The pointer is still over it when AppKit reports the
+/// A click on the font or color panel leaves activation alone: they are the windows that activate the app when
+/// clicked, and their fields need the app active to take the keyboard. The pointer is still over it when AppKit reports the
 /// activation, however long the main thread took, while the mouse buttons may already be up.
 @MainActor
 public final class ActivationYielder {
     private let workspaceCenter: NotificationCenter
     private let processIdentifier: pid_t
-    private let isPointerOverFontPanel: @MainActor () -> Bool
+    private let isPointerOverPickerPanel: @MainActor () -> Bool
     private let handOver: @MainActor (NSRunningApplication) -> Bool
     private let deactivate: @MainActor () -> Void
     private var activationObserver: NSObjectProtocol?
@@ -35,13 +35,13 @@ public final class ActivationYielder {
         workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
         frontmostApp: NSRunningApplication? = NSWorkspace.shared.frontmostApplication,
         processIdentifier: pid_t = getpid(),
-        isPointerOverFontPanel: @escaping @MainActor () -> Bool = ActivationYielder.isPointerOverFontPanel,
+        isPointerOverPickerPanel: @escaping @MainActor () -> Bool = ActivationYielder.isPointerOverPickerPanel,
         handOver: @escaping @MainActor (NSRunningApplication) -> Bool = ActivationYielder.yieldActivation(to:),
         deactivate: @escaping @MainActor () -> Void = { NSApp.deactivate() }
     ) {
         self.workspaceCenter = workspaceCenter
         self.processIdentifier = processIdentifier
-        self.isPointerOverFontPanel = isPointerOverFontPanel
+        self.isPointerOverPickerPanel = isPointerOverPickerPanel
         self.handOver = handOver
         self.deactivate = deactivate
         follow(frontmostApp)
@@ -57,11 +57,11 @@ public final class ActivationYielder {
         activationObserver.map(workspaceCenter.removeObserver)
     }
 
-    /// Hands activation back to the previous app unless the user clicked the font panel. Without an app to hand
+    /// Hands activation back to the previous app unless the user clicked the font or color panel. Without an app to hand
     /// it to, or when the system refuses, such as for an app that has quit since, this app deactivates and the
     /// system picks the next one, rather than leaving this app active without a key window.
     public func appDidBecomeActive() {
-        guard !isPointerOverFontPanel() else { return }
+        guard !isPointerOverPickerPanel() else { return }
         if let previousApp, handOver(previousApp) { return }
         deactivate()
     }
@@ -71,9 +71,14 @@ public final class ActivationYielder {
         previousApp = app
     }
 
-    /// Whether the pointer is over the font panel while it shows. Checking does not create the shared panel.
-    public static func isPointerOverFontPanel() -> Bool {
-        isPoint(NSEvent.mouseLocation, over: NSFontPanel.sharedFontPanelExists ? NSFontPanel.shared : nil)
+    /// Whether the pointer is over the font or color panel while it shows. Checking does not create the shared
+    /// panels.
+    public static func isPointerOverPickerPanel() -> Bool {
+        let panels: [NSWindow?] = [
+            NSFontPanel.sharedFontPanelExists ? NSFontPanel.shared : nil,
+            NSColorPanel.sharedColorPanelExists ? NSColorPanel.shared : nil,
+        ]
+        return panels.contains { isPoint(NSEvent.mouseLocation, over: $0) }
     }
 
     /// Whether `point`, in screen coordinates, is over `window` while it shows.
