@@ -105,6 +105,8 @@ struct NotificationBannersTests {
         ("Stacked summary: Slack, Build, Passed", "Slack"),
         ("Stacked summary: Slack, Build, Passed, from iPhone", "Slack"),
         ("Stacked summary: Slack, Build, Pa", "Slack"),
+        // Its summary is often titled with the app's name, which does not make it one of macOS's own.
+        ("Stacked summary: Build, Build, Passed and more", "Build"),
         // macOS's own notifications start with the title.
         ("Build, Passed", ""),
         // A description that lags behind the texts falls back to its first part.

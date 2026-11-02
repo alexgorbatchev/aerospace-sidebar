@@ -79,12 +79,13 @@ final class FakeElement: AccessibilityElement {
         return stack
     }
 
-    /// A stack in the history panel as macOS 26.6 shows one: a banner stack described as "Stacked summary: " and the
-    /// newest entry's app, title and body, carrying that entry's identifier.
-    static func historyStack(id: String, app: String, title: String = "New message", body: String = "Hello") -> FakeElement {
-        let stack = banner(id: id, app: app, title: title, body: body)
+    /// A stack in the history panel as macOS 26.6 shows one, carrying its newest entry's identifier: a banner stack
+    /// whose texts are the summary macOS wrote for it, titled with the app's name, described as "Stacked summary: ",
+    /// the app and a longer summary than the texts hold.
+    static func historyStack(id: String, app: String, summary: String = "Invitations and replies") -> FakeElement {
+        let stack = banner(id: id, app: app, title: app, body: summary)
         stack.attributes[kAXSubroleAttribute] = "AXNotificationCenterBannerStack"
-        stack.attributes[kAXDescriptionAttribute] = "Stacked summary: \(app), \(title), \(body)"
+        stack.attributes[kAXDescriptionAttribute] = "Stacked summary: \(app), \(app), \(summary) from 3 people"
         stack.actions = ["AXPress", "Name:Show Details\nTarget:0x0\nSelector:(null)", "Name:Clear All\nTarget:0x0\nSelector:(null)"]
         return stack
     }
