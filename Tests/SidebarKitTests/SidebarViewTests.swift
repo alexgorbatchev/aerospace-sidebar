@@ -559,13 +559,13 @@ struct SidebarViewTests {
         #expect(badges.count == 1)
         let badge = try #require(badges.first)
         #expect(try badge.actualView().appName == "Vivaldi")
-        // The card's icon button, as the dismiss button is, opening its title toward the text.
-        let button = try badge.find(ExpandingIconButton.self)
-        #expect(try button.actualView().title == "Notifications Off")
-        #expect(try button.actualView().surface == .card(.normal))
-        #expect(try button.actualView().expandsToward == .trailing)
-        #expect(try button.help().string() == "Notifications from Vivaldi are off in System Settings\nClick to open Settings › Notifications")
-        try button.find(ViewType.Button.self).tap()
+        #expect(try badge.button().help().string() == """
+            Vivaldi has notifications switched off in System Settings, so macOS keeps them out of Notification Center: \
+            this card can only switch to Vivaldi, not open the message or answer it.
+            Click to switch them on from Settings › Notifications.
+            """)
+        #expect(try badge.button().accessibilityLabel().string() == "Notifications from Vivaldi are off; open Settings › Notifications")
+        try badge.button().tap()
         #expect(opened == [.notifications])
         // The badge took the click; the card stays.
         #expect(model.notifications.count == 2)
@@ -701,6 +701,21 @@ struct SidebarViewTests {
             try sut.find(button: "Allow").tap()
         }
         #expect(chosen == 2)
+    }
+
+    /// The switched-off badge acts on its card like a choice, so it lifts under the pointer as choices do.
+    @Test func switchedOffBadgeLiftsUnderThePointerLikeAChoice() throws {
+        var opened = 0
+        for hovered in [false, true] {
+            let sut = try SwitchedOffBadge(appName: "Vivaldi", isHovered: hovered) { opened += 1 }.inspect()
+            let shadow = try sut.find(where: { (try? $0.modifier(CardButtonShadowEffect.self)) != nil })
+                .modifier(CardButtonShadowEffect.self).actualView()
+
+            #expect(shadow.shadow == .choice)
+            #expect(shadow.isHovered == hovered)
+            try sut.button().tap()
+        }
+        #expect(opened == 2)
     }
 
     /// On a card an icon button casts the dismiss shadow while highlighted instead of the floating shadow,
