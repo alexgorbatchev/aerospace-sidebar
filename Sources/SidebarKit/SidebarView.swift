@@ -142,6 +142,8 @@ struct SidebarView: View {
         }
         .padding(.top, Self.topMargin)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Above the list and outside its edge fade, so a tooltip is never cut off.
+        .sidebarTooltips()
         .scaleEffect(reveal.scale, anchor: reveal.anchor)
         .opacity(reveal.opacity)
         .onAppear { withAnimation(Self.motion) { isRevealed = true } }

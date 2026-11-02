@@ -559,7 +559,8 @@ struct SidebarViewTests {
         #expect(badges.count == 1)
         let badge = try #require(badges.first)
         #expect(try badge.actualView().appName == "Vivaldi")
-        #expect(try badge.button().help().string() == """
+        #expect(try badge.find(where: { (try? $0.modifier(SidebarTooltipModifier.self)) != nil })
+            .modifier(SidebarTooltipModifier.self).actualView().text == """
             Vivaldi has notifications switched off in System Settings, so macOS keeps them out of Notification Center: \
             this card can only switch to Vivaldi, not open the message or answer it.
             Click to switch them on from Settings › Notifications.

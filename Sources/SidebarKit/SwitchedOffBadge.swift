@@ -26,7 +26,8 @@ struct SwitchedOffBadge: View {
         .buttonBorderShape(.circle)
         .controlSize(.small)
         .modifier(CardActionLift(isHovered: isHovered))
-        .help(Self.helpText(appName: appName))
+        // AppKit's tooltips show only while the app is active, which the sidebar never is.
+        .sidebarTooltip(Self.helpText(appName: appName))
         .accessibilityLabel(Self.accessibilityLabel(appName: appName))
     }
 
