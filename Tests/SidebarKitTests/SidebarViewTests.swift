@@ -698,13 +698,21 @@ struct SidebarViewTests {
     }
 
     /// Until it first appears, the content is collapsed into the top corner on the screen edge, where the
-    /// top buttons sit, so it grows out of that corner.
+    /// top buttons sit, so it grows out of that corner: the buttons and notes, the cards and the empty list's
+    /// label each scale, while the list's scroll view does not, which scaled would scroll itself down.
     @Test(arguments: [(SidebarSettings.Sidebar.Side.right, UnitPoint.topTrailing), (.left, .topLeading)])
     func contentGrowsOutOfTheTopCornerOnTheScreenEdge(side: SidebarSettings.Sidebar.Side, corner: UnitPoint) throws {
         let sut = try view(side: side).inspect().vStack()
+        let collapsed = SidebarReveal(isRevealed: false, side: side, reduceMotion: false)
 
-        #expect(try sut.scaleEffect() == CGSize(width: SidebarReveal.collapsedScale, height: SidebarReveal.collapsedScale))
-        #expect(try sut.scaleEffectAnchor() == corner)
+        let reveals = try sut.findAll(where: { (try? $0.modifier(RevealEffect.self)) != nil })
+            .map { try $0.modifier(RevealEffect.self).actualView().reveal }
+        #expect(reveals == [collapsed, collapsed, collapsed])
+        #expect(collapsed.anchor == corner)
+        #expect(collapsed.scale == SidebarReveal.collapsedScale)
+        let scrollView = try sut.find(ViewType.ScrollView.self)
+        #expect(throws: (any Error).self) { try scrollView.scaleEffect() }
+        #expect(throws: (any Error).self) { try sut.scaleEffect() }
         #expect(try sut.opacity() == 1)
         try sut.callOnAppear()
     }

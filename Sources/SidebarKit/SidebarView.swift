@@ -38,7 +38,38 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(alignment: screenEdge, spacing: 6) {
-            controls
+            // Everything but the scroll view grows out of the corner (`SidebarReveal`).
+            Group {
+                controls
+                notes
+            }
+            .modifier(RevealEffect(reveal: reveal))
+            list
+        }
+        .padding(.top, Self.topMargin)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Above the list and outside its edge fade, so a tooltip is never cut off.
+        .sidebarTooltips()
+        .opacity(reveal.opacity)
+        .onAppear { withAnimation(Self.motion) { isRevealed = true } }
+        // With Reduce Motion an arrival's jump goes again once the cards are in place (`ArrivalScroll.scroll`).
+        .transaction(value: model.notifications) { transaction in
+            let change = arrivalScroll.layoutWillMove()
+            transaction.addAnimationCompletion(criteria: .removed) {
+                if let step = arrivalScroll.layoutMoved(change, isUsingList: { activity.isUsingList }) { scroll(by: step) }
+            }
+        }
+        // Changes arrive from the model, outside any view action, so the view animates them itself.
+        .animation(Self.motion, value: model.notifications)
+        .animation(Self.motion, value: model.interception)
+        .animation(Self.motion, value: asksForFullDiskAccess)
+        .animation(Self.motion, value: settingsProblem)
+        .animation(Self.motion, value: model.appNotificationsProblem)
+        .animation(Self.motion, value: model.unavailableChoices)
+    }
+
+    /// What the sidebar needs or has to say, above the list.
+    @ViewBuilder private var notes: some View {
             if let message = statusMessage {
                 StatusNote(text: message) {
                     if model.interception == .needsAccessibility {
@@ -70,7 +101,10 @@ struct SidebarView: View {
                     }
                 }
             }
-            // The list spans the full width so the scroll indicator sits in the margin on the sidebar's screen edge.
+    }
+
+    /// The cards. The list spans the full width so the scroll indicator sits in the margin on the sidebar's screen edge.
+    private var list: some View {
             ScrollView {
                 LazyVStack(spacing: 8) {
                     ForEach(model.notifications, id: \.viewIdentity) { notification in
@@ -112,6 +146,9 @@ struct SidebarView: View {
                 .padding(.top, NotificationCard.dismissOverhang)
                 .padding(.horizontal, Self.margin)
                 .coordinateSpace(.named(ArrivalScroll.space))
+                // Inside the scroll view: AppKit's scroll view, scaled, moves its own scroll position while the scale
+                // animates, and left the list scrolled down past the first card (measured on macOS 26.6).
+                .modifier(RevealEffect(reveal: reveal))
             }
             // The list runs to the screen edge; scrolled to the end, the last card keeps a margin under it.
             .contentMargins(.bottom, Self.margin, for: .scrollContent)
@@ -145,30 +182,9 @@ struct SidebarView: View {
                         .padding(.vertical, 8)
                         .background(.regularMaterial, in: Capsule())
                         .floatingShadow()
+                        .modifier(RevealEffect(reveal: reveal))
                 }
             }
-        }
-        .padding(.top, Self.topMargin)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // Above the list and outside its edge fade, so a tooltip is never cut off.
-        .sidebarTooltips()
-        .scaleEffect(reveal.scale, anchor: reveal.anchor)
-        .opacity(reveal.opacity)
-        .onAppear { withAnimation(Self.motion) { isRevealed = true } }
-        // With Reduce Motion an arrival's jump goes again once the cards are in place (`ArrivalScroll.scroll`).
-        .transaction(value: model.notifications) { transaction in
-            let change = arrivalScroll.layoutWillMove()
-            transaction.addAnimationCompletion(criteria: .removed) {
-                if let step = arrivalScroll.layoutMoved(change, isUsingList: { activity.isUsingList }) { scroll(by: step) }
-            }
-        }
-        // Changes arrive from the model, outside any view action, so the view animates them itself.
-        .animation(Self.motion, value: model.notifications)
-        .animation(Self.motion, value: model.interception)
-        .animation(Self.motion, value: asksForFullDiskAccess)
-        .animation(Self.motion, value: settingsProblem)
-        .animation(Self.motion, value: model.appNotificationsProblem)
-        .animation(Self.motion, value: model.unavailableChoices)
     }
 
     /// The sidebar's screen edge, where the top buttons and the scroll indicator sit.
@@ -243,6 +259,16 @@ struct SidebarView: View {
         case .needsAccessibility: "Grant Accessibility access to show macOS notifications here."
         case .notificationCenterUnavailable: "macOS notifications cannot be read right now."
         }
+    }
+}
+
+/// Grows a part of the sidebar out of its top corner on the screen edge as the sidebar first appears
+/// (`SidebarReveal`). Each part scales on its own, never the list's scroll view.
+struct RevealEffect: ViewModifier {
+    let reveal: SidebarReveal
+
+    func body(content: Content) -> some View {
+        content.scaleEffect(reveal.scale, anchor: reveal.anchor)
     }
 }
 
