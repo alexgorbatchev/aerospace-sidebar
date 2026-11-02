@@ -561,9 +561,9 @@ struct SidebarViewTests {
         #expect(try badge.actualView().appName == "Vivaldi")
         #expect(try badge.find(where: { (try? $0.modifier(SidebarTooltipModifier.self)) != nil })
             .modifier(SidebarTooltipModifier.self).actualView().text == """
-            Vivaldi has notifications switched off in System Settings, so macOS keeps them out of Notification Center: \
-            this card can only switch to Vivaldi, not open the message or answer it.
-            Click to switch them on from Settings › Notifications.
+            This card can only switch to Vivaldi because notifications are switched off in macOS System Settings.
+
+            Click to switch them on.
             """)
         #expect(try badge.button().accessibilityLabel().string() == "Notifications from Vivaldi are off; open Settings › Notifications")
         try badge.button().tap()
