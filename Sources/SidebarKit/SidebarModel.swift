@@ -410,6 +410,11 @@ public final class SidebarModel {
     /// Whether an app, by bundle identifier, has its notifications switched off in System Settings. macOS then
     /// keeps them out of NotificationCenter, so its cards can only bring the app forward.
     @ObservationIgnored public var notificationsAreOff: @MainActor (String) -> Bool = { _ in false }
+    /// Switches on the notifications of an app, by bundle identifier and the name its notifications show, in
+    /// System Settings (`AppNotificationsModel.allow(bundleIdentifier:name:)`).
+    @ObservationIgnored public var allowAppNotifications: @MainActor (_ bundleIdentifier: String, _ name: String) async -> Void = { _, _ in }
+    /// The app, by bundle identifier, whose notifications a card is switching on; the others wait for it.
+    public private(set) var allowingAppNotifications: String?
 
     @ObservationIgnored private let performer: any NotificationActionPerforming
     @ObservationIgnored private let store: any NotificationStore
@@ -634,6 +639,20 @@ public final class SidebarModel {
             return notification.clickDescription
         }
         return "Click to switch to \(name)\nIts notifications are off in System Settings, so this one cannot open"
+    }
+
+    /// Switches on the notifications of the app the card's notification came from, while they are off and no
+    /// other app's are being switched on. Its cards can then open their notifications.
+    public func allowAppNotifications(for id: SidebarNotification.ID) {
+        guard allowingAppNotifications == nil, let notification = notifications.first(where: { $0.id == id }),
+              let bundleIdentifier = notification.bundleIdentifier, appNotificationsAreOff(for: notification)
+        else { return }
+        allowingAppNotifications = bundleIdentifier
+        Task {
+            await allowAppNotifications(bundleIdentifier, notification.source)
+            // The cards look again, now that the switch has moved.
+            allowingAppNotifications = nil
+        }
     }
 
     /// Whether the card stands for a macOS notification from an app whose notifications are switched off, which

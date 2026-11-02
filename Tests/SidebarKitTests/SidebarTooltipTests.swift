@@ -84,6 +84,29 @@ struct SidebarTooltipTests {
         #expect(opaquePixels(in: host, rows: 0..<20) == 0)
     }
 
+    /// The bubble takes the opposite appearance to the sidebar's, so it never reads as a card: light over dark
+    /// cards, dark over light ones.
+    @Test(arguments: [ColorScheme.dark, .light])
+    func standsOutFromTheCards(scheme: ColorScheme) throws {
+        let host = NSHostingView(rootView: SidebarTooltipBubble(text: "Notifications are off").environment(\.colorScheme, scheme))
+        host.frame.size = host.fittingSize
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        // A pixel inside the rounded corners, clear of the text.
+        let background = bitmap.colorAt(x: bitmap.pixelsWide / 2, y: 3)?.usingColorSpace(.sRGB)
+        let brightness = background.map { ($0.redComponent + $0.greenComponent + $0.blueComponent) / 3 } ?? -1
+
+        #expect(scheme == .dark ? brightness > 0.6 : brightness < 0.4)
+    }
+
+    /// One size under the cards' callout text, from the configured font.
+    @Test func setsItsTextASizeUnderTheCards() throws {
+        let text = try SidebarTooltipBubble(text: "Notifications are off").inspect().find(text: "Notifications are off")
+
+        #expect(try text.attributes().font() == Typography(SidebarSettings.Font()).font(.subheadline))
+    }
+
     /// The marked view's VoiceOver hint reads the tooltip, which VoiceOver does not reach itself.
     @Test func hintsTheTooltipToVoiceOver() throws {
         let sut = try Color.clear.sidebarTooltip("Notifications are off").inspect()

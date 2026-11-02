@@ -1,9 +1,9 @@
 import SwiftUI
 
 /// A round push button under the app icon of a card whose app has its notifications switched off in System
-/// Settings, which opens Settings › Notifications: that group lists the app with Allow. NotificationCenter keeps
-/// such an app's notifications out of sight, so the card can only switch to the app. It acts on the card like
-/// the card's choices and follows the pointer as they do (`CardActionLift`).
+/// Settings, which switches them on there, like Allow in Settings › Notifications. NotificationCenter keeps such
+/// an app's notifications out of sight, so the card can only switch to the app. It acts on the card like the
+/// card's choices and follows the pointer as they do (`CardActionLift`).
 struct SwitchedOffBadge: View {
     /// The app as the card names it.
     let appName: String
@@ -41,6 +41,6 @@ struct SwitchedOffBadge: View {
     }
 
     static func accessibilityLabel(appName: String) -> String {
-        "Notifications from \(appName) are off; open Settings › Notifications"
+        "Notifications from \(appName) are off; switch them on"
     }
 }

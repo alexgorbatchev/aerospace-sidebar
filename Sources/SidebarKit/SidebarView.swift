@@ -82,7 +82,9 @@ struct SidebarView: View {
                             openLink: { model.openLink($0) },
                             dismiss: { model.dismiss(notification.id) },
                             composingChanged: { model.setComposing($0, on: notification.id) },
-                            openNotificationSettings: model.appNotificationsAreOff(for: notification) ? { openSettings(.notifications) } : nil
+                            allowAppNotifications: model.appNotificationsAreOff(for: notification)
+                                ? { model.allowAppNotifications(for: notification.id) } : nil,
+                            isAllowingAppNotifications: model.allowingAppNotifications != nil
                         )
                         .transition(cardTransition)
                         // Later cards draw above earlier ones, so when a card is removed the card
@@ -355,9 +357,11 @@ struct NotificationCard: View {
     /// Reports whether a reply is being typed on the card (`isComposing`), which keeps it from stacking: a stack
     /// gets a new card, without this one's field and text.
     var composingChanged: (Bool) -> Void = { _ in }
-    /// Opens Settings › Notifications, set while the posting app has its notifications switched off in System
-    /// Settings (`SidebarModel.appNotificationsAreOff(for:)`); the card then shows `SwitchedOffBadge`.
-    var openNotificationSettings: (() -> Void)?
+    /// Switches on the posting app's notifications in System Settings, set while they are off
+    /// (`SidebarModel.appNotificationsAreOff(for:)`); the card then shows `SwitchedOffBadge`.
+    var allowAppNotifications: (() -> Void)?
+    /// Another card is switching an app's notifications on; the badge waits for it.
+    var isAllowingAppNotifications = false
 
     nonisolated static let cornerRadius: CGFloat = 10
     /// How far each layer under a stacked card shows, and how much narrower it is per side.
@@ -385,7 +389,7 @@ struct NotificationCard: View {
     /// Space between the icon and the text beside it.
     static let iconSpacing: CGFloat = 8
     /// The VoiceOver action that does what `SwitchedOffBadge` does.
-    static let notificationSettingsAction = "Notification Settings"
+    static let allowNotificationsAction = "Allow Notifications"
     /// How much of the icon's square its artwork fills: 824 of an app icon's 1024 points (Apple's macOS
     /// app icon grid), the rest is a transparent margin. Font icons are drawn this size to match.
     static let iconArtwork: CGFloat = 824.0 / 1024.0
@@ -494,8 +498,8 @@ struct NotificationCard: View {
                     Button("Open \(url.host() ?? url.absoluteString)") { openLink(url) }
                 }
                 // Nor is the badge under the icon.
-                if let openNotificationSettings {
-                    Button(Self.notificationSettingsAction, action: openNotificationSettings)
+                if let allowAppNotifications, !isAllowingAppNotifications {
+                    Button(Self.allowNotificationsAction, action: allowAppNotifications)
                 }
                 // The dismiss button shows only under the pointer.
                 Button("Dismiss", action: dismiss)
@@ -511,8 +515,9 @@ struct NotificationCard: View {
                 LeadingIconLayout(spannedLines: 2, lineSpacing: Self.lineSpacing, iconSpacing: Self.iconSpacing) {
                     icon
                     // Only notifications from installed apps come from switched-off apps, and those have an icon.
-                    if let openNotificationSettings {
-                        SwitchedOffBadge(appName: notification.source, action: openNotificationSettings)
+                    if let allowAppNotifications {
+                        SwitchedOffBadge(appName: notification.source, action: allowAppNotifications)
+                            .disabled(isAllowingAppNotifications)
                             .underIcon()
                     }
                     content

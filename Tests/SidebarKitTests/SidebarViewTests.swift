@@ -542,20 +542,28 @@ struct SidebarViewTests {
     }
 
     /// A card from an app whose notifications are off in macOS can only switch to the app; a badge under its icon
-    /// says so and opens Settings › Notifications, which lists the app with Allow. VoiceOver gets it as an action.
-    @Test func badgesCardsOfSwitchedOffAppsAndOpensNotificationSettings() throws {
+    /// says so and switches them on, like Allow in Settings › Notifications. VoiceOver gets it as an action. While
+    /// one app's are being switched on, every badge waits.
+    @Test func badgesCardsOfSwitchedOffAppsAndSwitchesThemOn() async throws {
         let appIcon = NSImage(size: NSSize(width: 64, height: 64))
         model.notificationsAreOff = { $0 == "com.vivaldi.Vivaldi" }
+        var allowed: [String] = []
+        var finish: CheckedContinuation<Void, Never>?
+        model.allowAppNotifications = { identifier, name in
+            allowed.append("\(identifier) \(name)")
+            await withCheckedContinuation { finish = $0 }
+        }
         model.add(SidebarNotification(
             source: "Vivaldi", title: "Off", bundleIdentifier: "com.vivaldi.Vivaldi", action: .activateApp(name: "Vivaldi"), nativeIdentifiers: ["a"]
         ))
         model.add(SidebarNotification(
             source: "Slack", title: "On", bundleIdentifier: "com.tinyspeck.slackmacgap", action: .activateApp(name: "Slack"), nativeIdentifiers: ["b"]
         ))
-        var opened: [SettingsGroup] = []
 
-        let sut = try view(openSettings: { opened.append($0) }).environment(\.appIcon) { _ in appIcon }.inspect()
-        let badges = sut.findAll(SwitchedOffBadge.self)
+        func sidebar() throws -> InspectableView<ViewType.ClassifiedView> {
+            try view().environment(\.appIcon) { _ in appIcon }.inspect()
+        }
+        let badges = try sidebar().findAll(SwitchedOffBadge.self)
         #expect(badges.count == 1)
         let badge = try #require(badges.first)
         #expect(try badge.actualView().appName == "Vivaldi")
@@ -565,17 +573,39 @@ struct SidebarViewTests {
 
             Click to switch them on.
             """)
-        #expect(try badge.button().accessibilityLabel().string() == "Notifications from Vivaldi are off; open Settings › Notifications")
+        #expect(try badge.button().accessibilityLabel().string() == "Notifications from Vivaldi are off; switch them on")
         try badge.button().tap()
-        #expect(opened == [.notifications])
+        for _ in 0..<100 where finish == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(allowed == ["com.vivaldi.Vivaldi Vivaldi"])
+        #expect(model.allowingAppNotifications == "com.vivaldi.Vivaldi")
         // The badge took the click; the card stays.
         #expect(model.notifications.count == 2)
 
-        let card = try sut.find(text: "Off").find(ViewType.Button.self, relation: .parent)
-        try card.accessibilityActions().find(button: NotificationCard.notificationSettingsAction).tap()
-        #expect(opened == [.notifications, .notifications])
-        let other = try sut.find(text: "On").find(ViewType.Button.self, relation: .parent)
-        #expect(throws: (any Error).self) { try other.accessibilityActions().find(button: NotificationCard.notificationSettingsAction) }
+        // Meanwhile the badge is disabled and VoiceOver has no action for it.
+        let waiting = try sidebar()
+        #expect(try waiting.find(SwitchedOffBadge.self).button().isDisabled())
+        let card = try waiting.find(text: "Off").find(ViewType.Button.self, relation: .parent)
+        #expect(throws: (any Error).self) { try card.accessibilityActions().find(button: NotificationCard.allowNotificationsAction) }
+        model.allowAppNotifications(for: model.notifications[1].id)
+        #expect(allowed.count == 1)
+
+        finish?.resume()
+        for _ in 0..<100 where model.allowingAppNotifications != nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(model.allowingAppNotifications == nil)
+        let done = try sidebar()
+        try done.find(text: "Off").find(ViewType.Button.self, relation: .parent)
+            .accessibilityActions().find(button: NotificationCard.allowNotificationsAction).tap()
+        for _ in 0..<100 where allowed.count < 2 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(allowed == ["com.vivaldi.Vivaldi Vivaldi", "com.vivaldi.Vivaldi Vivaldi"])
+        finish?.resume()
+        let other = try done.find(text: "On").find(ViewType.Button.self, relation: .parent)
+        #expect(throws: (any Error).self) { try other.accessibilityActions().find(button: NotificationCard.allowNotificationsAction) }
     }
 
     @Test func settingsButtonOpensSettings() throws {

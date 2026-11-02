@@ -130,6 +130,13 @@ public final class AppNotificationsModel {
         refresh()
     }
 
+    /// Switches on the notifications of the app with `bundleIdentifier`, in any case, as a card names it, using
+    /// the identifier as usernoted keeps it, which System Settings finds the app's page by.
+    public func allow(bundleIdentifier: String, name: String) async {
+        let identifier = read()?[Self.key(bundleIdentifier)]?.bundleIdentifier ?? bundleIdentifier
+        await allow(App(bundleIdentifier: identifier, name: name))
+    }
+
     private func installedName(of bundleIdentifier: String) -> String? {
         if let cached = installedNames[bundleIdentifier] { return cached }
         let name = installedApp(bundleIdentifier)?.name

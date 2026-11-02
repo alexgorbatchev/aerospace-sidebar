@@ -180,6 +180,20 @@ struct AppNotificationsModelTests {
         #expect(model.message == "Switched on notifications from Vivaldi Helper (Alerts); its cards open their notifications.")
     }
 
+    /// A card's badge names its app as the card does, in the database's lowercase; Allow uses usernoted's
+    /// identifier, and an app usernoted does not list is tried as named.
+    @Test func allowsAnAppByTheIdentifierACardNames() async throws {
+        try fixture.write(["com.vivaldi.Vivaldi": false])
+        let model = model(received: [])
+        switcher.result = .switchedOn
+
+        await model.allow(bundleIdentifier: "com.vivaldi.vivaldi", name: "Vivaldi")
+        await model.allow(bundleIdentifier: "com.example.Unlisted", name: "Unlisted")
+
+        #expect(switcher.requests.map(\.bundleIdentifier) == ["com.vivaldi.Vivaldi", "com.example.Unlisted"])
+        #expect(switcher.requests.map(\.name) == ["Vivaldi", "Unlisted"])
+    }
+
     @Test func cannotTellWithoutTheSettings() {
         let model = model(received: [Self.fromMacOS("Slack", "com.tinyspeck.slackmacgap")])
 

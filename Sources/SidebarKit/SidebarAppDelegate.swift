@@ -126,6 +126,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         self.monitor = monitor
         model.nativeNotifications = monitor
         model.notificationsAreOff = { [appNotifications] in appNotifications.notificationsAreOff(for: $0) }
+        model.allowAppNotifications = { [appNotifications] in await appNotifications.allow(bundleIdentifier: $0, name: $1) }
         let databaseMonitor = makeDatabaseMonitor(model, identities, notificationDatabase) { [weak self] in self?.offer($1, forNotification: $0) }
         self.databaseMonitor = databaseMonitor
         settings.observe { [weak self, model] settings in

@@ -85,19 +85,23 @@ struct SidebarTooltipLayer: View {
     }
 }
 
-/// The tooltip's text on the cards' material, in the configured font.
+/// The tooltip's text in the configured font, a size under the cards' body text, on material of the opposite
+/// appearance: light over the dark cards, dark over light ones, so it never reads as one of them.
 struct SidebarTooltipBubble: View {
     let text: String
 
     @Environment(\.typography) private var typography
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Text(text)
-            .font(typography.font(.callout))
+            .font(typography.font(.subheadline))
+            .foregroundStyle(.primary)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .environment(\.colorScheme, colorScheme == .dark ? .light : .dark)
             .floatingShadow()
     }
 }
@@ -108,7 +112,7 @@ struct SidebarTooltipPlacement: Layout {
     let anchor: CGRect
     var margin: CGFloat = SidebarView.margin
     var gap: CGFloat = 6
-    var maxWidth: CGFloat = 320
+    var maxWidth: CGFloat = 300
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         proposal.replacingUnspecifiedDimensions()

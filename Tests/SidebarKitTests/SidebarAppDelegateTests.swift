@@ -361,7 +361,8 @@ struct SidebarAppDelegateTests {
     /// An alert left to macOS for its actions menu gets the menu's choices once usernoted writes its record: its
     /// card offers them in its place, and the alert is handed over to the card and hidden at once, so a choice on
     /// the card answers it. An alert from an app left to macOS stays there, its card as it was.
-    @Test func recordsGiveCardsTheChoicesOfAlertsLeftToMacOS() throws {
+    @Test func recordsGiveCardsTheChoicesOfAlertsLeftToMacOS() async throws {
+        let switcher = FakeAppNotificationSwitch()
         try database.create()
         settings.update { $0.notifications.appsLeftToMacOS = ["Kept"] }
         let menu = UUID()
@@ -388,14 +389,17 @@ struct SidebarAppDelegateTests {
             makeDatabaseMonitor: makeDatabaseMonitor,
             makeServer: { SidebarAppDelegate.makeServer(model: $0, icons: $1, path: ControlServerTests.socketPath()) },
             makeAeroSpaceSync: makeAeroSpaceSync,
-            makeAppNotifications: { [directory] model in
-                AppNotificationsModel(preferences: NotificationPreferences(home: directory.url), switcher: FakeAppNotificationSwitch()) { model.received }
+            makeAppNotifications: { [directory, switcher] model in
+                AppNotificationsModel(preferences: NotificationPreferences(home: directory.url), switcher: switcher) { model.received }
             }
         )
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
         let model = delegate.model
         #expect(model.notifications.map(\.shownByMacOS) == [true, true])
+        // A card's badge switches its app's notifications on through Settings' Allow.
+        await model.allowAppNotifications("com.vivaldi.Vivaldi", "Vivaldi")
+        #expect(switcher.requests.map(\.bundleIdentifier) == ["com.vivaldi.Vivaldi"])
 
         for (identifier, title) in [(menu, "When?"), (kept, "Kept")] {
             try database.insert(identifier: identifier, title: title, delivered: Date() - 1, actions: NativeChoicesTests.menuActions)

@@ -479,7 +479,7 @@ struct SidebarModelTests {
 
     /// NotificationCenter never holds notifications from an app whose notifications are switched off, so its
     /// cards switch to the app at once and say why; other apps' cards still open theirs.
-    @Test func switchesToAppsWhoseNotificationsAreOff() {
+    @Test func switchesToAppsWhoseNotificationsAreOff() async {
         let performer = RecordingPerformer()
         let model = SidebarModel(performer: performer, store: InMemoryStore())
         let alerts = RecordingNativeNotifications()
@@ -495,6 +495,9 @@ struct SidebarModelTests {
         let pushed = SidebarNotification(source: "cli", title: "Pushed", bundleIdentifier: "com.vivaldi.Vivaldi", action: .open(URL(string: "https://a.example")!))
 
         #expect(model.appNotificationsAreOff(for: off))
+        // Only a card from a switched-off app switches its app on.
+        var allowed: [String] = []
+        model.allowAppNotifications = { allowed.append("\($0) \($1)") }
         #expect(!model.appNotificationsAreOff(for: on))
         // Pushed notifications never pass through macOS, whatever app they name.
         #expect(!model.appNotificationsAreOff(for: pushed))
@@ -509,6 +512,15 @@ struct SidebarModelTests {
         }
 
         #expect(alerts.performed == ["open b from Codex"])
+        model.add(off)
+        model.add(on)
+        model.allowAppNotifications(for: on.id)
+        model.allowAppNotifications(for: UUID())
+        model.allowAppNotifications(for: off.id)
+        for _ in 0..<100 where model.allowingAppNotifications != nil {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(allowed == ["com.vivaldi.Vivaldi Vivaldi"])
         #expect(performer.actions == [.activateApp(name: "Vivaldi")])
         #expect(performer.bundleIdentifiers == ["com.vivaldi.Vivaldi"])
     }
