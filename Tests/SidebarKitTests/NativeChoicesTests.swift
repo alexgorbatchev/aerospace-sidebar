@@ -109,6 +109,22 @@ struct NativeChoicesTests {
         #expect(results.isEmpty)
     }
 
+    /// An app is known to declare no choices only once its categories were read and it has none; a read that fails,
+    /// as without Full Disk Access, tells nothing, and one that fails later keeps what was known.
+    @Test func knowsWhichAppsDeclareNoChoices() {
+        var now = Date(timeIntervalSince1970: 0)
+        var results: [String: [[String: [NativeChoice]]?]] = [
+            "legacy": [[:], nil], "categories": [["a": ["Later"]]], "unreadable": [nil],
+        ]
+        let declared = DeclaredChoices(now: { now }) { results[$0]!.removeFirst() }
+
+        #expect(declared.declaresNone(ofApp: "legacy"))
+        #expect(!declared.declaresNone(ofApp: "categories"))
+        #expect(!declared.declaresNone(ofApp: "unreadable"))
+        now += DeclaredChoices.lifetime
+        #expect(declared.declaresNone(ofApp: "legacy"))
+    }
+
     /// The database's categories reach the cache; without Full Disk Access every app declared none.
     @Test func readsDeclaredChoicesFromTheDatabase() throws {
         try fixture.declare([Self.slackCategory])

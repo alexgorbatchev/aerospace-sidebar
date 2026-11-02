@@ -688,13 +688,14 @@ struct SystemNotificationInterceptorTests {
         leavesToMacOS: @escaping @MainActor (String) -> Bool = { _ in false },
         leavesActionableToMacOS: Bool = true,
         declared: [String: [NativeChoice]] = [:],
+        declaringNone: Set<String> = [],
         now: @escaping () -> Date = Date.init
     ) -> SystemNotificationInterceptor {
         SystemNotificationInterceptor(
             now: now,
             identities: identities,
             leavesToMacOS: leavesToMacOS,
-            bundleIdentifier: { declared.isEmpty ? nil : "bundle.\($0)" },
+            bundleIdentifier: { declared.isEmpty && declaringNone.isEmpty ? nil : "bundle.\($0)" },
             leavesActionableToMacOS: { leavesActionableToMacOS },
             listsNotification: { list.lists($0) },
             listsChoices: { list.listsChoices($0) },
@@ -702,6 +703,7 @@ struct SystemNotificationInterceptorTests {
                 // What the apps declared, by app name, matched like `DeclaredChoices` does.
                 declared[String(app.dropFirst("bundle.".count))].flatMap { Set($0.map(\.title)) == Set(titles) ? $0 : nil }
             },
+            declaresNoChoices: { declaringNone.contains(String($0.dropFirst("bundle.".count))) },
             onUnavailableChoices: { list.unavailable.append($0) }
         ) { list.notifications.append($0) }
     }
@@ -1108,6 +1110,53 @@ struct SystemNotificationInterceptorTests {
         #expect(interceptor.perform(.reply(choice: "Reply", text: "On my way", send: "Send"), on: ["r"], in: [window]) == .performed)
         #expect(declared.string("sent") == "On my way")
         #expect(undeclared.performed.isEmpty)
+    }
+
+    /// An app known to have declared no choices, such as a Chromium browser, which puts a Settings button on its web
+    /// notifications, carries them on each notification, and only its record names them, about 5 s later. Its
+    /// notification is hidden for its card at once rather than left on screen, a banner for its whole life; once the
+    /// record gives the card its choices, the card offers them and the notification stays hidden. An app nothing is
+    /// known about keeps its notification with macOS, and so does a notification with a control besides named
+    /// actions, which works on screen only.
+    @Test func hidesNotificationsWhoseRecordsWillNameTheirChoices() {
+        let list = AlertList()
+        let identities = NotificationIdentities()
+        let interceptor = interceptor(for: list, identities: identities, declaringNone: ["Vivaldi"])
+        func settingsBanner(id: String, app: String) -> FakeElement {
+            let banner = FakeElement.banner(id: id, app: app)
+            banner.actions = ["AXPress", "Name:Show Details", "Name:Settings", "Name:Close"]
+            return banner
+        }
+        let vivaldi = settingsBanner(id: "v", app: "Vivaldi")
+        let unknown = settingsBanner(id: "u", app: "Unknown")
+        let withField = settingsBanner(id: "f", app: "Vivaldi")
+        withField.childElements.append(FakeElement([kAXRoleAttribute: kAXTextAreaRole]))
+        // The database listed this one first from a record that named no choices, so none are coming.
+        let recorded = settingsBanner(id: "r", app: "Vivaldi")
+        list.notifications.append(SidebarNotification(source: "Vivaldi", title: "Subject", nativeIdentifiers: ["r"]))
+        identities.insert("r")
+        let window = FakeElement.window(vivaldi, unknown, withField, recorded)
+
+        interceptor.sweep(windows: [window], application: nil)
+
+        #expect(list.notifications.map(\.nativeIdentifiers) == [["r"], ["v"], ["u"], ["f"]])
+        #expect(list.notifications.map(\.nativeChoices) == [nil, nil, nil, nil])
+        #expect(list.notifications.map(\.shownByMacOS) == [false, false, true, true])
+        // Only the one whose record is still to come is hidden; the window keeps the others on screen.
+        #expect(recorded.performed.isEmpty)
+        #expect(vivaldi.performed.isEmpty)
+        #expect(window.position == .zero)
+
+        // The record names the Settings button: the card offers it, and the banner stays hidden for it.
+        list.notifications[1] = list.notifications[1].offering(SidebarNotification.NativeChoices(identifier: "v", choices: ["Settings"]))
+        let alone = FakeElement.window(vivaldi)
+        interceptor.sweep(windows: [alone], application: nil)
+        interceptor.sweep(windows: [alone], application: nil)
+
+        #expect(alone.position == SystemNotificationInterceptor.offScreen)
+        #expect(vivaldi.performed.isEmpty)
+        #expect(list.notifications.count == 4)
+        #expect(interceptor.perform(.choice("Settings"), on: ["v"], in: [alone]) == .performed)
     }
 
     /// A banner with choices that leaves the screen on its own times out into the history, whose entry offers

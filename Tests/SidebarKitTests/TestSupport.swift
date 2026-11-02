@@ -452,6 +452,7 @@ extension NativeChoice: ExpressibleByStringLiteral {
 }
 
 extension DeclaredChoices {
-    /// Apps that declared nothing, for tests whose notifications offer no declared choices.
-    static var none: DeclaredChoices { DeclaredChoices { _ in [:] } }
+    /// Apps whose categories cannot be read, as without Full Disk Access, for tests whose notifications offer no
+    /// declared choices: nothing is known about what they declared.
+    static var none: DeclaredChoices { DeclaredChoices { _ in nil } }
 }

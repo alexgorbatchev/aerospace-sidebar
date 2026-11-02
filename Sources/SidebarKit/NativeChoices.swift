@@ -65,7 +65,7 @@ public struct NativeChoice: Codable, Equatable, Hashable, Sendable {
 /// The choices each app declared to macOS, read from the notification database (`declaredChoices(ofApp:)`)
 /// and kept for `lifetime`: an app declares them at launch, while sweeps ask several times a second. A read
 /// that fails, such as without Full Disk Access, keeps what was read before and is tried again after
-/// `retryInterval`.
+/// `retryInterval`; until one succeeds, nothing is known about the app (`declaresNone(ofApp:)`).
 @MainActor
 public final class DeclaredChoices {
     static let lifetime: TimeInterval = 60
@@ -73,7 +73,7 @@ public final class DeclaredChoices {
 
     private let read: @MainActor (String) -> [String: [NativeChoice]]?
     private let now: () -> Date
-    private var cache: [String: (categories: [String: [NativeChoice]], until: Date)] = [:]
+    private var cache: [String: (categories: [String: [NativeChoice]], isRead: Bool, until: Date)] = [:]
 
     public convenience init(database: NotificationDatabase, now: @escaping () -> Date = Date.init) {
         self.init(now: now) { try? database.declaredChoices(ofApp: $0) }
@@ -98,18 +98,30 @@ public final class DeclaredChoices {
         return matches.count == 1 ? matches.first : nil
     }
 
+    /// Whether the app with `bundleIdentifier` is known to have declared no categories at all, as an app posting
+    /// through NSUserNotification has (Chromium browsers' web notifications, alerter): its notifications carry
+    /// their actions themselves, which only their records name. False while its categories cannot be read.
+    public func declaresNone(ofApp bundleIdentifier: String) -> Bool {
+        let entry = entry(ofApp: bundleIdentifier)
+        return entry.isRead && entry.categories.isEmpty
+    }
+
     private func categories(ofApp bundleIdentifier: String) -> [String: [NativeChoice]] {
+        entry(ofApp: bundleIdentifier).categories
+    }
+
+    private func entry(ofApp bundleIdentifier: String) -> (categories: [String: [NativeChoice]], isRead: Bool) {
         let time = now()
         if let cached = cache[bundleIdentifier], time < cached.until {
-            return cached.categories
+            return (cached.categories, cached.isRead)
         }
         guard let categories = read(bundleIdentifier) else {
-            let kept = cache[bundleIdentifier]?.categories ?? [:]
-            cache[bundleIdentifier] = (kept, time.addingTimeInterval(Self.retryInterval))
-            return kept
+            let kept = cache[bundleIdentifier]
+            cache[bundleIdentifier] = (kept?.categories ?? [:], kept?.isRead ?? false, time.addingTimeInterval(Self.retryInterval))
+            return (kept?.categories ?? [:], kept?.isRead ?? false)
         }
-        cache[bundleIdentifier] = (categories, time.addingTimeInterval(Self.lifetime))
-        return categories
+        cache[bundleIdentifier] = (categories, true, time.addingTimeInterval(Self.lifetime))
+        return (categories, true)
     }
 }
 

@@ -81,6 +81,7 @@ public final class SystemNotificationInterceptor {
     private let listsNotification: @MainActor (String) -> Bool
     private let listsChoices: @MainActor (String) -> Bool
     private let declaredChoices: @MainActor (_ bundleIdentifier: String, _ titles: [String]) -> [NativeChoice]?
+    private let declaresNoChoices: @MainActor (_ bundleIdentifier: String) -> Bool
     private let onUnavailableChoices: @MainActor (Set<String>) -> Void
     private let nativeOrigin: @MainActor () -> CGPoint
     private let now: () -> Date
@@ -116,6 +117,8 @@ public final class SystemNotificationInterceptor {
     ///   - listsChoices: Whether one of those cards lists the choices of the notification with this identifier.
     ///   - declaredChoices: What the app with a bundle identifier declared for a notification whose choices
     ///     NotificationCenter titles so (`DeclaredChoices`); nil when it declared nothing under those titles.
+    ///   - declaresNoChoices: Whether the app with a bundle identifier is known to have declared no choices at all
+    ///     (`DeclaredChoices.declaresNone(ofApp:)`), so that only its notifications' records name them.
     ///   - onUnavailableChoices: Receives the identifiers of the notifications whose cards offer their choices
     ///     although the notifications no longer offer them, whenever that set changes: an alert that left the
     ///     screen on its own, one that returned to macOS because it holds a control only macOS presents, and
@@ -131,6 +134,7 @@ public final class SystemNotificationInterceptor {
         listsNotification: @escaping @MainActor (String) -> Bool = { _ in false },
         listsChoices: @escaping @MainActor (String) -> Bool = { _ in false },
         declaredChoices: @escaping @MainActor (_ bundleIdentifier: String, _ titles: [String]) -> [NativeChoice]? = { _, _ in nil },
+        declaresNoChoices: @escaping @MainActor (_ bundleIdentifier: String) -> Bool = { _ in false },
         onUnavailableChoices: @escaping @MainActor (Set<String>) -> Void = { _ in },
         nativeOrigin: @escaping @MainActor () -> CGPoint = { .zero },
         onNotification: @escaping @MainActor (SidebarNotification) -> Void
@@ -143,6 +147,7 @@ public final class SystemNotificationInterceptor {
         self.listsNotification = listsNotification
         self.listsChoices = listsChoices
         self.declaredChoices = declaredChoices
+        self.declaresNoChoices = declaresNoChoices
         self.onUnavailableChoices = onUnavailableChoices
         self.nativeOrigin = nativeOrigin
         self.onNotification = onNotification
@@ -280,8 +285,9 @@ public final class SystemNotificationInterceptor {
             let needsInteraction = (leavesActionable || openedField) && NotificationBanners.needsInteraction(item, labels: labels)
             if !leftToMacOS, let identifier, !identifier.isEmpty {
                 let choices = offeredChoices(of: item, identifier: identifier, appName: content.appName)
+                let awaitsRecord = choices == nil && !openedField && awaitsRecordedChoices(item, identifier: identifier, appName: content.appName)
                 // A reply sent from the card leaves its field showing while the notification leaves; it stays hidden.
-                if choices != nil || !needsInteraction || step == .replied,
+                if choices != nil || !needsInteraction || awaitsRecord || step == .replied,
                    let hiddenOutcome = handOver(item, kind: kind, identifier: identifier, content: content, choices: choices) {
                     if hiddenOutcome == .pending { outcome = .pending }
                     if choices != nil, listsChoices(identifier) {
@@ -314,6 +320,20 @@ public final class SystemNotificationInterceptor {
             hide(window)
         }
         return outcome
+    }
+
+    /// Whether a notification whose choices nothing tells yet is hidden all the same, for its card to get them from
+    /// its record: its app is known to have declared none (`declaresNoChoices`), so its notifications carry their
+    /// actions themselves and only their records name them, about 5 s later (`NotificationDatabaseMonitor`'s
+    /// `onChoices`, `SidebarModel.offer(_:forNotification:)`). Left on screen meanwhile, a banner would stay for its
+    /// whole life, as Chromium browsers' do with their Settings button. Only a notification whose choices are all
+    /// named actions qualifies; other controls work on screen only. A choice that turns out to open a text field
+    /// still puts it back on screen. A notification the database listed first has had its record read, so none is
+    /// coming for it.
+    private func awaitsRecordedChoices(_ notification: any AccessibilityElement, identifier: String, appName: String) -> Bool {
+        guard !listsNotification(identifier) || handedOver.contains(identifier) else { return false }
+        guard !appName.isEmpty, let app = bundleIdentifier(appName), declaresNoChoices(app) else { return false }
+        return NotificationBanners.namedChoices(of: notification, labels: labels) != nil
     }
 
     /// The choices the sidebar offers for a notification, unless a card already lists it without them: one the

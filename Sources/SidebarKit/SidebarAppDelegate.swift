@@ -280,6 +280,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
                 listsNotification: { model.lists(notification: $0) },
                 listsChoices: { model.lists(choicesOf: $0) },
                 declaredChoices: { declaredChoices.choices(ofApp: $0, titled: $1) },
+                declaresNoChoices: { declaredChoices.declaresNone(ofApp: $0) },
                 onUnavailableChoices: { model.unavailableChoices = $0 },
                 nativeOrigin: {
                     guard let visibleFrame = targetVisibleFrame() else { return .zero }
