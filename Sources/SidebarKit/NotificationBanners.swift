@@ -162,6 +162,15 @@ public enum NotificationBanners {
         if description.hasSuffix(labels.stackedSuffix) {
             description.removeLast(labels.stackedSuffix.count)
         }
+        // A stack in the history panel describes itself as "Stacked summary: Slack, …".
+        for format in labels.stackedSummaries {
+            let parts = format.components(separatedBy: "%@")
+            guard parts.count == 2, description.count > parts[0].count + parts[1].count,
+                  description.hasPrefix(parts[0]), description.hasSuffix(parts[1])
+            else { continue }
+            description = String(description.dropFirst(parts[0].count).dropLast(parts[1].count))
+            break
+        }
         let texts = [content.title, content.subtitle, content.body].filter { !$0.isEmpty }.joined(separator: labels.separator)
         if !texts.isEmpty {
             if description == texts { return "" }

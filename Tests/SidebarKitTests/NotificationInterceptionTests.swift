@@ -101,6 +101,10 @@ struct NotificationBannersTests {
         ("Acme, Inc., Build, Passed", "Acme, Inc."),
         // A collapsed stack ends its description with ", stacked".
         ("Self Service, Build, Passed, stacked", "Self Service"),
+        // A stack in the history panel starts with "Stacked summary: ", and ends with ", from iPhone" when mirrored.
+        ("Stacked summary: Slack, Build, Passed", "Slack"),
+        ("Stacked summary: Slack, Build, Passed, from iPhone", "Slack"),
+        ("Stacked summary: Slack, Build, Pa", "Slack"),
         // macOS's own notifications start with the title.
         ("Build, Passed", ""),
         // A description that lags behind the texts falls back to its first part.

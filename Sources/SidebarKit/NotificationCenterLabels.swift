@@ -32,6 +32,9 @@ public struct NotificationCenterLabels: Equatable, Sendable {
     public var separator: String
     /// Ends the description of a collapsed stack, such as ", stacked".
     public var stackedSuffix: String
+    /// Enclose the description of a stack in the history panel, with `%@` for the rest of it: "Stacked summary: %@",
+    /// and first, being more specific, the one for notifications mirrored from an iPhone (measured on macOS 26.6).
+    public var stackedSummaries = ["Stacked summary: %@, from iPhone", "Stacked summary: %@"]
     /// Titles of macOS's request to let an app post notifications, with `%@` for the app's name: one for
     /// notifications and one for critical alerts.
     public var permissionTitles = ["“%@” Notifications", "“%@” Critical Alerts"]
@@ -59,6 +62,9 @@ public struct NotificationCenterLabels: Equatable, Sendable {
             if stacked.count == 3, !stacked[1].isEmpty, !stacked[2].isEmpty {
                 labels.separator = stacked[1]
                 labels.stackedSuffix = stacked[2]
+            }
+            labels.stackedSummaries = zip(["Stacked summary: %@, from iPhone", "Stacked summary: %@"], labels.stackedSummaries).map {
+                strings[$0] as? String ?? $1
             }
         }
         if let strings = strings(in: permissionURL, language: language) {

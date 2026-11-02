@@ -125,6 +125,27 @@ struct NotificationHistoryOpenerTests {
         #expect(history.results == [true])
     }
 
+    /// The history panel describes a stack as "Stacked summary: Slack, …" (measured on macOS 26.6), carrying only its
+    /// newest entry's identifier; a card for an older notification from that app expands it to reach its entry.
+    @Test func expandsTheHistorysStackedSummaries() {
+        let history = History()
+        _ = history.start(["older"], from: "Slack")
+        history.step()
+
+        let stack = FakeElement.historyStack(id: "newest", app: "Slack")
+        let other = FakeElement.historyStack(id: "vivaldi", app: "Vivaldi")
+        history.openPanel(stack, other)
+        #expect(history.step())
+        #expect(stack.performed == [kAXPressAction])
+        #expect(other.performed.isEmpty)
+
+        let entry = FakeElement.banner(id: "older", app: "Slack")
+        history.openPanel(FakeElement.banner(id: "newest", app: "Slack"), entry, other)
+        #expect(history.step())
+        #expect(entry.performed == [kAXPressAction])
+        #expect(history.results == [true])
+    }
+
     /// Without the entry, once the panel has had `listGrace` to list it and no stack is still expanding,
     /// the request fails and closes the panel.
     @Test func failsWhenTheHistoryNoLongerHoldsTheNotification() {

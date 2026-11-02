@@ -79,6 +79,16 @@ final class FakeElement: AccessibilityElement {
         return stack
     }
 
+    /// A stack in the history panel as macOS 26.6 shows one: a banner stack described as "Stacked summary: " and the
+    /// newest entry's app, title and body, carrying that entry's identifier.
+    static func historyStack(id: String, app: String, title: String = "New message", body: String = "Hello") -> FakeElement {
+        let stack = banner(id: id, app: app, title: title, body: body)
+        stack.attributes[kAXSubroleAttribute] = "AXNotificationCenterBannerStack"
+        stack.attributes[kAXDescriptionAttribute] = "Stacked summary: \(app), \(title), \(body)"
+        stack.actions = ["AXPress", "Name:Show Details\nTarget:0x0\nSelector:(null)", "Name:Clear All\nTarget:0x0\nSelector:(null)"]
+        return stack
+    }
+
     /// An alert whose choices are named actions, like macOS's "Privacy & Security" alert with Allow….
     static func alert(id: String = "alert-1", app: String = "Calendar", title: String = "Standup", choices: [String] = ["Allow…"]) -> FakeElement {
         let alert = banner(id: id, app: app, title: title)

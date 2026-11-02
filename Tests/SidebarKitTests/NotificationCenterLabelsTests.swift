@@ -17,6 +17,8 @@ struct NotificationCenterLabelsTests {
         "de": [
             "Close": "Schließen", "Show": "Anzeigen", "Show Details": "Details einblenden", "Hide Details": "Details ausblenden",
             "%@, %@, stacked": "%@, %@, gestapelt",
+            "Stacked summary: %@": "Gestapelte Zusammenfassung: %@",
+            "Stacked summary: %@, from iPhone": "Gestapelte Zusammenfassung: %@, vom iPhone",
             "%u more notifications": ["NSStringLocalizedFormatKey": "%#@notifications@"],
         ],
         "ja": ["Close": "閉じる", "%@, %@, stacked": "%@、%@、スタック"],
@@ -30,7 +32,8 @@ struct NotificationCenterLabelsTests {
 
         #expect(NotificationCenterLabels.load(language: "de", table: url, permissionTable: noPermissions) == NotificationCenterLabels(
             close: "Schließen", show: "Anzeigen", showDetails: "Details einblenden", hideDetails: "Details ausblenden",
-            separator: ", ", stackedSuffix: ", gestapelt"
+            separator: ", ", stackedSuffix: ", gestapelt",
+            stackedSummaries: ["Gestapelte Zusammenfassung: %@, vom iPhone", "Gestapelte Zusammenfassung: %@"]
         ))
         let japanese = NotificationCenterLabels.load(language: "ja", table: url, permissionTable: noPermissions)
         #expect(japanese.close == "閉じる")
