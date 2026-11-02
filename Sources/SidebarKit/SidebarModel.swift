@@ -411,10 +411,13 @@ public final class SidebarModel {
     /// keeps them out of NotificationCenter, so its cards can only bring the app forward.
     @ObservationIgnored public var notificationsAreOff: @MainActor (String) -> Bool = { _ in false }
     /// Switches on the notifications of an app, by bundle identifier and the name its notifications show, in
-    /// System Settings (`AppNotificationsModel.allow(bundleIdentifier:name:)`).
-    @ObservationIgnored public var allowAppNotifications: @MainActor (_ bundleIdentifier: String, _ name: String) async -> Void = { _, _ in }
+    /// System Settings (`AppNotificationsModel.switchOn(bundleIdentifier:name:)`), and returns what is left to
+    /// the user when the switch did not move.
+    @ObservationIgnored public var allowAppNotifications: @MainActor (_ bundleIdentifier: String, _ name: String) async -> String? = { _, _ in nil }
     /// The app, by bundle identifier, whose notifications a card is switching on; the others wait for it.
     public private(set) var allowingAppNotifications: String?
+    /// What is left to the user after a card could not switch its app's notifications on, shown until dismissed.
+    public private(set) var appNotificationsProblem: String?
 
     @ObservationIgnored private let performer: any NotificationActionPerforming
     @ObservationIgnored private let store: any NotificationStore
@@ -648,11 +651,15 @@ public final class SidebarModel {
               let bundleIdentifier = notification.bundleIdentifier, appNotificationsAreOff(for: notification)
         else { return }
         allowingAppNotifications = bundleIdentifier
+        appNotificationsProblem = nil
         Task {
-            await allowAppNotifications(bundleIdentifier, notification.source)
-            // The cards look again, now that the switch has moved.
+            appNotificationsProblem = await allowAppNotifications(bundleIdentifier, notification.source)
             allowingAppNotifications = nil
         }
+    }
+
+    public func dismissAppNotificationsProblem() {
+        appNotificationsProblem = nil
     }
 
     /// Whether the card stands for a macOS notification from an app whose notifications are switched off, which
@@ -742,6 +749,14 @@ public final class SidebarModel {
               !appNotificationsAreOff(for: notification)
         else { return nil }
         return choices
+    }
+
+    /// Whether the card lists choices its macOS notification is known not to offer any more (`unavailableChoices`),
+    /// so it shows none: the notification left NotificationCenter, returned to macOS for a control only macOS
+    /// presents, or its history entry is gone. Its app being switched off is told apart by its badge.
+    public func hasLostChoices(_ notification: SidebarNotification) -> Bool {
+        guard let choices = notification.nativeChoices, !appNotificationsAreOff(for: notification) else { return false }
+        return unavailableChoices.contains(choices.identifier)
     }
 
     /// Lets the card that stands for the native notification with `identifier` alone, and lists it without its

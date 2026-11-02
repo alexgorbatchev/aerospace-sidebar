@@ -126,7 +126,9 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         self.monitor = monitor
         model.nativeNotifications = monitor
         model.notificationsAreOff = { [appNotifications] in appNotifications.notificationsAreOff(for: $0) }
-        model.allowAppNotifications = { [appNotifications] in await appNotifications.allow(bundleIdentifier: $0, name: $1) }
+        model.allowAppNotifications = { [appNotifications] in await appNotifications.switchOn(bundleIdentifier: $0, name: $1) }
+        // Cards follow the switches as they flip, in System Settings or through Allow.
+        appNotifications.start()
         let databaseMonitor = makeDatabaseMonitor(model, identities, notificationDatabase) { [weak self] in self?.offer($1, forNotification: $0) }
         self.databaseMonitor = databaseMonitor
         settings.observe { [weak self, model] settings in
@@ -167,6 +169,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         aeroSpace.stop()
         monitor?.stop()
         databaseMonitor?.stop()
+        appNotifications.stop()
         server?.stop()
     }
 

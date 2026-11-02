@@ -26,6 +26,24 @@ struct SidebarTooltipTests {
         #expect(!hover.isShown)
     }
 
+    /// A click hides the tooltip until the pointer leaves the view and rests on it again.
+    @Test func staysHiddenAfterAClickUntilThePointerComesBack() async throws {
+        let hover = SidebarTooltipHover(isShown: true, delay: .milliseconds(20))
+
+        hover.dismiss()
+        #expect(!hover.isShown)
+        hover.hover(true)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(!hover.isShown)
+
+        hover.hover(false)
+        hover.hover(true)
+        for _ in 0..<100 where !hover.isShown {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(hover.isShown)
+    }
+
     /// Under the view from its leading edge, kept inside the margins, and above the view near the bottom.
     @Test(arguments: [
         // Room below: under the view, from its leading edge.

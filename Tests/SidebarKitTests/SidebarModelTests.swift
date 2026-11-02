@@ -497,7 +497,7 @@ struct SidebarModelTests {
         #expect(model.appNotificationsAreOff(for: off))
         // Only a card from a switched-off app switches its app on.
         var allowed: [String] = []
-        model.allowAppNotifications = { allowed.append("\($0) \($1)") }
+        model.allowAppNotifications = { allowed.append("\($0) \($1)"); return nil }
         #expect(!model.appNotificationsAreOff(for: on))
         // Pushed notifications never pass through macOS, whatever app they name.
         #expect(!model.appNotificationsAreOff(for: pushed))

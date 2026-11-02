@@ -8,15 +8,28 @@ struct SwitchedOffBadge: View {
     /// The app as the card names it.
     let appName: String
     /// Where the pointer starts, for tests; the button follows the pointer from there.
-    var isHovered = false
+    let isHovered: Bool
     let action: () -> Void
 
     @Environment(\.typography) private var typography
+    /// Its tooltip, which a click hides.
+    @State private var tooltip: SidebarTooltipHover
+
+    /// `tooltip` sets whether the tooltip starts shown, for tests.
+    init(appName: String, isHovered: Bool = false, tooltip: SidebarTooltipHover = SidebarTooltipHover(), action: @escaping () -> Void) {
+        self.appName = appName
+        self.isHovered = isHovered
+        self.action = action
+        _tooltip = State(initialValue: tooltip)
+    }
 
     static let symbol = "bell.slash.fill"
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            tooltip.dismiss()
+            action()
+        } label: {
             // Push buttons draw their label through AppKit, which takes the font only from the label itself.
             Image(systemName: Self.symbol)
                 .font(typography.font(.caption2))
@@ -27,7 +40,7 @@ struct SwitchedOffBadge: View {
         .controlSize(.small)
         .modifier(CardActionLift(isHovered: isHovered))
         // AppKit's tooltips show only while the app is active, which the sidebar never is.
-        .sidebarTooltip(Self.helpText(appName: appName))
+        .sidebarTooltip(Self.helpText(appName: appName), hover: tooltip)
         .accessibilityLabel(Self.accessibilityLabel(appName: appName))
     }
 

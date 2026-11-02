@@ -552,6 +552,7 @@ struct SidebarViewTests {
         model.allowAppNotifications = { identifier, name in
             allowed.append("\(identifier) \(name)")
             await withCheckedContinuation { finish = $0 }
+            return nil
         }
         model.add(SidebarNotification(
             source: "Vivaldi", title: "Off", bundleIdentifier: "com.vivaldi.Vivaldi", action: .activateApp(name: "Vivaldi"), nativeIdentifiers: ["a"]
@@ -606,6 +607,66 @@ struct SidebarViewTests {
         finish?.resume()
         let other = try done.find(text: "On").find(ViewType.Button.self, relation: .parent)
         #expect(throws: (any Error).self) { try other.accessibilityActions().find(button: NotificationCard.allowNotificationsAction) }
+    }
+
+    /// When a badge cannot switch its app's notifications on, the sidebar says what is left to do until dismissed;
+    /// the next attempt starts without it.
+    @Test func saysWhatIsLeftWhenABadgeCannotSwitchAnAppOn() async throws {
+        model.notificationsAreOff = { _ in true }
+        model.allowAppNotifications = { _, name in "Switch on Allow Notifications for \(name) in System Settings." }
+        model.add(SidebarNotification(
+            source: "Vivaldi", title: "Off", bundleIdentifier: "com.vivaldi.Vivaldi", action: .activateApp(name: "Vivaldi"), nativeIdentifiers: ["a"]
+        ))
+
+        model.allowAppNotifications(for: model.notifications[0].id)
+        for _ in 0..<100 where model.allowingAppNotifications != nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let problem = "Switch on Allow Notifications for Vivaldi in System Settings."
+        #expect(model.appNotificationsProblem == problem)
+        let sut = try view().inspect()
+        #expect(throws: Never.self) { try sut.find(text: problem) }
+        try sut.find(button: "Dismiss").tap()
+        #expect(model.appNotificationsProblem == nil)
+    }
+
+    /// A card whose notification is known to have lost its buttons says so instead of dropping them silently; a
+    /// card from a switched-off app has the badge to say why instead.
+    @Test func notesCardsThatLostTheirButtons() throws {
+        model.interception = .active
+        model.add(SidebarNotification(
+            source: "Slack", title: "Gone", bundleIdentifier: "com.tinyspeck.slackmacgap",
+            nativeChoices: .init(identifier: "a", choices: ["Reply"]), nativeIdentifiers: ["a"]
+        ))
+        model.add(SidebarNotification(
+            source: "Vivaldi", title: "Off", bundleIdentifier: "com.vivaldi.Vivaldi",
+            nativeChoices: .init(identifier: "b", choices: ["Settings"]), nativeIdentifiers: ["b"]
+        ))
+        model.notificationsAreOff = { $0 == "com.vivaldi.Vivaldi" }
+        func notes() throws -> [String] {
+            try view().inspect().findAll(NotificationCard.self).compactMap { card in
+                try card.actualView().notes.contains(NotificationCard.lostChoicesNote) ? card.actualView().notification.title : nil
+            }
+        }
+        #expect(try notes().isEmpty)
+
+        model.unavailableChoices = ["a", "b"]
+
+        #expect(try notes() == ["Gone"])
+        #expect(throws: Never.self) { try view().inspect().find(text: NotificationCard.lostChoicesNote) }
+        #expect(try view().inspect().findAll(ChoiceButton.self).isEmpty)
+    }
+
+    /// A click on the badge hides its tooltip, as AppKit hides its own, and it stays hidden while the pointer stays.
+    @Test func clickingTheBadgeHidesItsTooltip() throws {
+        let tooltip = SidebarTooltipHover(isShown: true)
+        var allowed = 0
+
+        try SwitchedOffBadge(appName: "Vivaldi", tooltip: tooltip) { allowed += 1 }.inspect().button().tap()
+
+        #expect(allowed == 1)
+        #expect(!tooltip.isShown)
     }
 
     @Test func settingsButtonOpensSettings() throws {

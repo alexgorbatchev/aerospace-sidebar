@@ -41,10 +41,15 @@ struct SidebarAppDelegateTests {
         .fake(store: settings, home: directory.url, cli: cli)
     }
 
-    /// - Parameter activation: Hands activation over; by default to no app and deactivates nothing, so nothing on
-    ///   the desktop changes.
+    /// - Parameters:
+    ///   - activation: Hands activation over; by default to no app and deactivates nothing, so nothing on the
+    ///     desktop changes.
+    ///   - appNotificationSwitch: Stands in for System Settings' Allow Notifications switches.
     func makeDelegate(
-        socketPath: String = ControlServerTests.socketPath(), sender: String? = "Safari", activation: ActivationYielder? = nil
+        socketPath: String = ControlServerTests.socketPath(),
+        sender: String? = "Safari",
+        activation: ActivationYielder? = nil,
+        appNotificationSwitch: FakeAppNotificationSwitch = FakeAppNotificationSwitch()
     ) -> SidebarAppDelegate {
         SidebarAppDelegate(
             settings: settings,
@@ -81,9 +86,7 @@ struct SidebarAppDelegateTests {
             makeAeroSpaceSync: makeAeroSpaceSync,
             makeOnboarding: { [permissions] _ in OnboardingModel(permissions: permissions, loginItems: FakeLoginItems()) },
             makeAppNotifications: { [directory] model in
-                AppNotificationsModel(
-                    preferences: NotificationPreferences(home: directory.url), switcher: FakeAppNotificationSwitch()
-                ) { model.received }
+                AppNotificationsModel(preferences: NotificationPreferences(home: directory.url), switcher: appNotificationSwitch) { model.received }
             },
             makeSettingsWindow: { store, aeroSpace, onboarding, appNotifications, model in
                 SettingsWindowController.forTesting(
@@ -97,6 +100,31 @@ struct SidebarAppDelegateTests {
                 handOver: { _ in false }, deactivate: {}
             )
         )
+    }
+
+    /// Cards learn which apps have their notifications switched off from the moment the sidebar launches, follow
+    /// the switches until it quits, and switch an app on through Settings' Allow, saying what is left when that
+    /// fails.
+    @Test func cardsFollowAndSwitchOnAppNotifications() async throws {
+        let preferences = NotificationPreferencesFixture(directory: directory)
+        try preferences.write(["com.vivaldi.Vivaldi": false])
+        let switcher = FakeAppNotificationSwitch()
+        switcher.result = .needsAccessibility
+        let delegate = makeDelegate(appNotificationSwitch: switcher)
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
+        let model = delegate.model
+
+        #expect(model.notificationsAreOff("com.vivaldi.vivaldi"))
+        let problem = await model.allowAppNotifications("com.vivaldi.vivaldi", "Vivaldi")
+
+        #expect(switcher.requests.map(\.bundleIdentifier) == ["com.vivaldi.Vivaldi"])
+        #expect(problem == "Without Accessibility, switch on Allow Notifications for Vivaldi in System Settings.")
+        try preferences.write(["com.vivaldi.Vivaldi": true])
+        for _ in 0..<300 where model.notificationsAreOff("com.vivaldi.vivaldi") {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!model.notificationsAreOff("com.vivaldi.vivaldi"))
     }
 
     /// Text fields get ⌘Z, ⇧⌘Z, ⌘X, ⌘C, ⌘V and ⌘A only from main menu items, which an `LSUIElement` app
@@ -361,8 +389,7 @@ struct SidebarAppDelegateTests {
     /// An alert left to macOS for its actions menu gets the menu's choices once usernoted writes its record: its
     /// card offers them in its place, and the alert is handed over to the card and hidden at once, so a choice on
     /// the card answers it. An alert from an app left to macOS stays there, its card as it was.
-    @Test func recordsGiveCardsTheChoicesOfAlertsLeftToMacOS() async throws {
-        let switcher = FakeAppNotificationSwitch()
+    @Test func recordsGiveCardsTheChoicesOfAlertsLeftToMacOS() throws {
         try database.create()
         settings.update { $0.notifications.appsLeftToMacOS = ["Kept"] }
         let menu = UUID()
@@ -389,17 +416,14 @@ struct SidebarAppDelegateTests {
             makeDatabaseMonitor: makeDatabaseMonitor,
             makeServer: { SidebarAppDelegate.makeServer(model: $0, icons: $1, path: ControlServerTests.socketPath()) },
             makeAeroSpaceSync: makeAeroSpaceSync,
-            makeAppNotifications: { [directory, switcher] model in
-                AppNotificationsModel(preferences: NotificationPreferences(home: directory.url), switcher: switcher) { model.received }
+            makeAppNotifications: { [directory] model in
+                AppNotificationsModel(preferences: NotificationPreferences(home: directory.url), switcher: FakeAppNotificationSwitch()) { model.received }
             }
         )
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
         let model = delegate.model
         #expect(model.notifications.map(\.shownByMacOS) == [true, true])
-        // A card's badge switches its app's notifications on through Settings' Allow.
-        await model.allowAppNotifications("com.vivaldi.Vivaldi", "Vivaldi")
-        #expect(switcher.requests.map(\.bundleIdentifier) == ["com.vivaldi.Vivaldi"])
 
         for (identifier, title) in [(menu, "When?"), (kept, "Kept")] {
             try database.insert(identifier: identifier, title: title, delivered: Date() - 1, actions: NativeChoicesTests.menuActions)

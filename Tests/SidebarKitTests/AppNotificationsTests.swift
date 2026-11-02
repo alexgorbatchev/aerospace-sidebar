@@ -2,6 +2,7 @@ import ApplicationServices
 import Foundation
 @testable import SidebarKit
 import SwiftUI
+import Synchronization
 import Testing
 import ViewInspector
 
@@ -10,8 +11,13 @@ final class NotificationPreferencesFixture {
     let directory: TemporaryDirectory
     let preferences: NotificationPreferences
 
-    init() throws {
-        directory = try TemporaryDirectory()
+    convenience init() throws {
+        self.init(directory: try TemporaryDirectory())
+    }
+
+    /// usernoted's preferences in the home folder `directory` stands for.
+    init(directory: TemporaryDirectory) {
+        self.directory = directory
         preferences = NotificationPreferences(home: directory.url)
     }
 
@@ -80,17 +86,13 @@ struct AppNotificationsModelTests {
         fixture = try NotificationPreferencesFixture()
     }
 
-    final class Clock {
-        var now = Date(timeIntervalSinceReferenceDate: 0)
-    }
-
     func model(
         received: [SidebarNotification],
-        clock: Clock = Clock(),
-        installedApp: @escaping @MainActor (String) -> InstalledApps.App? = { _ in nil }
+        installedApp: @escaping @MainActor (String) -> InstalledApps.App? = { _ in nil },
+        retryInterval: Duration = AppNotificationsModel.retryInterval
     ) -> AppNotificationsModel {
         AppNotificationsModel(
-            preferences: fixture.preferences, switcher: switcher, installedApp: installedApp, received: { received }, now: { clock.now }
+            preferences: fixture.preferences, switcher: switcher, installedApp: installedApp, retryInterval: retryInterval, received: { received }
         )
     }
 
@@ -180,18 +182,40 @@ struct AppNotificationsModelTests {
         #expect(model.message == "Switched on notifications from Vivaldi Helper (Alerts); its cards open their notifications.")
     }
 
-    /// A card's badge names its app as the card does, in the database's lowercase; Allow uses usernoted's
-    /// identifier, and an app usernoted does not list is tried as named.
-    @Test func allowsAnAppByTheIdentifierACardNames() async throws {
-        try fixture.write(["com.vivaldi.Vivaldi": false])
-        let model = model(received: [])
-        switcher.result = .switchedOn
+    /// A card's badge names its app as the card does, in the database's lowercase; switching it on uses usernoted's
+    /// identifier, and an app usernoted does not list is tried as named. What is left to the user comes back, naming
+    /// a helper by its own name; nothing comes back once the switch is on.
+    @Test(arguments: [
+        (AppNotificationSwitchResult.switchedOn, nil),
+        (.alreadyOn, nil),
+        (.pageNotShown, "Switch on Allow Notifications for Vivaldi Helper (Alerts) in System Settings."),
+        (.refused, "Switch on Allow Notifications for Vivaldi Helper (Alerts) in System Settings."),
+        (.needsAccessibility, "Without Accessibility, switch on Allow Notifications for Vivaldi Helper (Alerts) in System Settings."),
+    ])
+    func switchesOnTheAppACardNames(result: AppNotificationSwitchResult, problem: String?) async throws {
+        let helper = "com.vivaldi.Vivaldi.framework.AlertNotificationService"
+        try fixture.write([helper: false])
+        let model = model(received: [], installedApp: { InstalledApps.App(name: $0 == helper ? "Vivaldi Helper (Alerts)" : "Unlisted", bundleIdentifier: $0) })
+        switcher.result = result
 
-        await model.allow(bundleIdentifier: "com.vivaldi.vivaldi", name: "Vivaldi")
-        await model.allow(bundleIdentifier: "com.example.Unlisted", name: "Unlisted")
+        #expect(await model.switchOn(bundleIdentifier: helper.lowercased(), name: "Vivaldi") == problem)
+        _ = await model.switchOn(bundleIdentifier: "com.example.Unlisted", name: "Unlisted")
 
-        #expect(switcher.requests.map(\.bundleIdentifier) == ["com.vivaldi.Vivaldi", "com.example.Unlisted"])
+        #expect(switcher.requests.map(\.bundleIdentifier) == [helper, "com.example.Unlisted"])
         #expect(switcher.requests.map(\.name) == ["Vivaldi", "Unlisted"])
+    }
+
+    /// While one app's notifications are being switched on, another card's badge gets no answer.
+    @Test func switchesOnOneAppAtATime() async throws {
+        try fixture.write(["com.vivaldi.Vivaldi": false, "com.tinyspeck.slackmacgap": false])
+        let model = model(received: [])
+        switcher.result = .refused
+        var second: String?? = .none
+        switcher.whileSwitching = { second = await model.switchOn(bundleIdentifier: "com.tinyspeck.slackmacgap", name: "Slack") }
+
+        #expect(await model.switchOn(bundleIdentifier: "com.vivaldi.Vivaldi", name: "Vivaldi") != nil)
+        #expect(second == .some(nil))
+        #expect(switcher.requests.map(\.bundleIdentifier) == ["com.vivaldi.Vivaldi"])
     }
 
     @Test func cannotTellWithoutTheSettings() {
@@ -204,19 +228,41 @@ struct AppNotificationsModelTests {
         #expect(!model.notificationsAreOff(for: "com.tinyspeck.slackmacgap"))
     }
 
-    /// Every card asks for its help text, so one read answers for `cacheDuration`.
-    @Test func readsTheSettingsAtMostEveryCacheDuration() throws {
-        try fixture.write(["com.tinyspeck.slackmacgap": false])
-        let clock = Clock()
-        let model = model(received: [], clock: clock)
-
-        #expect(model.notificationsAreOff(for: "com.tinyspeck.slackmacgap"))
+    /// Cards follow a switch that flips while the sidebar runs, in System Settings or through Allow: the model
+    /// reads usernoted's preferences again whenever they are written, and cards that read it redraw.
+    @Test func followsSwitchesAsTheyFlip() async throws {
+        try fixture.write(["com.vivaldi.Vivaldi": false])
+        let model = model(received: [])
+        model.start()
+        defer { model.stop() }
+        #expect(model.notificationsAreOff(for: "com.vivaldi.vivaldi"))
         #expect(!model.notificationsAreOff(for: "com.openai.codex"))
-        try fixture.write(["com.tinyspeck.slackmacgap": true])
-        #expect(model.notificationsAreOff(for: "com.tinyspeck.slackmacgap"))
 
-        clock.now += AppNotificationsModel.cacheDuration
-        #expect(!model.notificationsAreOff(for: "com.tinyspeck.slackmacgap"))
+        let redrawn = Mutex(false)
+        withObservationTracking { _ = model.notificationsAreOff(for: "com.vivaldi.vivaldi") } onChange: { redrawn.withLock { $0 = true } }
+        try fixture.write(["com.vivaldi.Vivaldi": true])
+        for _ in 0..<300 where model.notificationsAreOff(for: "com.vivaldi.vivaldi") {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(!model.notificationsAreOff(for: "com.vivaldi.vivaldi"))
+        #expect(redrawn.withLock { $0 })
+    }
+
+    /// Without Full Disk Access the settings do not open, and nothing tells when access comes, so they are tried
+    /// again until they open.
+    @Test func triesTheSettingsAgainUntilTheyOpen() async throws {
+        let model = model(received: [], retryInterval: .milliseconds(50))
+        model.start()
+        defer { model.stop() }
+        #expect(!model.notificationsAreOff(for: "com.vivaldi.Vivaldi"))
+
+        try fixture.write(["com.vivaldi.Vivaldi": false])
+        for _ in 0..<300 where !model.notificationsAreOff(for: "com.vivaldi.Vivaldi") {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(model.notificationsAreOff(for: "com.vivaldi.Vivaldi"))
     }
 
     @Test(arguments: [

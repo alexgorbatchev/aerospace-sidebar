@@ -127,7 +127,9 @@ final class Sampler: NSObject, UNUserNotificationCenterDelegate {
             otherwise switch it on in System Settings › Notifications.
             """
         let body = [reason, hint].compactMap(\.self).joined(separator: " ")
-        report("Notification Sampler may not post notifications", body: body)
+        // The sampler's own page in System Settings › Notifications, where its switch is.
+        let page = "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(Bundle.main.bundleIdentifier ?? "")"
+        report("Notification Sampler may not post notifications", body: body, choices: ["Open Settings=open '\(page)'"])
         isStarting = false
         quitWhenDone()
     }
@@ -179,10 +181,11 @@ final class Sampler: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// Pushes a sidebar notification through the CLI.
-    private func report(_ title: String, body: String) {
+    /// Pushes a notification through the CLI, with a button per `title=command` choice.
+    private func report(_ title: String, body: String, choices: [String] = []) {
         let process = Process()
         process.executableURL = cli
-        process.arguments = ["notification", "push", "--title", title, "--body", body]
+        process.arguments = ["notification", "push", "--title", title, "--body", body] + choices.flatMap { ["--choice", $0] }
         process.terminationHandler = { process in
             let status = process.terminationStatus
             Task { @MainActor in

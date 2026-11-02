@@ -556,13 +556,14 @@ struct NotificationDatabaseMonitorTests {
 
     /// A read that fails other than for missing access, such as while the database cannot be opened for a moment,
     /// is tried once more shortly after, which lists the record whose write woke it without another write; the
-    /// failure is then over and would be logged again.
+    /// failure is then over and would be logged again. The test runs the retry itself once the database opens
+    /// again: racing a short delay failed on a busy machine, when the retry ran before the database was back.
     @Test func retriesAReadThatFailed() async throws {
         try fixture.create()
         let harness = Harness()
         let monitor = NotificationDatabaseMonitor(
             database: fixture.database, identities: identities, defaults: fixture.defaults, grace: 0,
-            installedApp: { InstalledApps.App(name: "App", bundleIdentifier: $0) }, readRetryDelay: 0.3
+            installedApp: { InstalledApps.App(name: "App", bundleIdentifier: $0) }, readRetryDelay: 3600
         ) { harness.received.append($0) }
         monitor.start()
         defer { monitor.stop() }
@@ -572,11 +573,14 @@ struct NotificationDatabaseMonitorTests {
         try fixture.insert(title: "Retried", delivered: Date() - 1)
         try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: path)
         defer { try? FileManager.default.setAttributes(attributes, ofItemAtPath: path) }
-        for _ in 0..<300 where monitor.lastError == nil {
+        for _ in 0..<1000 where !monitor.isWaitingToRetryRead {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(monitor.status == .unreadable)
+        #expect(monitor.lastError != nil)
         try FileManager.default.setAttributes(attributes, ofItemAtPath: path)
+        monitor.retryReadNow()
+        #expect(!monitor.isWaitingToRetryRead)
         for _ in 0..<300 where harness.received.isEmpty {
             try await Task.sleep(for: .milliseconds(10))
         }

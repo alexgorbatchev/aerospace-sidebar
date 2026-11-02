@@ -55,6 +55,11 @@ struct SidebarView: View {
                         .accessibilityLabel("Open Settings")
                 }
             }
+            if let problem = model.appNotificationsProblem {
+                StatusNote(text: problem) {
+                    Button("Dismiss", font: typography.font(.body)) { model.dismissAppNotificationsProblem() }
+                }
+            }
             if asksForFullDiskAccess {
                 StatusNote(text: Self.fullDiskAccessNote) {
                     HStack(spacing: 6) {
@@ -84,7 +89,8 @@ struct SidebarView: View {
                             composingChanged: { model.setComposing($0, on: notification.id) },
                             allowAppNotifications: model.appNotificationsAreOff(for: notification)
                                 ? { model.allowAppNotifications(for: notification.id) } : nil,
-                            isAllowingAppNotifications: model.allowingAppNotifications != nil
+                            isAllowingAppNotifications: model.allowingAppNotifications != nil,
+                            hasLostChoices: model.hasLostChoices(notification)
                         )
                         .transition(cardTransition)
                         // Later cards draw above earlier ones, so when a card is removed the card
@@ -161,6 +167,7 @@ struct SidebarView: View {
         .animation(Self.motion, value: model.interception)
         .animation(Self.motion, value: asksForFullDiskAccess)
         .animation(Self.motion, value: settingsProblem)
+        .animation(Self.motion, value: model.appNotificationsProblem)
         .animation(Self.motion, value: model.unavailableChoices)
     }
 
@@ -362,6 +369,9 @@ struct NotificationCard: View {
     var allowAppNotifications: (() -> Void)?
     /// Another card is switching an app's notifications on; the badge waits for it.
     var isAllowingAppNotifications = false
+    /// The notification's choices are known to be gone (`SidebarModel.hasLostChoices(_:)`), so a note says why the
+    /// card shows none.
+    var hasLostChoices = false
 
     nonisolated static let cornerRadius: CGFloat = 10
     /// How far each layer under a stacked card shows, and how much narrower it is per side.
@@ -388,6 +398,8 @@ struct NotificationCard: View {
     static let lineSpacing: CGFloat = 4
     /// Space between the icon and the text beside it.
     static let iconSpacing: CGFloat = 8
+    /// Says why a card that had buttons shows none.
+    static let lostChoicesNote = "Its buttons are no longer available"
     /// The VoiceOver action that does what `SwitchedOffBadge` does.
     static let allowNotificationsAction = "Allow Notifications"
     /// How much of the icon's square its artwork fills: 824 of an app icon's 1024 points (Apple's macOS
@@ -667,6 +679,7 @@ struct NotificationCard: View {
         [
             notification.invalidIcon.map { "Invalid icon: \($0)" },
             notification.shownByMacOS ? "Shown by macOS for its buttons" : nil,
+            hasLostChoices ? Self.lostChoicesNote : nil,
         ].compactMap { $0 }
     }
 

@@ -19,7 +19,8 @@ struct SidebarTooltipKey: PreferenceKey {
     }
 }
 
-/// When a marked view's tooltip shows: once the pointer has rested on the view for `delay`, until it leaves.
+/// When a marked view's tooltip shows: once the pointer has rested on the view for `delay`, until it leaves or the
+/// view is clicked (`dismiss()`); after a click it shows again only once the pointer has left and come back.
 @MainActor
 @Observable
 final class SidebarTooltipHover {
@@ -29,6 +30,8 @@ final class SidebarTooltipHover {
     private(set) var isShown: Bool
     @ObservationIgnored private let delay: Duration
     @ObservationIgnored private var pending: Task<Void, Never>?
+    /// Clicked since the pointer came onto the view.
+    @ObservationIgnored private var isDismissed = false
 
     init(isShown: Bool = false, delay: Duration = SidebarTooltipHover.delay) {
         self.isShown = isShown
@@ -40,13 +43,23 @@ final class SidebarTooltipHover {
         pending = nil
         guard isInside else {
             isShown = false
+            isDismissed = false
             return
         }
+        guard !isDismissed else { return }
         pending = Task { [weak self, delay] in
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled else { return }
             self?.isShown = true
         }
+    }
+
+    /// Hides the tooltip for a click on its view, as AppKit hides its tooltips.
+    func dismiss() {
+        pending?.cancel()
+        pending = nil
+        isShown = false
+        isDismissed = true
     }
 }
 
@@ -140,7 +153,12 @@ struct SidebarTooltipPlacement: Layout {
 extension View {
     /// Shows `text` in a tooltip the sidebar draws (`sidebarTooltips()`) once the pointer rests on this view.
     func sidebarTooltip(_ text: String) -> some View {
-        modifier(SidebarTooltipModifier(text: text, hover: SidebarTooltipHover()))
+        sidebarTooltip(text, hover: SidebarTooltipHover())
+    }
+
+    /// Shows `text` in a tooltip as `hover` decides, which the view's action dismisses on a click.
+    func sidebarTooltip(_ text: String, hover: SidebarTooltipHover) -> some View {
+        modifier(SidebarTooltipModifier(text: text, hover: hover))
     }
 
     /// Draws the tooltips of the views inside, above them.

@@ -145,6 +145,11 @@ public final class NotificationDatabaseMonitor {
     /// Whether a read that failed waits to be tried once more.
     var isWaitingToRetryRead: Bool { readRetryTimer != nil }
 
+    /// Runs the retry that waits for `readRetryDelay` now, so tests need not race it.
+    func retryReadNow() {
+        readRetryTimer?.fire()
+    }
+
     /// Starts reading once the database opens, or tries again later.
     func open() {
         let latest: Date?

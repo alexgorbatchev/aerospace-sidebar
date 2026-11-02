@@ -39,8 +39,8 @@ public final class AppNotificationsModel {
         }
     }
 
-    /// How long one read of the settings answers `notificationsAreOff(for:)`, which every card asks for its help.
-    static let cacheDuration: TimeInterval = 2
+    /// How often the settings are tried again while they cannot be read, as without Full Disk Access.
+    public static let retryInterval: Duration = .seconds(5)
 
     /// Sorted by name, then title.
     public private(set) var appsWithNotificationsOff: [App] = []
@@ -54,9 +54,13 @@ public final class AppNotificationsModel {
     @ObservationIgnored private let preferences: NotificationPreferences
     @ObservationIgnored private let switcher: any AppNotificationSwitching
     @ObservationIgnored private let received: @MainActor () -> [SidebarNotification]
-    @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private let installedApp: @MainActor (String) -> InstalledApps.App?
-    @ObservationIgnored private var cached: (apps: [String: Switch]?, readAt: Date)?
+    @ObservationIgnored private let retryInterval: Duration
+    /// Each app's switch by `key(_:)` of its bundle identifier, as last read; nil while the settings cannot be read.
+    /// Cards read it through `notificationsAreOff(for:)` as they draw, so a switch that flips redraws them.
+    private var switches: [String: Switch]?
+    @ObservationIgnored private var watcher: FileWatcher?
+    @ObservationIgnored private var retry: Task<Void, Never>?
     /// Installed apps' names by bundle identifier, misses included: the list is read every second while shown.
     @ObservationIgnored private var installedNames: [String: String?] = [:]
 
@@ -67,18 +71,40 @@ public final class AppNotificationsModel {
         preferences: NotificationPreferences,
         switcher: any AppNotificationSwitching = SystemSettingsNotificationSwitch(),
         installedApp: @escaping @MainActor (String) -> InstalledApps.App? = InstalledApps.app,
-        received: @escaping @MainActor () -> [SidebarNotification],
-        now: @escaping () -> Date = Date.init
+        retryInterval: Duration = AppNotificationsModel.retryInterval,
+        received: @escaping @MainActor () -> [SidebarNotification]
     ) {
         self.preferences = preferences
         self.switcher = switcher
         self.installedApp = installedApp
+        self.retryInterval = retryInterval
         self.received = received
-        self.now = now
+    }
+
+    isolated deinit {
+        watcher?.stop()
+        retry?.cancel()
+    }
+
+    /// Reads the settings and reads them again whenever usernoted writes them, as when a switch flips in System
+    /// Settings, or every `retryInterval` while they cannot be read.
+    public func start() {
+        watcher?.stop()
+        let watcher = FileWatcher(url: preferences.url, delay: .milliseconds(200)) { [weak self] in self?.read() }
+        watcher.start()
+        self.watcher = watcher
+        read()
+    }
+
+    public func stop() {
+        watcher?.stop()
+        watcher = nil
+        retry?.cancel()
+        retry = nil
     }
 
     /// One app's Allow Notifications switch, under the bundle identifier usernoted keeps it for.
-    private struct Switch {
+    private struct Switch: Equatable {
         let bundleIdentifier: String
         let allowed: Bool
     }
@@ -106,35 +132,48 @@ public final class AppNotificationsModel {
             .sorted(by: App.precedes)
     }
 
-    /// Whether the app with `bundleIdentifier`, in any case, has its notifications switched off; false when the
-    /// settings cannot be read. Reads them at most every `cacheDuration` seconds.
+    /// Whether the app with `bundleIdentifier`, in any case, has its notifications switched off, as last read; false
+    /// when the settings cannot be read.
     public func notificationsAreOff(for bundleIdentifier: String) -> Bool {
-        let time = now()
-        let apps = if let cached, time.timeIntervalSince(cached.readAt) < Self.cacheDuration { cached.apps } else { read() }
-        return apps?[Self.key(bundleIdentifier)]?.allowed == false
+        switches?[Self.key(bundleIdentifier)]?.allowed == false
     }
 
-    /// Switches the app's notifications on in System Settings, then lists the apps again.
-    public func allow(_ app: App) async {
-        guard allowing == nil else { return }
+    /// Switches the app's notifications on in System Settings, then lists the apps again. Returns what System
+    /// Settings did, nil while another app's are being switched on.
+    @discardableResult
+    public func allow(_ app: App) async -> AppNotificationSwitchResult? {
+        guard allowing == nil else { return nil }
         allowing = app.bundleIdentifier
         let result = await switcher.allowNotifications(bundleIdentifier: app.bundleIdentifier, name: app.name)
         allowing = nil
-        message = switch result {
-        // Notification Center then lists the app's notifications it kept, so their cards open them too.
-        case .switchedOn: "Switched on notifications from \(app.title); its cards open their notifications."
-        case .alreadyOn: "Notifications from \(app.title) are on."
-        case .pageNotShown, .refused: "Switch on Allow Notifications for \(app.title) in System Settings."
-        case .needsAccessibility: "Without Accessibility, switch on Allow Notifications for \(app.title) in System Settings."
-        }
+        message = Self.message(for: result, of: app.title)
         refresh()
+        return result
     }
 
-    /// Switches on the notifications of the app with `bundleIdentifier`, in any case, as a card names it, using
-    /// the identifier as usernoted keeps it, which System Settings finds the app's page by.
-    public func allow(bundleIdentifier: String, name: String) async {
+    /// Switches on the notifications of the app with `bundleIdentifier`, in any case, and `name`, as a card names
+    /// them, using the identifier as usernoted keeps it, which System Settings finds the app's page by. Returns
+    /// what is left to the user when the switch did not move; nil once it is on, or while another app's are being
+    /// switched on.
+    public func switchOn(bundleIdentifier: String, name: String) async -> String? {
         let identifier = read()?[Self.key(bundleIdentifier)]?.bundleIdentifier ?? bundleIdentifier
-        await allow(App(bundleIdentifier: identifier, name: name))
+        let installedName = installedName(of: identifier)
+        let app = App(bundleIdentifier: identifier, name: name, installedName: installedName == name ? nil : installedName)
+        switch await allow(app) {
+        case let result? where result != .switchedOn && result != .alreadyOn: return Self.message(for: result, of: app.title)
+        default: return nil
+        }
+    }
+
+    /// What Allow did for the app titled `title`, and what is left to the user.
+    public static func message(for result: AppNotificationSwitchResult, of title: String) -> String {
+        switch result {
+        // Notification Center then lists the app's notifications it kept, so their cards open them too.
+        case .switchedOn: "Switched on notifications from \(title); its cards open their notifications."
+        case .alreadyOn: "Notifications from \(title) are on."
+        case .pageNotShown, .refused: "Switch on Allow Notifications for \(title) in System Settings."
+        case .needsAccessibility: "Without Accessibility, switch on Allow Notifications for \(title) in System Settings."
+        }
     }
 
     private func installedName(of bundleIdentifier: String) -> String? {
@@ -144,7 +183,9 @@ public final class AppNotificationsModel {
         return name
     }
 
-    /// The switches by `key(_:)` of their bundle identifiers.
+    /// Reads the switches into `switches`, and while they cannot be read tries again after `retryInterval`
+    /// while started.
+    @discardableResult
     private func read() -> [String: Switch]? {
         var apps: [String: Switch]?
         if let allowed = try? preferences.allowedApps() {
@@ -153,7 +194,18 @@ public final class AppNotificationsModel {
                 apps?[Self.key(identifier)] = Switch(bundleIdentifier: identifier, allowed: isAllowed)
             }
         }
-        cached = (apps, now())
+        // Reading them again unchanged would redraw every card for nothing.
+        if apps != switches { switches = apps }
+        retry?.cancel()
+        retry = nil
+        if apps == nil, watcher != nil {
+            retry = Task { [weak self, retryInterval] in
+                try? await Task.sleep(for: retryInterval)
+                guard !Task.isCancelled else { return }
+                // Access may have come with a new file the watcher could not open before.
+                self?.start()
+            }
+        }
         return apps
     }
 
