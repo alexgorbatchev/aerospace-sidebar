@@ -121,11 +121,18 @@ struct SwitchedOffAppsRows: View {
             }
             Text(app.name)
                 .help(app.bundleIdentifier)
+            if let installedName = app.installedName {
+                // System Settings names an app and its notification helper alike; the helper's own name tells them apart.
+                Text(installedName)
+                    .font(typography.font(.subheadline))
+                    .foregroundStyle(.secondary)
+                    .help(app.bundleIdentifier)
+            }
             Button("Allow", font: typography.font(.body)) {
                 Task { await model.allow(app) }
             }
             .disabled(model.allowing != nil)
-            .accessibilityLabel("Allow notifications from \(app.name)")
+            .accessibilityLabel("Allow notifications from \(app.title)")
         }
     }
 }

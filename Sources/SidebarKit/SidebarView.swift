@@ -81,7 +81,8 @@ struct SidebarView: View {
                             reply: { model.reply($0, text: $1, for: notification.id) },
                             openLink: { model.openLink($0) },
                             dismiss: { model.dismiss(notification.id) },
-                            composingChanged: { model.setComposing($0, on: notification.id) }
+                            composingChanged: { model.setComposing($0, on: notification.id) },
+                            openNotificationSettings: model.appNotificationsAreOff(for: notification) ? { openSettings(.notifications) } : nil
                         )
                         .transition(cardTransition)
                         // Later cards draw above earlier ones, so when a card is removed the card
@@ -352,6 +353,9 @@ struct NotificationCard: View {
     /// Reports whether a reply is being typed on the card (`isComposing`), which keeps it from stacking: a stack
     /// gets a new card, without this one's field and text.
     var composingChanged: (Bool) -> Void = { _ in }
+    /// Opens Settings › Notifications, set while the posting app has its notifications switched off in System
+    /// Settings (`SidebarModel.appNotificationsAreOff(for:)`); the card then shows `SwitchedOffBadge`.
+    var openNotificationSettings: (() -> Void)?
 
     nonisolated static let cornerRadius: CGFloat = 10
     /// How far each layer under a stacked card shows, and how much narrower it is per side.
@@ -378,6 +382,8 @@ struct NotificationCard: View {
     static let lineSpacing: CGFloat = 4
     /// Space between the icon and the text beside it.
     static let iconSpacing: CGFloat = 8
+    /// The VoiceOver action that does what `SwitchedOffBadge` does.
+    static let notificationSettingsAction = "Notification Settings"
     /// How much of the icon's square its artwork fills: 824 of an app icon's 1024 points (Apple's macOS
     /// app icon grid), the rest is a transparent margin. Font icons are drawn this size to match.
     static let iconArtwork: CGFloat = 824.0 / 1024.0
@@ -485,6 +491,10 @@ struct NotificationCard: View {
                 ForEach(bodyLinks, id: \.self) { url in
                     Button("Open \(url.host() ?? url.absoluteString)") { openLink(url) }
                 }
+                // Nor is the badge under the icon.
+                if let openNotificationSettings {
+                    Button(Self.notificationSettingsAction, action: openNotificationSettings)
+                }
                 // The dismiss button shows only under the pointer.
                 Button("Dismiss", action: dismiss)
             }
@@ -498,6 +508,11 @@ struct NotificationCard: View {
                 // The icon spans the header and the line under it; every line sits beside it.
                 LeadingIconLayout(spannedLines: 2, lineSpacing: Self.lineSpacing, iconSpacing: Self.iconSpacing) {
                     icon
+                    // Only notifications from installed apps come from switched-off apps, and those have an icon.
+                    if let openNotificationSettings {
+                        SwitchedOffBadge(appName: notification.source, action: openNotificationSettings)
+                            .underIcon()
+                    }
                     content
                 }
             } else {

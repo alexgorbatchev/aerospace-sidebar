@@ -79,6 +79,35 @@ struct LeadingIconLayoutTests {
         #expect(frames.size.height == lineHeight + 4 + wrapped.height)
     }
 
+    /// A view marked `underIcon()` sits under the icon, centered in its column, and the layout grows to hold it
+    /// when the lines beside it end sooner.
+    @Test func placesMarkedViewsUnderTheIcon() {
+        let frames = Frames()
+        var badge = CGRect.null
+        let view = LeadingIconLayout(spannedLines: 2, lineSpacing: 4, iconSpacing: 8) {
+            Color.clear.onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { frames.icon = $0 }
+            Color.clear.frame(width: 10, height: 12)
+                .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { badge = $0 }
+                .underIcon()
+            ForEach(0..<2, id: \.self) { index in
+                Text(["Vivaldi  12:59", "New message"][index])
+                    .font(Self.font)
+                    .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { frames.lines[index] = $0 }
+            }
+        }
+        .frame(width: 300)
+        let host = NSHostingView(rootView: view)
+        let size = host.fittingSize
+        host.frame.size = size
+        host.layoutSubtreeIfNeeded()
+
+        let side = lineHeight * 2 + 4
+        #expect(frames.icon == CGRect(x: 0, y: 0, width: side, height: side))
+        #expect(frames.lines[1]?.origin == CGPoint(x: side + 8, y: lineHeight + 4))
+        #expect(badge == CGRect(x: (side - 10) / 2, y: side + 4, width: 10, height: 12))
+        #expect(size == CGSize(width: 300, height: side + 4 + 12))
+    }
+
     /// Without a width, the lines keep their one-line widths.
     @Test func takesTheWidestLineWithoutAWidth() {
         let view = LeadingIconLayout(spannedLines: 2, lineSpacing: 4, iconSpacing: 8) {

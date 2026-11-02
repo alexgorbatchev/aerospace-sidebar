@@ -84,8 +84,14 @@ struct AppNotificationsModelTests {
         var now = Date(timeIntervalSinceReferenceDate: 0)
     }
 
-    func model(received: [SidebarNotification], clock: Clock = Clock()) -> AppNotificationsModel {
-        AppNotificationsModel(preferences: fixture.preferences, switcher: switcher, received: { received }, now: { clock.now })
+    func model(
+        received: [SidebarNotification],
+        clock: Clock = Clock(),
+        installedApp: @escaping @MainActor (String) -> InstalledApps.App? = { _ in nil }
+    ) -> AppNotificationsModel {
+        AppNotificationsModel(
+            preferences: fixture.preferences, switcher: switcher, installedApp: installedApp, received: { received }, now: { clock.now }
+        )
     }
 
     static func fromMacOS(_ source: String, _ bundleIdentifier: String?) -> SidebarNotification {
@@ -139,6 +145,39 @@ struct AppNotificationsModelTests {
         #expect(model.appsWithNotificationsOff == [AppNotificationsModel.App(bundleIdentifier: "com.vivaldi.Vivaldi", name: "Vivaldi")])
         await model.allow(model.appsWithNotificationsOff[0])
         #expect(switcher.requests.map(\.bundleIdentifier) == ["com.vivaldi.Vivaldi"])
+    }
+
+    /// An app and the helper it posts web notifications from have a switch each, and both notify under the app's
+    /// name; the helper's own name tells its row apart, and Allow's message names it. System Settings titles both
+    /// pages with the app's name, so Allow checks the page against that.
+    @Test func namesHelpersThatNotifyUnderTheirAppsName() async throws {
+        let helper = "com.vivaldi.Vivaldi.framework.AlertNotificationService"
+        try fixture.write(["com.vivaldi.Vivaldi": false, helper: false])
+        var lookups: [String] = []
+        let installed = [
+            "com.vivaldi.Vivaldi": InstalledApps.App(name: "Vivaldi", bundleIdentifier: "com.vivaldi.Vivaldi"),
+            helper: InstalledApps.App(name: "Vivaldi Helper (Alerts)", bundleIdentifier: helper),
+        ]
+        let model = model(
+            // The helper notified last, so it comes first; the list puts the app first all the same.
+            received: [Self.fromMacOS("Vivaldi", helper.lowercased()), Self.fromMacOS("Vivaldi", "com.vivaldi.vivaldi")],
+            installedApp: { lookups.append($0); return installed[$0] }
+        )
+
+        model.refresh()
+        model.refresh()
+
+        let app = AppNotificationsModel.App(bundleIdentifier: "com.vivaldi.Vivaldi", name: "Vivaldi")
+        let alerts = AppNotificationsModel.App(bundleIdentifier: helper, name: "Vivaldi", installedName: "Vivaldi Helper (Alerts)")
+        #expect(model.appsWithNotificationsOff == [app, alerts])
+        #expect(model.appsWithNotificationsOff.map(\.title) == ["Vivaldi", "Vivaldi Helper (Alerts)"])
+        // Each name is looked up once, however often the list is read.
+        #expect(lookups == [helper, "com.vivaldi.Vivaldi"])
+
+        switcher.result = .switchedOn
+        await model.allow(alerts)
+        #expect(switcher.requests.map(\.name) == ["Vivaldi"])
+        #expect(model.message == "Switched on notifications from Vivaldi Helper (Alerts); its cards open their notifications.")
     }
 
     @Test func cannotTellWithoutTheSettings() {
@@ -345,6 +384,24 @@ struct SwitchedOffAppsRowsTests {
 
     func rows(_ model: AppNotificationsModel) -> some View {
         Grid { SwitchedOffAppsRows(model: model) }.environment(\.appIcon, { _ in nil })
+    }
+
+    /// A helper's row adds its own name, which the Allow button's VoiceOver label uses too.
+    @Test func showsTheInstalledNameOfHelpers() throws {
+        let helper = "com.vivaldi.Vivaldi.framework.AlertNotificationService"
+        try fixture.write([helper: false])
+        let model = AppNotificationsModel(
+            preferences: fixture.preferences, switcher: switcher,
+            installedApp: { InstalledApps.App(name: "Vivaldi Helper (Alerts)", bundleIdentifier: $0) }
+        ) {
+            [AppNotificationsModelTests.fromMacOS("Vivaldi", helper)]
+        }
+        model.refresh()
+        let sut = try rows(model).inspect()
+
+        let name = try sut.find(text: "Vivaldi Helper (Alerts)")
+        #expect(try name.attributes().font() == Typography(SidebarSettings.Font()).font(.subheadline))
+        #expect(throws: Never.self) { try sut.find(viewWithAccessibilityLabel: "Allow notifications from Vivaldi Helper (Alerts)") }
     }
 
     @Test func listsSwitchedOffAppsWithAllowButtons() async throws {

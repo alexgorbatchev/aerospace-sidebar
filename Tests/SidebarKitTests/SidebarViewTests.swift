@@ -541,6 +541,38 @@ struct SidebarViewTests {
         }
     }
 
+    /// A card from an app whose notifications are off in macOS can only switch to the app; a badge under its icon
+    /// says so and opens Settings › Notifications, which lists the app with Allow. VoiceOver gets it as an action.
+    @Test func badgesCardsOfSwitchedOffAppsAndOpensNotificationSettings() throws {
+        let appIcon = NSImage(size: NSSize(width: 64, height: 64))
+        model.notificationsAreOff = { $0 == "com.vivaldi.Vivaldi" }
+        model.add(SidebarNotification(
+            source: "Vivaldi", title: "Off", bundleIdentifier: "com.vivaldi.Vivaldi", action: .activateApp(name: "Vivaldi"), nativeIdentifiers: ["a"]
+        ))
+        model.add(SidebarNotification(
+            source: "Slack", title: "On", bundleIdentifier: "com.tinyspeck.slackmacgap", action: .activateApp(name: "Slack"), nativeIdentifiers: ["b"]
+        ))
+        var opened: [SettingsGroup] = []
+
+        let sut = try view(openSettings: { opened.append($0) }).environment(\.appIcon) { _ in appIcon }.inspect()
+        let badges = sut.findAll(SwitchedOffBadge.self)
+        #expect(badges.count == 1)
+        let badge = try #require(badges.first)
+        #expect(try badge.actualView().appName == "Vivaldi")
+        #expect(try badge.button().help().string() == "Notifications from Vivaldi are off in System Settings\nClick to open Settings › Notifications")
+        #expect(try badge.button().accessibilityLabel().string() == "Notifications from Vivaldi are off; open Settings › Notifications")
+        try badge.button().tap()
+        #expect(opened == [.notifications])
+        // The badge took the click; the card stays.
+        #expect(model.notifications.count == 2)
+
+        let card = try sut.find(text: "Off").find(ViewType.Button.self, relation: .parent)
+        try card.accessibilityActions().find(button: NotificationCard.notificationSettingsAction).tap()
+        #expect(opened == [.notifications, .notifications])
+        let other = try sut.find(text: "On").find(ViewType.Button.self, relation: .parent)
+        #expect(throws: (any Error).self) { try other.accessibilityActions().find(button: NotificationCard.notificationSettingsAction) }
+    }
+
     @Test func settingsButtonOpensSettings() throws {
         var opened: [SettingsGroup] = []
 

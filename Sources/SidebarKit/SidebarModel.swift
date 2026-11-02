@@ -616,7 +616,7 @@ public final class SidebarModel {
         let action = notification.action
         let bundleIdentifier = notification.bundleIdentifier
         let performer = performer
-        if let nativeNotifications, canOpen(notification) {
+        if let nativeNotifications, !notification.nativeIdentifiers.isEmpty, !appNotificationsAreOff(for: notification) {
             nativeNotifications.perform(.open, on: notification.nativeIdentifiers, from: notification.source) { opened in
                 if !opened, let action {
                     performer.perform(action, bundleIdentifier: bundleIdentifier)
@@ -630,16 +630,17 @@ public final class SidebarModel {
 
     /// What clicking the notification's card does, shown before it happens.
     public func clickDescription(of notification: SidebarNotification) -> String {
-        guard case .activateApp(let name) = notification.action, !notification.nativeIdentifiers.isEmpty, !canOpen(notification) else {
+        guard case .activateApp(let name) = notification.action, appNotificationsAreOff(for: notification) else {
             return notification.clickDescription
         }
         return "Click to switch to \(name)\nIts notifications are off in System Settings, so this one cannot open"
     }
 
-    /// Whether the card stands for a native notification that NotificationCenter may still hold.
-    private func canOpen(_ notification: SidebarNotification) -> Bool {
+    /// Whether the card stands for a macOS notification from an app whose notifications are switched off, which
+    /// NotificationCenter keeps out of sight: the card can neither open it nor perform its choices.
+    public func appNotificationsAreOff(for notification: SidebarNotification) -> Bool {
         guard !notification.nativeIdentifiers.isEmpty else { return false }
-        return !(notification.bundleIdentifier.map(notificationsAreOff) ?? false)
+        return notification.bundleIdentifier.map(notificationsAreOff) ?? false
     }
 
     /// Opens a link from a notification's text. The card stays: the link is part of what it says, not
@@ -719,7 +720,7 @@ public final class SidebarModel {
     /// on), and the notification is not known to have lost them (`unavailableChoices`).
     public func offeredChoices(of notification: SidebarNotification) -> SidebarNotification.NativeChoices? {
         guard interception == .active, let choices = notification.nativeChoices, !unavailableChoices.contains(choices.identifier),
-              !(notification.bundleIdentifier.map(notificationsAreOff) ?? false)
+              !appNotificationsAreOff(for: notification)
         else { return nil }
         return choices
     }

@@ -494,6 +494,10 @@ struct SidebarModelTests {
         )
         let pushed = SidebarNotification(source: "cli", title: "Pushed", bundleIdentifier: "com.vivaldi.Vivaldi", action: .open(URL(string: "https://a.example")!))
 
+        #expect(model.appNotificationsAreOff(for: off))
+        #expect(!model.appNotificationsAreOff(for: on))
+        // Pushed notifications never pass through macOS, whatever app they name.
+        #expect(!model.appNotificationsAreOff(for: pushed))
         #expect(model.clickDescription(of: off)
             == "Click to switch to Vivaldi\nIts notifications are off in System Settings, so this one cannot open")
         #expect(model.clickDescription(of: on) == "Click to open in Codex")

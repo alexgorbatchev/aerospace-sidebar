@@ -13,16 +13,36 @@ import Observation
 public final class AppNotificationsModel {
     public struct App: Identifiable, Equatable, Sendable {
         public let bundleIdentifier: String
-        /// The name its notifications show.
+        /// The name its notifications show, which System Settings titles its page with.
         public let name: String
+        /// The installed app's own name where it differs from `name`. An app and the helper it posts web
+        /// notifications from have a switch each, and System Settings names both after the app (Vivaldi and
+        /// Vivaldi Helper (Alerts) are both "Vivaldi").
+        public let installedName: String?
+
+        public init(bundleIdentifier: String, name: String, installedName: String? = nil) {
+            self.bundleIdentifier = bundleIdentifier
+            self.name = name
+            self.installedName = installedName
+        }
 
         public var id: String { bundleIdentifier }
+
+        /// What tells this switch apart: the installed app's own name where it differs, else `name`.
+        public var title: String { installedName ?? name }
+
+        /// By name, then title, as Finder sorts names: an app before its helper, which notifies under the same name.
+        static func precedes(_ one: App, _ other: App) -> Bool {
+            let byName = one.name.localizedStandardCompare(other.name)
+            guard byName == .orderedSame else { return byName == .orderedAscending }
+            return one.title.localizedStandardCompare(other.title) == .orderedAscending
+        }
     }
 
     /// How long one read of the settings answers `notificationsAreOff(for:)`, which every card asks for its help.
     static let cacheDuration: TimeInterval = 2
 
-    /// Sorted by name.
+    /// Sorted by name, then title.
     public private(set) var appsWithNotificationsOff: [App] = []
     /// Whether the settings could be read, which takes Full Disk Access.
     public private(set) var canTell = false
@@ -35,17 +55,24 @@ public final class AppNotificationsModel {
     @ObservationIgnored private let switcher: any AppNotificationSwitching
     @ObservationIgnored private let received: @MainActor () -> [SidebarNotification]
     @ObservationIgnored private let now: () -> Date
+    @ObservationIgnored private let installedApp: @MainActor (String) -> InstalledApps.App?
     @ObservationIgnored private var cached: (apps: [String: Switch]?, readAt: Date)?
+    /// Installed apps' names by bundle identifier, misses included: the list is read every second while shown.
+    @ObservationIgnored private var installedNames: [String: String?] = [:]
 
-    /// - Parameter received: Every notification received lately (`SidebarModel.received`).
+    /// - Parameters:
+    ///   - received: Every notification received lately (`SidebarModel.received`).
+    ///   - installedApp: The installed app with a bundle identifier, for its own name.
     public init(
         preferences: NotificationPreferences,
         switcher: any AppNotificationSwitching = SystemSettingsNotificationSwitch(),
+        installedApp: @escaping @MainActor (String) -> InstalledApps.App? = InstalledApps.app,
         received: @escaping @MainActor () -> [SidebarNotification],
         now: @escaping () -> Date = Date.init
     ) {
         self.preferences = preferences
         self.switcher = switcher
+        self.installedApp = installedApp
         self.received = received
         self.now = now
     }
@@ -69,9 +96,14 @@ public final class AppNotificationsModel {
                       seen.insert(app.bundleIdentifier).inserted
                 else { return nil }
                 // System Settings finds the app's page only by the identifier as usernoted keeps it.
-                return App(bundleIdentifier: app.bundleIdentifier, name: notification.source)
+                let installedName = installedName(of: app.bundleIdentifier)
+                return App(
+                    bundleIdentifier: app.bundleIdentifier,
+                    name: notification.source,
+                    installedName: installedName == notification.source ? nil : installedName
+                )
             }
-            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            .sorted(by: App.precedes)
     }
 
     /// Whether the app with `bundleIdentifier`, in any case, has its notifications switched off; false when the
@@ -90,12 +122,19 @@ public final class AppNotificationsModel {
         allowing = nil
         message = switch result {
         // Notification Center then lists the app's notifications it kept, so their cards open them too.
-        case .switchedOn: "Switched on notifications from \(app.name); its cards open their notifications."
-        case .alreadyOn: "Notifications from \(app.name) are on."
-        case .pageNotShown, .refused: "Switch on Allow Notifications for \(app.name) in System Settings."
-        case .needsAccessibility: "Without Accessibility, switch on Allow Notifications for \(app.name) in System Settings."
+        case .switchedOn: "Switched on notifications from \(app.title); its cards open their notifications."
+        case .alreadyOn: "Notifications from \(app.title) are on."
+        case .pageNotShown, .refused: "Switch on Allow Notifications for \(app.title) in System Settings."
+        case .needsAccessibility: "Without Accessibility, switch on Allow Notifications for \(app.title) in System Settings."
         }
         refresh()
+    }
+
+    private func installedName(of bundleIdentifier: String) -> String? {
+        if let cached = installedNames[bundleIdentifier] { return cached }
+        let name = installedApp(bundleIdentifier)?.name
+        installedNames[bundleIdentifier] = name
+        return name
     }
 
     /// The switches by `key(_:)` of their bundle identifiers.
