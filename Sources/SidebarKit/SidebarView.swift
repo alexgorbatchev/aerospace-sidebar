@@ -510,8 +510,10 @@ struct NotificationCard: View {
                     icon
                     // Only notifications from installed apps come from switched-off apps, and those have an icon.
                     if let openNotificationSettings {
-                        SwitchedOffBadge(appName: notification.source, action: openNotificationSettings)
+                        SwitchedOffBadge(appName: notification.source, severity: notification.severity, action: openNotificationSettings)
                             .underIcon()
+                            // Its title opens over the lines beside it.
+                            .zIndex(1)
                     }
                     content
                 }

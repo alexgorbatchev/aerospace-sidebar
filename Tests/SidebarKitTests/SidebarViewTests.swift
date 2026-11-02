@@ -559,9 +559,13 @@ struct SidebarViewTests {
         #expect(badges.count == 1)
         let badge = try #require(badges.first)
         #expect(try badge.actualView().appName == "Vivaldi")
-        #expect(try badge.button().help().string() == "Notifications from Vivaldi are off in System Settings\nClick to open Settings › Notifications")
-        #expect(try badge.button().accessibilityLabel().string() == "Notifications from Vivaldi are off; open Settings › Notifications")
-        try badge.button().tap()
+        // The card's icon button, as the dismiss button is, opening its title toward the text.
+        let button = try badge.find(ExpandingIconButton.self)
+        #expect(try button.actualView().title == "Notifications Off")
+        #expect(try button.actualView().surface == .card(.normal))
+        #expect(try button.actualView().expandsToward == .trailing)
+        #expect(try button.help().string() == "Notifications from Vivaldi are off in System Settings\nClick to open Settings › Notifications")
+        try button.find(ViewType.Button.self).tap()
         #expect(opened == [.notifications])
         // The badge took the click; the card stays.
         #expect(model.notifications.count == 2)
