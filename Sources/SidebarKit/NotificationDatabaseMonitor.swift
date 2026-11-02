@@ -53,7 +53,7 @@ public final class NotificationDatabaseMonitor {
     private let identities: NotificationIdentities
     private let defaults: UserDefaults
     private let grace: TimeInterval
-    private let appName: @MainActor (String) -> String?
+    private let installedApp: @MainActor (String) -> InstalledApps.App?
     private let now: () -> Date
     private let readRetryDelay: TimeInterval
     private let onStatus: @MainActor (NotificationDatabaseStatus) -> Void
@@ -74,7 +74,8 @@ public final class NotificationDatabaseMonitor {
     /// - Parameters:
     ///   - grace: How long a new record waits for its banner before it is listed. macOS writes a record 5–7 s
     ///     after delivering it, while a banner is reported within about a second, so a short grace suffices.
-    ///   - appName: The display name of the app with a bundle identifier, or nil for none installed.
+    ///   - installedApp: The installed app with a bundle identifier in any case, which the database stores in
+    ///     lowercase, or nil for none installed.
     ///   - readRetryDelay: How long after a read that failed other than for missing access it is tried once
     ///     more. The write that woke it is spent, so its record would otherwise wait for an unrelated later write.
     ///   - onStatus: Called with each change of `status`.
@@ -84,7 +85,7 @@ public final class NotificationDatabaseMonitor {
         identities: NotificationIdentities,
         defaults: UserDefaults = .standard,
         grace: TimeInterval = 1,
-        appName: @escaping @MainActor (String) -> String? = InstalledApps.name,
+        installedApp: @escaping @MainActor (String) -> InstalledApps.App? = InstalledApps.app,
         now: @escaping () -> Date = Date.init,
         readRetryDelay: TimeInterval = 1,
         onStatus: @escaping @MainActor (NotificationDatabaseStatus) -> Void = { _ in },
@@ -95,7 +96,7 @@ public final class NotificationDatabaseMonitor {
         self.identities = identities
         self.defaults = defaults
         self.grace = grace
-        self.appName = appName
+        self.installedApp = installedApp
         self.now = now
         self.readRetryDelay = readRetryDelay
         self.onStatus = onStatus
@@ -248,14 +249,14 @@ public final class NotificationDatabaseMonitor {
                 Listing \(notification.identifier, privacy: .public), which showed no banner\
                 \(choices.map { " with its choices \($0.map(\.title))" } ?? "", privacy: .public)
                 """)
-            let name = appName(notification.bundleIdentifier)
+            let app = installedApp(notification.bundleIdentifier)
             onNotification(SidebarNotification(
-                source: name ?? SystemNotificationInterceptor.systemSource,
+                source: app?.name ?? SystemNotificationInterceptor.systemSource,
                 title: notification.title,
                 subtitle: notification.subtitle,
                 body: notification.body,
-                bundleIdentifier: name == nil ? nil : notification.bundleIdentifier,
-                action: name.map { .activateApp(name: $0) },
+                bundleIdentifier: app?.bundleIdentifier,
+                action: app.map { .activateApp(name: $0.name) },
                 nativeChoices: choices.map { SidebarNotification.NativeChoices(identifier: notification.identifier, choices: $0) },
                 nativeIdentifiers: [notification.identifier],
                 receivedAt: notification.deliveredAt

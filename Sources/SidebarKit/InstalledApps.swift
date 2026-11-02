@@ -58,12 +58,23 @@ public final class InstalledApps {
         return icon
     }
 
-    /// The name of the installed app with `bundleIdentifier`, as NotificationCenter shows it.
-    public static func name(bundleIdentifier: String) -> String? {
-        if let name = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).first?.localizedName {
-            return name
-        }
-        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier).flatMap { names(ofAppAt: $0).first }
+    /// An installed app: the name NotificationCenter shows for it and its bundle identifier as the app declares it.
+    public struct App: Equatable, Sendable {
+        public let name: String
+        public let bundleIdentifier: String
+    }
+
+    /// The installed app with `bundleIdentifier` in any case. The notification database stores identifiers in
+    /// lowercase (`com.vivaldi.vivaldi`), while usernoted's preferences, running apps and System Settings use
+    /// the app's own (`com.vivaldi.Vivaldi`). LaunchServices finds an app whatever the case and its bundle
+    /// declares the real one; `NSRunningApplication.runningApplications(withBundleIdentifier:)` matches the
+    /// case exactly, so it is asked with the declared identifier.
+    public static func app(bundleIdentifier: String) -> App? {
+        let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
+        let identifier = url.flatMap { Bundle(url: $0)?.bundleIdentifier } ?? bundleIdentifier
+        let name = NSRunningApplication.runningApplications(withBundleIdentifier: identifier).first?.localizedName
+            ?? url.flatMap { names(ofAppAt: $0).first }
+        return name.map { App(name: $0, bundleIdentifier: identifier) }
     }
 
     private func installedBundleIdentifier(named name: String) -> String? {

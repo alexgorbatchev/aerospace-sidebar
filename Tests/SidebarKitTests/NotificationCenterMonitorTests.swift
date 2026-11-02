@@ -321,7 +321,7 @@ struct NotificationCenterMonitorTests {
         let database = try NotificationDatabaseFixture()
         try database.create()
         let records = NotificationDatabaseMonitor(
-            database: database.database, identities: NotificationIdentities(), defaults: database.defaults, grace: 0, appName: { _ in "Script Editor" }
+            database: database.database, identities: NotificationIdentities(), defaults: database.defaults, grace: 0, installedApp: { InstalledApps.App(name: "Script Editor", bundleIdentifier: $0) }
         ) { model.add($0) }
         records.start()
         defer { records.stop() }

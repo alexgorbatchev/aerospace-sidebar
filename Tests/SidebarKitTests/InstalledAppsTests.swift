@@ -87,10 +87,14 @@ struct InstalledAppsTests {
         #expect(lookups == ["com.tinyspeck.slackmacgap", "com.example.removed"])
     }
 
-    @Test func findsInstalledAppNames() {
-        #expect(InstalledApps.name(bundleIdentifier: "com.apple.finder") == "Finder")
-        #expect(InstalledApps.name(bundleIdentifier: "com.apple.ScriptEditor2") == "Script Editor")
-        #expect(InstalledApps.name(bundleIdentifier: "com.example.not-installed") == nil)
+    /// The notification database stores bundle identifiers in lowercase; the app is found all the same, under
+    /// the identifier it declares, which running apps and usernoted's preferences go by.
+    @Test func findsInstalledAppsInAnyCase() {
+        let scriptEditor = InstalledApps.App(name: "Script Editor", bundleIdentifier: "com.apple.ScriptEditor2")
+        #expect(InstalledApps.app(bundleIdentifier: "com.apple.finder") == InstalledApps.App(name: "Finder", bundleIdentifier: "com.apple.finder"))
+        #expect(InstalledApps.app(bundleIdentifier: "com.apple.ScriptEditor2") == scriptEditor)
+        #expect(InstalledApps.app(bundleIdentifier: "com.apple.scripteditor2") == scriptEditor)
+        #expect(InstalledApps.app(bundleIdentifier: "com.example.not-installed") == nil)
     }
 
     /// The real lookups find the apps macOS ships.

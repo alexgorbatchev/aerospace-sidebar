@@ -35,7 +35,7 @@ public final class AppNotificationsModel {
     @ObservationIgnored private let switcher: any AppNotificationSwitching
     @ObservationIgnored private let received: @MainActor () -> [SidebarNotification]
     @ObservationIgnored private let now: () -> Date
-    @ObservationIgnored private var cached: (allowed: [String: Bool]?, readAt: Date)?
+    @ObservationIgnored private var cached: (apps: [String: Switch]?, readAt: Date)?
 
     /// - Parameter received: Every notification received lately (`SidebarModel.received`).
     public init(
@@ -50,31 +50,36 @@ public final class AppNotificationsModel {
         self.now = now
     }
 
+    /// One app's Allow Notifications switch, under the bundle identifier usernoted keeps it for.
+    private struct Switch {
+        let bundleIdentifier: String
+        let allowed: Bool
+    }
+
     /// Reads the settings again and lists the switched-off apps that notified lately.
     public func refresh() {
-        let allowed = read()
-        canTell = allowed != nil
+        let apps = read()
+        canTell = apps != nil
         var seen: Set<String> = []
         // Pushed notifications never pass through macOS, whatever app they name.
         appsWithNotificationsOff = received()
             .filter { !$0.nativeIdentifiers.isEmpty }
             .compactMap { notification -> App? in
-                guard let identifier = notification.bundleIdentifier, allowed?[identifier] == false,
-                      seen.insert(identifier).inserted
+                guard let identifier = notification.bundleIdentifier, let app = apps?[Self.key(identifier)], !app.allowed,
+                      seen.insert(app.bundleIdentifier).inserted
                 else { return nil }
-                return App(bundleIdentifier: identifier, name: notification.source)
+                // System Settings finds the app's page only by the identifier as usernoted keeps it.
+                return App(bundleIdentifier: app.bundleIdentifier, name: notification.source)
             }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
-    /// Whether the app with `bundleIdentifier` has its notifications switched off; false when the settings
-    /// cannot be read. Reads them at most every `cacheDuration` seconds.
+    /// Whether the app with `bundleIdentifier`, in any case, has its notifications switched off; false when the
+    /// settings cannot be read. Reads them at most every `cacheDuration` seconds.
     public func notificationsAreOff(for bundleIdentifier: String) -> Bool {
         let time = now()
-        if let cached, time.timeIntervalSince(cached.readAt) < Self.cacheDuration {
-            return cached.allowed?[bundleIdentifier] == false
-        }
-        return read()?[bundleIdentifier] == false
+        let apps = if let cached, time.timeIntervalSince(cached.readAt) < Self.cacheDuration { cached.apps } else { read() }
+        return apps?[Self.key(bundleIdentifier)]?.allowed == false
     }
 
     /// Switches the app's notifications on in System Settings, then lists the apps again.
@@ -93,9 +98,23 @@ public final class AppNotificationsModel {
         refresh()
     }
 
-    private func read() -> [String: Bool]? {
-        let allowed = try? preferences.allowedApps()
-        cached = (allowed, now())
-        return allowed
+    /// The switches by `key(_:)` of their bundle identifiers.
+    private func read() -> [String: Switch]? {
+        var apps: [String: Switch]?
+        if let allowed = try? preferences.allowedApps() {
+            apps = [:]
+            for (identifier, isAllowed) in allowed {
+                apps?[Self.key(identifier)] = Switch(bundleIdentifier: identifier, allowed: isAllowed)
+            }
+        }
+        cached = (apps, now())
+        return apps
+    }
+
+    /// Bundle identifiers compare without regard to case, as LaunchServices compares them: the notification
+    /// database, where cards listed from it get theirs, stores them in lowercase, and usernoted's preferences
+    /// in the app's own case.
+    private static func key(_ bundleIdentifier: String) -> String {
+        bundleIdentifier.lowercased()
     }
 }

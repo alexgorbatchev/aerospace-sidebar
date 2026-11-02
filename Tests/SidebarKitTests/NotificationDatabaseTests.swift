@@ -26,7 +26,7 @@ final class NotificationDatabaseFixture {
             PRAGMA journal_mode = WAL;
             CREATE TABLE app (app_id INTEGER PRIMARY KEY, identifier VARCHAR);
             CREATE TABLE record (rec_id INTEGER PRIMARY KEY, app_id INTEGER, uuid BLOB, data BLOB, request_date REAL, delivered_date REAL);
-            INSERT INTO app VALUES (1, 'com.apple.ScriptEditor2'), (2, 'com.example.missing');
+            INSERT INTO app VALUES (1, 'com.apple.scripteditor2'), (2, 'com.example.missing');
             """)
     }
 
@@ -110,7 +110,7 @@ struct NotificationDatabaseTests {
 
         #expect(try fixture.database.notifications(deliveredAfter: start, by: now) == [
             DeliveredNotification(
-                identifier: new.uuidString, bundleIdentifier: "com.apple.ScriptEditor2",
+                identifier: new.uuidString, bundleIdentifier: "com.apple.scripteditor2",
                 title: "New", subtitle: "Sub", body: "Text", deliveredAt: start + 10
             ),
             DeliveredNotification(
@@ -173,7 +173,7 @@ struct NotificationDatabaseMonitorTests {
             identities: identities,
             defaults: fixture.defaults,
             grace: grace,
-            appName: { $0 == "com.apple.ScriptEditor2" ? "Script Editor" : nil },
+            installedApp: { $0 == "com.apple.scripteditor2" ? InstalledApps.App(name: "Script Editor", bundleIdentifier: "com.apple.ScriptEditor2") : nil },
             now: { harness.now },
             readRetryDelay: readRetryDelay,
             onStatus: { harness.statuses.append($0) },
@@ -182,7 +182,8 @@ struct NotificationDatabaseMonitorTests {
     }
 
     /// The first launch starts after the newest delivered record; later records wait out the grace period,
-    /// and those a banner already reported are skipped.
+    /// and those a banner already reported are skipped. Cards name the installed app by its own bundle
+    /// identifier, not the lowercase one the database stores.
     @Test func listsRecordsNoBannerReported() throws {
         try fixture.create()
         let harness = Harness()
@@ -561,7 +562,7 @@ struct NotificationDatabaseMonitorTests {
         let harness = Harness()
         let monitor = NotificationDatabaseMonitor(
             database: fixture.database, identities: identities, defaults: fixture.defaults, grace: 0,
-            appName: { _ in "App" }, readRetryDelay: 0.3
+            installedApp: { InstalledApps.App(name: "App", bundleIdentifier: $0) }, readRetryDelay: 0.3
         ) { harness.received.append($0) }
         monitor.start()
         defer { monitor.stop() }
@@ -649,7 +650,7 @@ struct NotificationDatabaseMonitorTests {
         let harness = Harness()
         let monitor = NotificationDatabaseMonitor(
             database: fixture.database, identities: identities, defaults: fixture.defaults, grace: 0.05,
-            appName: { _ in "App" }
+            installedApp: { InstalledApps.App(name: "App", bundleIdentifier: $0) }
         ) { harness.received.append($0) }
         monitor.start()
         defer { monitor.stop() }

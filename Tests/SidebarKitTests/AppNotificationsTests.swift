@@ -120,6 +120,27 @@ struct AppNotificationsModelTests {
         #expect(model.appsWithNotificationsOff.map(\.id) == ["com.tinyspeck.slackmacgap", "com.vivaldi.Vivaldi"])
     }
 
+    /// Cards the notification database listed before carry its lowercase identifiers, while usernoted's
+    /// preferences keep the app's own case. They still count as switched off, and Allow opens System Settings
+    /// with the identifier as usernoted keeps it.
+    @Test func comparesBundleIdentifiersInAnyCase() async throws {
+        try fixture.write(["com.vivaldi.Vivaldi": false, "com.openai.codex": true])
+        let model = model(received: [
+            Self.fromMacOS("Vivaldi", "com.vivaldi.vivaldi"),
+            Self.fromMacOS("Vivaldi", "com.vivaldi.Vivaldi"),
+            Self.fromMacOS("Codex", "COM.openai.codex"),
+        ])
+
+        model.refresh()
+
+        #expect(model.notificationsAreOff(for: "com.vivaldi.vivaldi"))
+        #expect(model.notificationsAreOff(for: "com.vivaldi.Vivaldi"))
+        #expect(!model.notificationsAreOff(for: "COM.openai.codex"))
+        #expect(model.appsWithNotificationsOff == [AppNotificationsModel.App(bundleIdentifier: "com.vivaldi.Vivaldi", name: "Vivaldi")])
+        await model.allow(model.appsWithNotificationsOff[0])
+        #expect(switcher.requests.map(\.bundleIdentifier) == ["com.vivaldi.Vivaldi"])
+    }
+
     @Test func cannotTellWithoutTheSettings() {
         let model = model(received: [Self.fromMacOS("Slack", "com.tinyspeck.slackmacgap")])
 
