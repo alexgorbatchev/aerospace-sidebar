@@ -139,10 +139,18 @@ struct NotificationHistoryOpenerTests {
         #expect(stack.performed == [kAXPressAction])
         #expect(other.performed.isEmpty)
 
+        // Expanded, the stack's entries follow a heading with the app's name and its Show Less and Clear buttons
+        // (measured on macOS 26.6). Clear would delete the app's history; only the entry is pressed.
+        let controls = [
+            FakeElement([kAXRoleAttribute: kAXHeadingRole, kAXDescriptionAttribute: "Slack"]),
+            FakeElement([kAXRoleAttribute: kAXButtonRole, kAXDescriptionAttribute: "Confirm Show Less"], actions: [kAXPressAction]),
+            FakeElement([kAXRoleAttribute: kAXButtonRole, kAXDescriptionAttribute: "Clear"], actions: [kAXPressAction]),
+        ]
         let entry = FakeElement.banner(id: "older", app: "Slack")
-        history.openPanel(FakeElement.banner(id: "newest", app: "Slack"), entry, other)
+        history.openPanel(controls[0], controls[1], controls[2], FakeElement.banner(id: "newest", app: "Slack"), entry, other)
         #expect(history.step())
         #expect(entry.performed == [kAXPressAction])
+        #expect(controls.allSatisfy { $0.performed.isEmpty })
         #expect(history.results == [true])
     }
 
