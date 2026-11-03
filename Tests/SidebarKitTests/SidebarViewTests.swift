@@ -677,14 +677,19 @@ struct SidebarViewTests {
         #expect(opened == [.general])
     }
 
-    /// The top buttons hug the sidebar's screen edge, Settings outermost, and open their labels away from it.
+    /// The buttons sit under the list and hug the sidebar's screen edge, Clear All outermost (Settings, then Clear
+    /// All from left to right on a right-hand sidebar), and open their labels away from it.
     @Test(arguments: [
-        (SidebarSettings.Sidebar.Side.right, ["Clear All", "Settings"], HorizontalEdge.leading),
-        (.left, ["Settings", "Clear All"], .trailing),
+        (SidebarSettings.Sidebar.Side.right, ["Settings", "Clear All"], HorizontalEdge.leading),
+        (.left, ["Clear All", "Settings"], .trailing),
     ])
     func controlsFollowTheSidebarSide(side: SidebarSettings.Sidebar.Side, order: [String], expandsToward: HorizontalEdge) throws {
-        let buttons = try view(side: side).inspect().findAll(ExpandingIconButton.self).map { try $0.actualView() }
+        let sut = try view(side: side).inspect().vStack()
+        let buttons = try sut.findAll(ExpandingIconButton.self).map { try $0.actualView() }
 
+        // Notes, the list, then the buttons.
+        #expect(throws: Never.self) { try sut.scrollView(1) }
+        #expect(try sut.hStack(2).findAll(ExpandingIconButton.self).count == 2)
         #expect(buttons.map(\.title) == order)
         #expect(buttons.allSatisfy { $0.expandsToward == expandsToward })
         // They belong to no card, so they float over the background.
@@ -697,18 +702,19 @@ struct SidebarViewTests {
         #expect(view(side: side).screenEdge == edge)
     }
 
-    /// Until it first appears, the content is collapsed into the top corner on the screen edge, where the
-    /// top buttons sit, so it grows out of that corner: the buttons and notes, the cards and the empty list's
-    /// label each scale, while the list's scroll view does not, which scaled would scroll itself down.
-    @Test(arguments: [(SidebarSettings.Sidebar.Side.right, UnitPoint.topTrailing), (.left, .topLeading)])
-    func contentGrowsOutOfTheTopCornerOnTheScreenEdge(side: SidebarSettings.Sidebar.Side, corner: UnitPoint) throws {
+    /// Until it first appears, the content is collapsed into its corners on the screen edge, so it grows out of
+    /// them: the notes, the cards and the empty list's label out of the top corner, the buttons out of the bottom
+    /// one, where they sit. Each part scales on its own, while the list's scroll view does not, which scaled would
+    /// scroll itself down.
+    @Test(arguments: [(SidebarSettings.Sidebar.Side.right, UnitPoint.topTrailing, UnitPoint.bottomTrailing), (.left, .topLeading, .bottomLeading)])
+    func contentGrowsOutOfItsCornersOnTheScreenEdge(side: SidebarSettings.Sidebar.Side, top: UnitPoint, bottom: UnitPoint) throws {
         let sut = try view(side: side).inspect().vStack()
         let collapsed = SidebarReveal(isRevealed: false, side: side, reduceMotion: false)
 
-        let reveals = try sut.findAll(where: { (try? $0.modifier(RevealEffect.self)) != nil })
-            .map { try $0.modifier(RevealEffect.self).actualView().reveal }
-        #expect(reveals == [collapsed, collapsed, collapsed])
-        #expect(collapsed.anchor == corner)
+        let effects = try sut.findAll(where: { (try? $0.modifier(RevealEffect.self)) != nil })
+            .map { try $0.modifier(RevealEffect.self).actualView() }
+        #expect(effects.map(\.reveal) == [collapsed, collapsed, collapsed, collapsed])
+        #expect(effects.map(\.anchor) == [top, top, top, bottom])
         #expect(collapsed.scale == SidebarReveal.collapsedScale)
         let scrollView = try sut.find(ViewType.ScrollView.self)
         #expect(throws: (any Error).self) { try scrollView.scaleEffect() }

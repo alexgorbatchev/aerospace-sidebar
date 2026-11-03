@@ -16,8 +16,10 @@ struct SidebarView: View {
     let setUp: (PermissionFlowPane, CGRect?) -> Void
 
     nonisolated static let margin: CGFloat = 16
-    /// The panel starts right under the menu bar, which already leaves room above the buttons.
+    /// The panel starts right under the menu bar, which already leaves room above the notes and cards.
     static let topMargin: CGFloat = 2
+    /// Room under the buttons at the bottom of the screen.
+    static let bottomMargin: CGFloat = 8
     static let motion: Animation = .snappy
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -38,15 +40,15 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(alignment: screenEdge, spacing: 6) {
-            // Everything but the scroll view grows out of the corner (`SidebarReveal`).
-            Group {
-                controls
-                notes
-            }
-            .modifier(RevealEffect(reveal: reveal))
+            // Everything but the scroll view grows out of its corner on the screen edge (`SidebarReveal`).
+            notes
+                .modifier(RevealEffect(reveal: reveal))
             list
+            controls
+                .modifier(RevealEffect(reveal: reveal, edge: .bottom))
         }
         .padding(.top, Self.topMargin)
+        .padding(.bottom, Self.bottomMargin)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         // Above the list and outside its edge fade, so a tooltip is never cut off.
         .sidebarTooltips()
@@ -204,8 +206,9 @@ struct SidebarView: View {
         arrivalScroll.scroll($scrollPosition, by: step, reduceMotion: reduceMotion)
     }
 
-    /// Clear All and Settings as small round icon buttons in the top corner on the sidebar's screen edge,
-    /// Settings outermost. Their labels open away from that edge, so the icon under the pointer stays put.
+    /// Settings and Clear All as small round icon buttons in the bottom corner on the sidebar's screen edge, Clear
+    /// All outermost: Settings, then Clear All from left to right on a right-hand sidebar. Their labels open away
+    /// from that edge, so the icon under the pointer stays put.
     private var controls: some View {
         let expandsToward: HorizontalEdge = side == .left ? .trailing : .leading
         let clearAll = ExpandingIconButton("Clear All", systemImage: "xmark", expandsToward: expandsToward, action: model.clear)
@@ -214,11 +217,11 @@ struct SidebarView: View {
             .keyboardShortcut(",", modifiers: .command)
         return HStack(spacing: 4) {
             if side == .left {
-                settings
                 clearAll
+                settings
             } else {
-                clearAll
                 settings
+                clearAll
             }
         }
         .padding(.horizontal, Self.margin)
@@ -262,13 +265,20 @@ struct SidebarView: View {
     }
 }
 
-/// Grows a part of the sidebar out of its top corner on the screen edge as the sidebar first appears
-/// (`SidebarReveal`). Each part scales on its own, never the list's scroll view.
+/// Grows a part of the sidebar out of its corner on the screen edge as the sidebar first appears
+/// (`SidebarReveal`): the top corner, or the bottom one for the buttons that sit there. Each part scales on its
+/// own, never the list's scroll view.
 struct RevealEffect: ViewModifier {
     let reveal: SidebarReveal
+    var edge: VerticalEdge = .top
 
     func body(content: Content) -> some View {
-        content.scaleEffect(reveal.scale, anchor: reveal.anchor)
+        content.scaleEffect(reveal.scale, anchor: anchor)
+    }
+
+    var anchor: UnitPoint {
+        guard edge == .bottom else { return reveal.anchor }
+        return UnitPoint(x: reveal.anchor.x, y: 1)
     }
 }
 
