@@ -16,6 +16,11 @@ coverage_min := "90"
 default:
     @just --list
 
+# Resolve Swift package dependencies and install alerter for test-notifications
+setup:
+    swift package resolve
+    command -v alerter >/dev/null || brew install vjeantet/tap/alerter
+
 # Build the app bundle into .build/AerospaceSidebar.app and the CLI into bin/; version sets CFBundleShortVersionString
 bundle version="":
     swift build -c release --product AerospaceSidebar

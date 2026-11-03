@@ -1,6 +1,6 @@
 ---
 created_on: 2026-10-26 11:54
-last_modified: 2026-10-29 12:26
+last_modified: 2026-11-03 12:07
 status: current
 ---
 
@@ -12,6 +12,7 @@ A permanent, always-visible sidebar on the macOS main display that tiled windows
 
 Swift package (`Package.swift`) driven by `justfile`:
 
+- Prepare development dependencies (Swift packages, `alerter`): `just setup`
 - Build and relaunch the app bundle: `just run`. It quits NotifyMeHow first (`just quit-notifymehow`) so only one app hides banners. `just stop` quits the sidebar gracefully; `just bundle` only builds `.build/AerospaceSidebar.app` and `bin/aerospace-sidebar`.
 - CLI: `just cli <args>`, agent mode `just cli-ai <args>` (the CLI's `run`/`run-ai` equivalents; `run` launches the app)
 - Push sample notifications through every path (CLI, URL scheme, native `osascript`), one per severity, one with a web link in its body, plus native alerts with an action, an action menu and a Reply button (`alerter`, `brew install vjeantet/tap/alerter`, sent as Script Editor like `osascript`; each waits in the background until answered, closed or `alert_timeout` seconds pass), and banners from an app that declares notification categories (Notification Sampler, `Tools/NotificationSampler`: Approve, Reject (destructive) and Later, and Reply with a text field): `just test-notifications [alert_timeout]` (default 600). The sampler pushes each response back through the CLI as "Notification Sampler got <action>" (Open for a click, Dismiss for a close, the reply text as body) and quits once both are answered or closed, or after `alert_timeout` seconds, removing the rest. Its first run makes macOS ask whether Notification Sampler may post notifications; set its style to Alerts in System Settings › Notifications for the persistent variant. `open` gives the sampler no terminal, so its errors and the CLI's go to `.build/NotificationSampler.log`, which the recipe deletes before each run. `just sampler` only builds `.build/NotificationSampler.app`.
