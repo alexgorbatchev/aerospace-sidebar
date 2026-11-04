@@ -32,6 +32,24 @@ struct PushCommandTests {
         #expect(sender.payloads.map(\.body) == ["**done**", "**done**"])
     }
 
+    /// `--key` names the card on push and in URLs; asks never stack, so they have no `--key`.
+    @Test func namesTheCardWithAKey() async throws {
+        let sender = RecordingSender()
+
+        #expect(await invoke(["notification", "push", "--title", "t", "--key", "herdr:w1:p1"], sender: sender).status == 0)
+        #expect(await invoke(["notification", "push", "--title", "t"], sender: sender).status == 0)
+        #expect(sender.payloads.map(\.key) == ["herdr:w1:p1", nil])
+
+        let url = await invoke(["notification", "url", "--title", "t", "--key", "deploy"])
+        #expect(url.status == 0)
+        let link = try #require(URL(string: url.output.trimmingCharacters(in: .whitespacesAndNewlines)))
+        #expect(try SidebarRequest(url: link) == .pushNotification(NotificationPayload(title: "t", key: "deploy")))
+
+        let ask = await invoke(["notification", "ask", "--title", "t", "--choice", "Yes", "--key", "k"], agent: true, sender: sender)
+        #expect(ask.status == 64)
+        #expect(ask.errorOutput.hasPrefix("ERR: usage: Unknown option '--key'"))
+    }
+
     @Test func pushesOpenActionAndReportsCompactlyForAgents() async throws {
         let sender = RecordingSender()
 
