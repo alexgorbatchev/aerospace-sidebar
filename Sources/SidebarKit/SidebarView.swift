@@ -530,7 +530,8 @@ struct NotificationCard: View {
             }
             // Option-click dismisses the card without acting, like its dismiss button.
             .buttonStyle(PressableButtonStyle(alternateAction: dismiss))
-            .help(helpText)
+            // No tooltip: VoiceOver reads what a click does, commands included, as the card's hint.
+            .accessibilityHint(helpText)
             .accessibilityLabel(accessibilitySummary)
             .accessibilityActions {
                 ForEach(choices, id: \.title) { choice in
@@ -704,7 +705,8 @@ struct NotificationCard: View {
     /// The web links in the notification's body, in order.
     var bodyLinks: [URL] { linkedBody.runs[\.link].compactMap { link, _ in link } }
 
-    /// What a click does, and that Option-click only dismisses, unless a click does nothing else.
+    /// What a click does, and that Option-click only dismisses, unless a click does nothing else: the card's
+    /// VoiceOver hint.
     var helpText: String {
         if notification.nativeChoices != nil, !choices.isEmpty {
             return "Click to open, as clicking the macOS notification would\nOption-click to dismiss"

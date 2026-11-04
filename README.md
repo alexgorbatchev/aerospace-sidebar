@@ -28,7 +28,7 @@
 - A notification with the same sender, text, severity, icon, click action and buttons as a listed one is stacked onto it (questions from `notification ask` never are): the card moves up as the newest, shows `×2`, `×3`, … next to its time, and gets layered edges below it. Clicking or dismissing a stack removes all of its copies.
 - Clicking a notification runs its action, or opens it in the app that posted it as clicking it in macOS would (a browser shows the page that sent it), and removes it. Option-click, or the × button that appears on hover, removes it without acting.
 - Clicking one of a card's buttons does what the button says and removes the card. A button that asks for text opens a field on the card; Return or its Send button sends the text.
-- Hovering a notification shows what a click will do, including the full command, and what each button runs or opens.
+- VoiceOver reads what a click on a notification will do, including the full command, and what each button runs or opens.
 
 # How it Really Works
 
