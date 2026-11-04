@@ -17,12 +17,13 @@ extension SidebarSettings {
         public enum Field: String, CaseIterable, Sendable {
             case source, title, subtitle, body
 
+            /// A markdown body is matched as the card shows it, without its syntax (`displayedBody`).
             var keyPath: KeyPath<SidebarNotification, String> {
                 switch self {
                 case .source: \.source
                 case .title: \.title
                 case .subtitle: \.subtitle
-                case .body: \.body
+                case .body: \.displayedBody
                 }
             }
         }

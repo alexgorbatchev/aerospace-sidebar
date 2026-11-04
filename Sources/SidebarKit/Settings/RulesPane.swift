@@ -222,7 +222,7 @@ struct RulesPane: View {
         let matched = history.filter { rules.firstMatch(for: $0) != nil }
         let count = "Matches \(matched.count) of the last \(history.count) notifications"
         let examples = matched.prefix(Self.matchLines - 1).map { notification in
-            let text = [notification.title, notification.subtitle, notification.body].first { !$0.isEmpty } ?? ""
+            let text = [notification.title, notification.subtitle, notification.displayedBody].first { !$0.isEmpty } ?? ""
             return "\(notification.source.isEmpty ? "Notification" : notification.source): \(text)"
         }
         return ([matched.isEmpty ? count + "." : count + ":"] + examples).joined(separator: "\n")

@@ -91,6 +91,18 @@ struct NotificationPayloadTests {
             try JSONDecoder().decode(NotificationPayload.self, from: Data(#"{"subtitle":"s"}"#.utf8))
         }
     }
+
+    /// A markdown body keeps its flag through the socket's JSON; a payload from a client that sends none is plain.
+    @Test func carriesTheMarkdownFlag() throws {
+        let markdown = try NotificationPayload(body: "**done**", markdown: true)
+        #expect(try JSONDecoder().decode(NotificationPayload.self, from: JSONEncoder().encode(markdown)) == markdown)
+        #expect(try JSONDecoder().decode(NotificationPayload.self, from: Data(#"{"body":"**done**"}"#.utf8)).markdown == false)
+        // The limits apply to the markdown as written, syntax included.
+        let syntax = String(repeating: "*", count: NotificationPayload.maxBodyLength - 1)
+        #expect(throws: SidebarRequestError.fieldTooLong(field: "body", limit: NotificationPayload.maxBodyLength)) {
+            try NotificationPayload(body: syntax + "ab", markdown: true)
+        }
+    }
 }
 
 struct PushedChoiceTests {
@@ -225,6 +237,19 @@ struct SidebarRequestTests {
         #expect(try SidebarRequest(url: url) == .pushNotification(payload))
     }
 
+    /// `markdown=1` or `true` turns markdown on, `0` or `false` leaves it off, and the URL form writes `1` only when
+    /// it is on.
+    @Test(arguments: [("1", true), ("true", true), ("TRUE", true), ("0", false), ("false", false)])
+    func urlsCarryTheMarkdownFlag(value: String, markdown: Bool) throws {
+        let url = try #require(URL(string: "aerospace-sidebar://notification/push?body=**x**&markdown=\(value)"))
+        let payload = try NotificationPayload(body: "**x**", markdown: markdown)
+
+        #expect(try SidebarRequest(url: url) == .pushNotification(payload))
+        let written = try SidebarRequest.pushNotification(payload).url()
+        #expect(written.query?.contains("markdown=1") == markdown)
+        #expect(try SidebarRequest(url: written) == .pushNotification(payload))
+    }
+
     @Test func omitsEmptyFields() throws {
         let url = try SidebarRequest.pushNotification(NotificationPayload(title: "t")).url()
 
@@ -247,6 +272,7 @@ struct SidebarRequestTests {
         ("aerospace-sidebar://toast?title=t", .unknownRoute("toast")),
         ("aerospace-sidebar://notification/push", .emptyNotification),
         ("aerospace-sidebar://notification/push?title=t&open=javascript:alert(1)", .invalidOpenURL("javascript:alert(1)")),
+        ("aerospace-sidebar://notification/push?title=t&markdown=yes", .invalidMarkdownFlag("yes")),
         ("aerospace-sidebar://notification/push?title=t&open=file:///Applications/Calculator.app", .invalidOpenURL("file:///Applications/Calculator.app")),
     ])
     func rejectsInvalidURLs(url: String, error: SidebarRequestError) {
@@ -319,6 +345,7 @@ struct SidebarRequestTests {
         (.emptyNotification, "title or a body"),
         (.fieldTooLong(field: "body", limit: 9), "body is longer than 9 characters (or 36 bytes in UTF-8)"),
         (.invalidOpenURL("ftp://x"), "'ftp://x'"),
+        (.invalidMarkdownFlag("yes"), "'yes' is not a markdown flag"),
         (.actionNotAllowedInURL, "aerospace-sidebar CLI"),
         (.emptyChoiceTitle, "a choice needs a title"),
         (.duplicateChoice("Yes"), "two choices are titled 'Yes'"),

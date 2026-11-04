@@ -39,6 +39,9 @@ struct NotificationContent: ParsableArguments {
     @Option(help: "Main text, up to 4096 characters.")
     var body = ""
 
+    @Flag(help: "Render the body as markdown: bold, italic, code, strikethrough and http or https links.")
+    var markdown = false
+
     @Option(help: "How important it is; more severe notifications are listed first.")
     var severity: NotificationSeverity = .normal
 
@@ -53,7 +56,7 @@ struct NotificationContent: ParsableArguments {
         action: NotificationAction? = nil, choices: [PushedChoice] = [], bundleIdentifier: String? = nil, defaultIcon: String? = nil
     ) throws -> NotificationPayload {
         try NotificationPayload(
-            title: title, subtitle: subtitle, body: body, severity: severity, icon: icon ?? defaultIcon,
+            title: title, subtitle: subtitle, body: body, markdown: markdown, severity: severity, icon: icon ?? defaultIcon,
             bundleIdentifier: bundleIdentifier, action: action, choices: choices
         )
     }

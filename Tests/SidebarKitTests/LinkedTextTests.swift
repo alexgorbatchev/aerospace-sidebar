@@ -70,6 +70,24 @@ struct LinkedTextTests {
         #expect(LinkedText.link(at: CGPoint(x: first.midX, y: -5), in: layouts) == nil)
     }
 
+    /// A link whose words differ in style spans several runs; each is marked with where the whole link starts, so
+    /// the pointer on any of them finds the link and hovering underlines all of it.
+    @Test func marksEveryRunOfALinkWithItsStart() throws {
+        var text = AttributedString("See ")
+        var bold = AttributedString("bold")
+        bold.inlinePresentationIntent = .stronglyEmphasized
+        var link = bold + AttributedString(" link")
+        link.link = URL(string: "https://example.com")
+        text += link + AttributedString(" end")
+        let linked = NotificationLinks.linked(text, underline: NotificationCard.linkUnderline)
+
+        let layouts = try render(LinkedText.text(linked, hovered: nil, hoverUnderline: .white), width: 400).layouts
+        let runs = layouts.flatMap { $0.layout.flatMap { $0 } }.compactMap { $0[LinkedText.Link.self]?.location }
+
+        #expect(runs.count >= 2)
+        #expect(Set(runs) == [4])
+    }
+
     /// Only the hovered link's underline turns white; the other link keeps the faint one.
     @Test func whitensOnlyTheHoveredLinksUnderline() throws {
         let text = "https://a.example and https://b.example"

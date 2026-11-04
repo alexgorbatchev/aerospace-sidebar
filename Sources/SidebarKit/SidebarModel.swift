@@ -47,6 +47,8 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
     public let title: String
     public let subtitle: String
     public let body: String
+    /// The body is markdown (`NotificationPayload.markdown`); only pushes set it.
+    public let markdown: Bool
     public let severity: NotificationSeverity
     /// The severity it arrived with, when a rule changed it; nil when `severity` is its own. Changed rules
     /// start over from it.
@@ -73,8 +75,8 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
     /// How many identical notifications this entry stands for (see `SidebarModel.add(_:)`).
     public let occurrences: Int
 
-    /// Reads a saved entry. An entry without pushed choices may leave out their key, like `nativeChoices`: every
-    /// entry in a list saved before cards carried them does, and none of those has any.
+    /// Reads a saved entry. An entry without pushed choices or a markdown body may leave out their keys, like
+    /// `nativeChoices`: every entry in a list saved before cards carried them does, and none of those has either.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
@@ -83,6 +85,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
             title: try container.decode(String.self, forKey: .title),
             subtitle: try container.decode(String.self, forKey: .subtitle),
             body: try container.decode(String.self, forKey: .body),
+            markdown: try container.decodeIfPresent(Bool.self, forKey: .markdown) ?? false,
             severity: try container.decode(NotificationSeverity.self, forKey: .severity),
             postedSeverity: try container.decodeIfPresent(NotificationSeverity.self, forKey: .postedSeverity),
             icon: try container.decodeIfPresent(Icon.self, forKey: .icon),
@@ -104,6 +107,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         title: String,
         subtitle: String = "",
         body: String = "",
+        markdown: Bool = false,
         severity: NotificationSeverity = .normal,
         postedSeverity: NotificationSeverity? = nil,
         icon: Icon? = nil,
@@ -122,6 +126,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         self.title = title
         self.subtitle = subtitle
         self.body = body
+        self.markdown = markdown
         self.severity = severity
         self.postedSeverity = postedSeverity
         self.icon = icon
@@ -150,6 +155,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
             title: payload.title,
             subtitle: payload.subtitle,
             body: payload.body,
+            markdown: payload.markdown,
             severity: payload.severity,
             icon: icon,
             bundleIdentifier: payload.bundleIdentifier,
@@ -168,7 +174,7 @@ extension SidebarNotification {
     /// asker. A stack keeps the severity its first card arrived with (`postedSeverity`).
     func hasSameContent(as other: SidebarNotification) -> Bool {
         source == other.source && bundleIdentifier == other.bundleIdentifier && title == other.title
-            && subtitle == other.subtitle && body == other.body
+            && subtitle == other.subtitle && body == other.body && markdown == other.markdown
             && severity == other.severity && icon == other.icon && invalidIcon == other.invalidIcon
             && action == other.action && shownByMacOS == other.shownByMacOS && nativeChoices == other.nativeChoices
             && pushedChoices == other.pushedChoices && !asks && !other.asks
@@ -186,6 +192,7 @@ extension SidebarNotification {
             title: title,
             subtitle: subtitle,
             body: body,
+            markdown: markdown,
             severity: severity,
             postedSeverity: postedSeverity,
             icon: icon,
@@ -215,6 +222,7 @@ extension SidebarNotification {
             title: title,
             subtitle: subtitle,
             body: body,
+            markdown: markdown,
             severity: severity,
             postedSeverity: postedSeverity,
             icon: icon,
@@ -242,6 +250,7 @@ extension SidebarNotification {
             title: title,
             subtitle: subtitle,
             body: body,
+            markdown: markdown,
             severity: severity,
             postedSeverity: postedSeverity,
             icon: icon,
@@ -265,6 +274,7 @@ extension SidebarNotification {
             title: title,
             subtitle: subtitle,
             body: body,
+            markdown: markdown,
             severity: severity,
             postedSeverity: severity == ownSeverity ? nil : ownSeverity,
             icon: icon,

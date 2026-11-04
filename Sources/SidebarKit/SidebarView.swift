@@ -683,12 +683,7 @@ struct NotificationCard: View {
         [
             Line(id: "title", text: AttributedString(notification.title), font: typography.font(.body).bold(), lineLimit: nil),
             Line(id: "subtitle", text: AttributedString(notification.subtitle), font: typography.font(.callout), lineLimit: nil),
-            Line(
-                id: "body",
-                text: NotificationLinks.linked(notification.body, underline: Self.linkUnderline),
-                font: typography.font(.callout),
-                lineLimit: 8
-            ),
+            Line(id: "body", text: linkedBody, font: typography.font(.callout), lineLimit: 8),
         ].filter { !$0.text.characters.isEmpty }
     }
 
@@ -698,8 +693,16 @@ struct NotificationCard: View {
         !text.isEmpty && (notification.pushedChoices.isEmpty || PushedChoice.fits(reply: text))
     }
 
-    /// The web links in the notification's body.
-    var bodyLinks: [URL] { NotificationLinks.links(in: notification.body).map(\.url) }
+    /// The body with its web links, and for a markdown body its inline styles (`NotificationMarkdown`).
+    var linkedBody: AttributedString {
+        let body = notification.markdown
+            ? NotificationMarkdown.styled(notification.body, codeFont: typography.font(.callout).monospaced())
+            : AttributedString(notification.body)
+        return NotificationLinks.linked(body, underline: Self.linkUnderline)
+    }
+
+    /// The web links in the notification's body, in order.
+    var bodyLinks: [URL] { linkedBody.runs[\.link].compactMap { link, _ in link } }
 
     /// What a click does, and that Option-click only dismisses, unless a click does nothing else.
     var helpText: String {
@@ -734,7 +737,7 @@ struct NotificationCard: View {
         if notification.occurrences > 1 {
             parts.append(Text("Received \(notification.occurrences) times"))
         }
-        parts += [notification.title, notification.subtitle, notification.body].filter { !$0.isEmpty }.map { Text($0) }
+        parts += [notification.title, notification.subtitle, notification.displayedBody].filter { !$0.isEmpty }.map { Text($0) }
         parts += notes.map { Text($0) }
         return parts.dropFirst().reduce(parts[0]) { Text("\($0), \($1)") }
     }

@@ -137,6 +137,7 @@ Skill:
 | `--title <title>` | | empty | Bold first line, up to 256 characters |
 | `--subtitle <subtitle>` | | empty | Line under the title, up to 256 characters |
 | `--body <body>` | | empty | Main text, up to 4096 characters |
+| `--markdown` | | off | Show the body as markdown: bold, italic, code, strikethrough and `http`/`https` links |
 | `--severity <severity>` | | `normal` | `low`, `normal`, `high` or `critical`; more severe notifications are listed first |
 | `--icon <id>` | | terminal's icon | sketchybar-app-font icon id such as `slack` or `:slack:`, up to 64 characters |
 | `--open <url>` | | none | URL to open when the notification is clicked, up to 8192 characters |
@@ -145,7 +146,7 @@ Skill:
 | `--reply <title=command>` | | none | A button that opens a text field; sending the text runs a shell command in the current directory; repeatable |
 | `--choice-link <title=url>` | | none | A button that opens an `http` or `https` link; repeatable |
 
-A notification needs `--title` or `--body`. Button values split at the first `=` into a title of up to 64 characters and a command (up to 4096 characters) or URL (up to 8192 characters). A notification takes at most 8 buttons with different titles, shown in the order `--choice`, `--reply`, `--choice-link`. A `--reply` field shows the button's title as its placeholder and a **Send** button, and sends at most 4096 characters. Each value may also take at most four bytes of UTF-8 per character of its limit, which only text stacking many combining marks or emoji sequences reaches. `--open` and `--run` cannot be combined. Without `--icon`, the notification shows the icon of the app the command runs in: `__CFBundleIdentifier`, set by macOS for processes an app starts, else the terminal named by `TERM_PROGRAM` (Terminal, Ghostty, iTerm2, VS Code, Warp, WezTerm). Outside any of them it shows a terminal icon.
+A notification needs `--title` or `--body`. With `--markdown` the body's inline markdown shows styled (`**bold**`, `*italic*`, `` `code` ``, `~~strikethrough~~`, `[text](https://…)`); lists, headings, tables and HTML show as written, a link to anything but `http` or `https` keeps only its text, and rules and VoiceOver read the text without its syntax. Button values split at the first `=` into a title of up to 64 characters and a command (up to 4096 characters) or URL (up to 8192 characters). A notification takes at most 8 buttons with different titles, shown in the order `--choice`, `--reply`, `--choice-link`. A `--reply` field shows the button's title as its placeholder and a **Send** button, and sends at most 4096 characters. Each value may also take at most four bytes of UTF-8 per character of its limit, which only text stacking many combining marks or emoji sequences reaches. `--open` and `--run` cannot be combined. Without `--icon`, the notification shows the icon of the app the command runs in: `__CFBundleIdentifier`, set by macOS for processes an app starts, else the terminal named by `TERM_PROGRAM` (Terminal, Ghostty, iTerm2, VS Code, Warp, WezTerm). Outside any of them it shows a terminal icon.
 
 `aerospace-sidebar notification url`
 
@@ -154,6 +155,7 @@ A notification needs `--title` or `--body`. Button values split at the first `=`
 | `--title <title>` | | empty | Bold first line, up to 256 characters |
 | `--subtitle <subtitle>` | | empty | Line under the title, up to 256 characters |
 | `--body <body>` | | empty | Main text, up to 4096 characters |
+| `--markdown` | | off | Show the body as markdown: bold, italic, code, strikethrough and `http`/`https` links |
 | `--severity <severity>` | | `normal` | `low`, `normal`, `high` or `critical` |
 | `--icon <id>` | | none | sketchybar-app-font icon id such as `slack` or `:slack:` |
 | `--open <url>` | | none | `http` or `https` URL to open when the notification is clicked, up to 8192 characters |
@@ -166,6 +168,7 @@ A notification needs `--title` or `--body`. Button values split at the first `=`
 | `--title <title>` | | empty | Bold first line, up to 256 characters |
 | `--subtitle <subtitle>` | | empty | Line under the title, up to 256 characters |
 | `--body <body>` | | empty | Main text, up to 4096 characters |
+| `--markdown` | | off | Show the body as markdown: bold, italic, code, strikethrough and `http`/`https` links |
 | `--severity <severity>` | | `normal` | `low`, `normal`, `high` or `critical` |
 | `--icon <id>` | | terminal's icon | sketchybar-app-font icon id such as `slack` or `:slack:`, up to 64 characters |
 | `--choice <title>` | | none | A button; picking it prints its title (with `AGENT=1`, `OK: ` and the answer as JSON); repeatable |
@@ -212,7 +215,7 @@ A missing file or key uses the defaults shown. A key or table not shown here, su
 
 # URL Scheme
 
-Opening `aerospace-sidebar://notification/push` with any of the query parameters `title`, `subtitle`, `body`, `severity`, `icon`, `open` and `choice` shows a notification, for example from a web page link, the Shortcuts Open URL action, or `open -g "<url>"` in a script. Values are percent-encoded; `aerospace-sidebar notification url` builds the link for you. Opening a link without `-g` brings the sidebar app forward for a moment; it hands activation straight back to the app you were working in (launchers such as Spotlight, Raycast and Alfred are passed over).
+Opening `aerospace-sidebar://notification/push` with any of the query parameters `title`, `subtitle`, `body`, `markdown` (`1` renders the body as markdown), `severity`, `icon`, `open` and `choice` shows a notification, for example from a web page link, the Shortcuts Open URL action, or `open -g "<url>"` in a script. Values are percent-encoded; `aerospace-sidebar notification url` builds the link for you. Opening a link without `-g` brings the sidebar app forward for a moment; it hands activation straight back to the app you were working in (launchers such as Spotlight, Raycast and Alfred are passed over).
 
 Each `choice` adds a link button: its value is the button's title, `=`, and the `http` or `https` URL it opens, such as `choice=Logs%3Dhttps%3A%2F%2Fci.example.com%2Flogs`. Links cannot add buttons that run commands, take text or answer a question.
 
