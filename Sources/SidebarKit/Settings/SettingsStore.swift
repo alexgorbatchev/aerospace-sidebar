@@ -5,7 +5,7 @@ import os
 /// Current settings, kept in sync with `config.toml` in both directions.
 ///
 /// The store watches the file, so edits made by hand or by another tool apply right away, whether
-/// they write the file in place or replace it atomically. An invalid file keeps the last valid settings, or the
+/// they write the file in place or replace it atomically, also at a symlinked file's target. An invalid file keeps the last valid settings, or the
 /// defaults when nothing valid has loaded since launch, and reports the problem in `loadError`.
 @MainActor
 @Observable
@@ -27,7 +27,8 @@ public final class SettingsStore {
     @ObservationIgnored private var onChange: [@MainActor (SidebarSettings) -> Void] = []
     @ObservationIgnored private var onFontChange: [@MainActor (SidebarSettings.Font) -> Void] = []
     @ObservationIgnored private var onBackgroundChange: [@MainActor (SidebarSettings.Background) -> Void] = []
-    @ObservationIgnored private var watcher: FileWatcher?
+    /// On `config.toml` and, while it is a symlink, on its target.
+    @ObservationIgnored private var watcher: FileWatchers?
 
     public init(file: SettingsFile) {
         self.file = file
@@ -120,11 +121,15 @@ public final class SettingsStore {
     }
 
     /// Reloads whenever `config.toml` changes, once it has been unchanged for a moment so a file still
-    /// being written is not read; creates the directory if needed, so the file's creation is seen too.
+    /// being written is not read; creates the directory if needed, so the file's creation is seen too. A
+    /// symlinked file is also watched at its target, so edits there are seen, also to a target removed and
+    /// created again, as a checkout in a dotfiles repository does.
     public func startWatching() throws {
         try FileManager.default.createDirectory(at: file.url.deletingLastPathComponent(), withIntermediateDirectories: true)
         watcher?.stop()
-        let watcher = FileWatcher(url: file.url, delay: .milliseconds(100)) { [weak self] in self?.reload() }
+        let watcher = FileWatchers(delay: .milliseconds(100), urls: { [file] in FileWatchers.followingSymlinks([file.url]) }) { [weak self] in
+            self?.reload()
+        }
         watcher.start()
         self.watcher = watcher
     }

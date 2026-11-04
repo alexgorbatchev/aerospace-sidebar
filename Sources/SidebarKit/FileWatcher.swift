@@ -113,3 +113,67 @@ public final class FileWatcher {
         )
     }
 }
+
+/// `FileWatcher`s on the files `urls` names, named again after every report, so that a file that becomes or
+/// stops being a symlink is watched at its new target (`followingSymlinks(_:)`).
+@MainActor
+public final class FileWatchers {
+    private let delay: Duration
+    private let urls: @MainActor () -> [URL]
+    private let onChange: @MainActor () -> Void
+    private var watchers: [URL: FileWatcher] = [:]
+
+    public init(delay: Duration, urls: @escaping @MainActor () -> [URL], onChange: @escaping @MainActor () -> Void) {
+        self.delay = delay
+        self.urls = urls
+        self.onChange = onChange
+    }
+
+    public func start() {
+        stop()
+        watch()
+    }
+
+    public func stop() {
+        watchers.values.forEach { $0.stop() }
+        watchers = [:]
+    }
+
+    /// `urls` and the targets of those that are symlinks. A watcher on a symlink follows its target file but not
+    /// the target's directory, so a target removed and created again later, which leaves the symlink's
+    /// directory as it was, is seen only by a watcher on the target.
+    public nonisolated static func followingSymlinks(_ urls: [URL]) -> [URL] {
+        urls + urls.compactMap(\.symlinkTarget)
+    }
+
+    private func watch() {
+        let urls = urls()
+        for (url, watcher) in watchers where !urls.contains(url) {
+            watcher.stop()
+            watchers[url] = nil
+        }
+        for url in urls where watchers[url] == nil {
+            let watcher = FileWatcher(url: url, delay: delay) { [weak self] in
+                self?.watch()
+                self?.onChange()
+            }
+            watcher.start()
+            watchers[url] = watcher
+        }
+    }
+}
+
+extension URL {
+    /// The file the symlink at this file URL points to, through any further symlinks; nil when it is not a
+    /// symlink. Unlike `resolvingSymlinksInPath()`, which leaves a symlink to a missing file as it is, it names
+    /// a missing target too, so that the target can be watched or created.
+    var symlinkTarget: URL? {
+        var target = self
+        var links = 0
+        while links < MAXSYMLINKS, let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: target.path) {
+            target = URL(fileURLWithPath: destination, relativeTo: target.deletingLastPathComponent()).absoluteURL.standardizedFileURL
+            links += 1
+        }
+        return links == 0 ? nil : target
+    }
+}

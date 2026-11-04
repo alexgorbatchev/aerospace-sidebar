@@ -341,6 +341,62 @@ struct SettingsStoreTests {
         #expect(store.settings.history.maxCount == 80)
     }
 
+    /// A config.toml kept elsewhere, such as in a dotfiles repository, and linked in, through relative and chained
+    /// links, stays a link when saved: the write goes to its target, also when that is missing.
+    @Test func savingASymlinkedFileWritesItsTarget() throws {
+        let link = directory.url.appendingPathComponent("linked/config.toml")
+        let target = directory.url.appendingPathComponent("dotfiles/sidebar/config.toml")
+        try FileManager.default.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "current.toml")
+        try FileManager.default.createSymbolicLink(
+            atPath: link.deletingLastPathComponent().appendingPathComponent("current.toml").path,
+            withDestinationPath: "../dotfiles/sidebar/config.toml"
+        )
+        let file = SettingsFile(url: link)
+        let settings = SidebarSettings(history: .init(retentionHours: 12, maxCount: 40))
+
+        try file.save(settings)
+
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: link.path) == "current.toml")
+        #expect(try SettingsFile(url: target).load() == settings)
+        try file.save(SidebarSettings())
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: link.path) == "current.toml")
+        #expect(try file.load() == SidebarSettings())
+    }
+
+    /// Edits at a symlinked file's target apply, also once the target was removed and created again, which leaves
+    /// the link's directory as it was; once the file is one of its own, its old target no longer matters.
+    @Test func watchingFollowsTheTargetOfASymlinkedFile() async throws {
+        let target = directory.url.appendingPathComponent("dotfiles/config.toml")
+        try directory.write("[history]\nmax_count = 50\n", to: "dotfiles/config.toml")
+        try FileManager.default.createSymbolicLink(at: file.url, withDestinationURL: target)
+        let store = SettingsStore(file: file)
+        try store.startWatching()
+        defer { store.stopWatching() }
+        func waitFor(_ maxCount: Int) async throws {
+            for _ in 0..<150 where store.settings.history.maxCount != maxCount {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            #expect(store.settings.history.maxCount == maxCount)
+        }
+        #expect(store.settings.history.maxCount == 50)
+
+        try "[history]\nmax_count = 60\n".write(to: target, atomically: true, encoding: .utf8)
+        try await waitFor(60)
+
+        try FileManager.default.removeItem(at: target)
+        try await waitFor(200)
+        try "[history]\nmax_count = 70\n".write(to: target, atomically: true, encoding: .utf8)
+        try await waitFor(70)
+
+        try FileManager.default.removeItem(at: file.url)
+        try "[history]\nmax_count = 80\n".write(to: file.url, atomically: true, encoding: .utf8)
+        try await waitFor(80)
+        try "[history]\nmax_count = 90\n".write(to: target, atomically: true, encoding: .utf8)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(store.settings.history.maxCount == 80)
+    }
+
     @Test func watchingFailsForUncreatableDirectory() {
         let store = SettingsStore(file: SettingsFile(url: URL(fileURLWithPath: "/nonexistent-root/x/config.toml")))
 

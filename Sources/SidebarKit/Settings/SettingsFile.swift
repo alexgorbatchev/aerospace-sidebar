@@ -29,11 +29,15 @@ public struct SettingsFile: Sendable {
         return try TOMLDecoder().decode(SidebarSettings.self, from: String(contentsOf: url, encoding: .utf8))
     }
 
+    /// Writes the settings atomically. A symlinked file, such as one kept in a dotfiles repository, is written at
+    /// its target, also when that is missing, and stays a symlink: an atomic write at the link would replace it
+    /// with a file of its own.
     public func save(_ settings: SidebarSettings) throws {
         let encoder = TOMLEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let body = try encoder.encodeToString(settings)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try (Self.header + body).write(to: url, atomically: true, encoding: .utf8)
+        let destination = url.symlinkTarget ?? url
+        try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try (Self.header + body).write(to: destination, atomically: true, encoding: .utf8)
     }
 }

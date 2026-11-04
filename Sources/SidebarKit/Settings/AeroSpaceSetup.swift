@@ -83,25 +83,9 @@ public struct AeroSpaceSetup: Sendable {
     }
 
     /// The files to watch for changes: every place AeroSpace looks for its config, so a config created or
-    /// moved there is seen, and the target of each symlinked one. A watcher on the symlink follows the target
-    /// file, but not its directory: a target removed and created again later, which leaves the symlink's
-    /// directory as it was, is seen only by a watcher on the target's.
+    /// moved there is seen, and the target of each symlinked one (`FileWatchers.followingSymlinks(_:)`).
     public func configsToWatch() -> [URL] {
-        let candidates = AeroSpaceConfig.candidates(home: home, environment: environment)
-        return candidates + candidates.compactMap(Self.symlinkTarget(of:))
-    }
-
-    /// The file the symlink at `url` points to, through any further symlinks; nil when `url` is not a
-    /// symlink. Unlike `resolvingSymlinksInPath()`, which leaves a symlink to a missing file as it is, it
-    /// names a missing target too, so that its return is watched.
-    static func symlinkTarget(of url: URL) -> URL? {
-        var target = url
-        var links = 0
-        while links < MAXSYMLINKS, let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: target.path) {
-            target = URL(fileURLWithPath: destination, relativeTo: target.deletingLastPathComponent()).absoluteURL.standardizedFileURL
-            links += 1
-        }
-        return links == 0 ? nil : target
+        FileWatchers.followingSymlinks(AeroSpaceConfig.candidates(home: home, environment: environment))
     }
 
     /// The config compared with `sidebar`.

@@ -20,9 +20,8 @@ public final class AeroSpaceSync {
     /// or the sidebar changes. A later attempt forgets it: a rejection can pass, such as a check made while
     /// AeroSpace restarted, and an accepted edit shows it has.
     @ObservationIgnored private var rejection: (original: String, sidebar: SidebarSettings.Sidebar)?
-    /// One per place AeroSpace looks for its config, and per symlinked config's target.
-    @ObservationIgnored private var watchers: [URL: FileWatcher] = [:]
-    @ObservationIgnored private var watchDelay = Duration.seconds(1)
+    /// On every place AeroSpace looks for its config, and on each symlinked config's target.
+    @ObservationIgnored private var watchers: FileWatchers?
 
     /// - Parameter sidebar: The saved side and width, which the AeroSpace gap must match.
     public init(
@@ -82,14 +81,17 @@ public final class AeroSpaceSync {
     /// AeroSpace would load created, edited, moved or removed in any place it looks.
     public func start(delay: Duration = .seconds(1)) {
         stop()
-        watchDelay = delay
-        watchConfigs()
+        let watchers = FileWatchers(delay: delay, urls: { [setup] in setup.configsToWatch() }) { [weak self] in
+            Task { await self?.sync() }
+        }
+        watchers.start()
+        self.watchers = watchers
         Task { await sync() }
     }
 
     public func stop() {
-        watchers.values.forEach { $0.stop() }
-        watchers = [:]
+        watchers?.stop()
+        watchers = nil
     }
 
     private func performUpdate(rewritingBlock: Bool) async {
@@ -121,24 +123,6 @@ public final class AeroSpaceSync {
     private func wasRejected(_ url: URL) -> Bool {
         guard let rejection, rejection.sidebar == sidebar() else { return false }
         return (try? String(contentsOf: url, encoding: .utf8)) == rejection.original
-    }
-
-    /// Watches the files `AeroSpaceSetup.configsToWatch()` names, which change when a config becomes or
-    /// stops being a symlink.
-    private func watchConfigs() {
-        let urls = setup.configsToWatch()
-        for (url, watcher) in watchers where !urls.contains(url) {
-            watcher.stop()
-            watchers[url] = nil
-        }
-        for url in urls where watchers[url] == nil {
-            let watcher = FileWatcher(url: url, delay: watchDelay) { [weak self] in
-                self?.watchConfigs()
-                Task { await self?.sync() }
-            }
-            watcher.start()
-            watchers[url] = watcher
-        }
     }
 
     /// Copies the TOML to add by hand.
