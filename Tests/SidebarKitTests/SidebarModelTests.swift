@@ -84,6 +84,86 @@ struct SidebarModelTests {
         #expect(model.notifications.map(\.occurrences) == [1, 1])
     }
 
+    static let repoURL = URL(string: "https://example.com/repo")!
+
+    /// A push with the key of a listed push from its source takes over that card: it keeps its identity, shows the
+    /// newer content, counts both and moves up as the newest; `received` keeps one entry per key the same way.
+    @Test func keyedPushesReplaceTheirCardAndStack() {
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        let store = InMemoryStore()
+        let model = SidebarModel(performer: RecordingPerformer(), store: store, now: { start })
+        func push(_ body: String, key: String?, source: String = "aerospace-sidebar", at offset: TimeInterval) -> SidebarNotification {
+            SidebarNotification(source: source, title: "repo", body: body, markdown: true, key: key, receivedAt: start + offset)
+        }
+        let first = push("Turn one", key: "herdr:w1:p1", at: 0)
+        model.add(first)
+        model.add(push("Other pane", key: "herdr:w1:p2", at: 1))
+        model.add(SidebarNotification(source: "aerospace-sidebar", title: "repo", body: "Turn **two**", severity: .high,
+                                      icon: .init(id: "codex"), action: .open(Self.repoURL), key: "herdr:w1:p1", receivedAt: start + 2))
+
+        #expect(model.notifications.map(\.body) == ["Turn **two**", "Other pane"])
+        let card = model.notifications[0]
+        #expect(card.id == first.id)
+        #expect(card.occurrences == 2)
+        #expect(card.receivedAt == start + 2)
+        #expect((card.severity, card.icon, card.action, card.markdown) == (.high, .init(id: "codex"), .open(Self.repoURL), false))
+        #expect(store.stored == model.notifications)
+        #expect(model.received.map(\.body) == ["Turn **two**", "Other pane"])
+        #expect(model.received.map(\.occurrences) == [2, 1])
+    }
+
+    /// Keys stack only pushes from one source, so a web page's URL cannot take over a CLI card; a keyed push and an
+    /// unkeyed one with the same content stay apart too.
+    @Test func keysStackOnlyPushesFromOneSource() {
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+
+        model.add(SidebarNotification(source: "aerospace-sidebar", title: "t", key: "build"))
+        model.add(SidebarNotification(source: "Vivaldi", title: "t", key: "build"))
+        model.add(SidebarNotification(source: "aerospace-sidebar", title: "t"))
+        model.add(SidebarNotification(source: "aerospace-sidebar", title: "t"))
+
+        #expect(model.notifications.map(\.source) == ["aerospace-sidebar", "Vivaldi", "aerospace-sidebar"])
+        #expect(model.notifications.map(\.key) == [nil, "build", "build"])
+        #expect(model.notifications.map(\.occurrences) == [2, 1, 1])
+    }
+
+    /// A card on which a reply is typed takes no keyed push either; once the reply is done, saved rules restack the
+    /// two like arriving pushes. A rule that hides a keyed push leaves the listed card as it was.
+    @Test func keyedPushesSpareCardsBeingRepliedOnAndHiddenPushes() throws {
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        model.add(SidebarNotification(source: "cli", title: "one", key: "k"))
+        let composing = model.notifications[0].id
+
+        model.setComposing(true, on: composing)
+        model.add(SidebarNotification(source: "cli", title: "two", key: "k"))
+        #expect(model.notifications.map(\.title) == ["two", "one"])
+        model.setComposing(false, on: composing)
+
+        model.apply(rules: [SidebarSettings.Rule(title: "secret", action: .hide)])
+        #expect(model.notifications.map(\.title) == ["two"])
+        #expect(model.notifications.map(\.occurrences) == [2])
+        model.add(SidebarNotification(source: "cli", title: "secret", key: "k"))
+        #expect(model.notifications.map(\.title) == ["two"])
+        #expect(model.received.first?.title == "secret")
+    }
+
+    /// The key is saved with the card, so a relaunch keeps stacking onto it; lists saved before keys load without one.
+    @Test func savesTheKey() throws {
+        let card = SidebarNotification(source: "cli", title: "t", key: "herdr:w1:p1")
+        let decoded = try JSONDecoder().decode(SidebarNotification.self, from: JSONEncoder().encode(card))
+        #expect(decoded == card)
+
+        var object = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(card)) as? [String: Any])
+        object["key"] = nil
+        let legacy = try JSONDecoder().decode(SidebarNotification.self, from: JSONSerialization.data(withJSONObject: object))
+        #expect(legacy.key == nil)
+
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore([decoded]))
+        model.add(SidebarNotification(source: "cli", title: "again", key: "herdr:w1:p1"))
+        #expect(model.notifications.map(\.title) == ["again"])
+        #expect(model.notifications.first?.id == card.id)
+    }
+
     @Test func dismissingStackRemovesEveryOccurrence() {
         let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
         model.add(SidebarNotification(source: "s", title: "again"))

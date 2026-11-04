@@ -1,7 +1,7 @@
 ---
 name: aerospace-sidebar
 description: Push notifications into the aerospace-sidebar macOS app with the aerospace-sidebar CLI or aerospace-sidebar:// URLs. Use when a task should alert the user on their Mac, report a finished build or agent run, offer click-to-run commands, buttons or links, or ask the user a question and wait for the answer.
-last_modified: 2026-11-04 14:58
+last_modified: 2026-11-04 15:20
 ---
 
 # aerospace-sidebar
@@ -40,8 +40,10 @@ Sends a notification to the running app over its control socket (`$(getconf DARW
 | `--choice <title=command>` | repeatable; title up to 64 characters, command up to 4096 | none | A button that runs the command like `--run`, with `AEROSPACE_SIDEBAR_CHOICE` set to the title |
 | `--reply <title=command>` | repeatable; title up to 64 characters, command up to 4096 | none | A button that opens a text field on the card; sending the text runs the command like `--run`, with `AEROSPACE_SIDEBAR_CHOICE` set to the title and `AEROSPACE_SIDEBAR_REPLY` to the text (up to 4096 characters) |
 | `--choice-link <title=url>` | repeatable; title up to 64 characters, `http` or `https` URL up to 8192 | none | A button that opens the link with its default app |
+| `--key <id>` | string, up to 128 characters | none | Names the card: a later push with the same key replaces the card's title, body, icon, click action and buttons, and shows as a repeat (its count goes up) instead of adding a card. Use one key per thing that updates, such as `build:main` or a terminal pane |
 
 - A notification needs `--title` or `--body`.
+- `--key` stacks only pushes from the CLI onto each other, never onto cards from URLs or macOS. A card on which the user is typing a reply takes no keyed push; the push gets its own card. A key of only whitespace is refused.
 - `--body` limits count the markdown as written, syntax included. Without `--markdown`, `*` and backticks are ordinary characters.
 - Each value may also take at most four bytes of UTF-8 per character of its limit (1024 bytes for 256 characters). Only text stacking many code points into one character, such as combining marks or emoji sequences, reaches that first.
 - The whole request may take at most 65536 bytes as JSON. Values within their limits exceed it only when they are full of control characters or stacked code points; the command then fails with `too_large`.
@@ -78,7 +80,7 @@ Shows a notification with buttons over the control socket, like `push` (same app
 
 ### notification url
 
-Prints an `aerospace-sidebar://notification/push?…` URL without sending anything. Accepts `--title`, `--subtitle`, `--body`, `--markdown`, `--severity`, `--icon`, `--open` and `--choice-link` with the same meaning as `push`; `--markdown` becomes `markdown=1`. URLs cannot carry `--run`, `--choice`, `--reply` or questions, and their `--open` and link choices must be `http` or `https`, because any process or web page can open them.
+Prints an `aerospace-sidebar://notification/push?…` URL without sending anything. Accepts `--title`, `--subtitle`, `--body`, `--markdown`, `--severity`, `--icon`, `--open`, `--choice-link` and `--key` with the same meaning as `push`; `--markdown` becomes `markdown=1` and `--key` `key=`. A URL's key stacks only pushes opened by the same app. URLs cannot carry `--run`, `--choice`, `--reply` or questions, and their `--open` and link choices must be `http` or `https`, because any process or web page can open them.
 
 Opening the URL (`open -g "<url>"`, a link on a web page after the browser's confirmation, Shortcuts' Open URL action) shows the notification and labels it with the app that opened the URL when known, else `URL`. Without `-g`, macOS brings the sidebar app forward to open the URL; it hands activation straight back to the app the user was working in (launchers such as Spotlight, Raycast and Alfred are passed over).
 

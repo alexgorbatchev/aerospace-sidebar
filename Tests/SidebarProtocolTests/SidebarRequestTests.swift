@@ -218,6 +218,30 @@ struct PushedChoiceTests {
             try ControlRequest.askNotification(NotificationPayload(title: "t")).validate()
         }
     }
+
+    /// A key names the card a push replaces; asks never stack, so they take none.
+    @Test func asksTakeNoKey() throws {
+        let yes = try PushedChoice(title: "Yes", action: .answer)
+
+        #expect(throws: Never.self) { try ControlRequest.pushNotification(NotificationPayload(title: "t", key: "build")).validate() }
+        #expect(throws: SidebarRequestError.keyOnAsk) {
+            try ControlRequest.askNotification(NotificationPayload(title: "t", choices: [yes], key: "build")).validate()
+        }
+    }
+
+    /// A key survives the socket's JSON, and a payload without one, as older clients send, has none. An empty key
+    /// is no key; one of whitespace or holding a NUL is refused, and its length is bounded like other fields.
+    @Test func carriesTheKey() throws {
+        let keyed = try NotificationPayload(title: "t", key: "herdr:w1:p1")
+        #expect(try JSONDecoder().decode(NotificationPayload.self, from: JSONEncoder().encode(keyed)) == keyed)
+        #expect(try JSONDecoder().decode(NotificationPayload.self, from: Data(#"{"title":"t"}"#.utf8)).key == nil)
+        #expect(try NotificationPayload(title: "t", key: "").key == nil)
+        #expect(throws: SidebarRequestError.blankKey) { try NotificationPayload(title: "t", key: " \n") }
+        #expect(throws: SidebarRequestError.nulCharacter(field: "key")) { try NotificationPayload(title: "t", key: "a\u{0}b") }
+        #expect(throws: SidebarRequestError.fieldTooLong(field: "key", limit: NotificationPayload.maxKeyLength)) {
+            try NotificationPayload(title: "t", key: String(repeating: "k", count: NotificationPayload.maxKeyLength + 1))
+        }
+    }
 }
 
 struct SidebarRequestTests {
@@ -247,6 +271,17 @@ struct SidebarRequestTests {
         #expect(try SidebarRequest(url: url) == .pushNotification(payload))
         let written = try SidebarRequest.pushNotification(payload).url()
         #expect(written.query?.contains("markdown=1") == markdown)
+        #expect(try SidebarRequest(url: written) == .pushNotification(payload))
+    }
+
+    /// `key=` names the card a URL push replaces, and the URL form writes it back.
+    @Test func urlsCarryTheKey() throws {
+        let url = try #require(URL(string: "aerospace-sidebar://notification/push?title=t&key=deploy"))
+        let payload = try NotificationPayload(title: "t", key: "deploy")
+
+        #expect(try SidebarRequest(url: url) == .pushNotification(payload))
+        let written = try SidebarRequest.pushNotification(payload).url()
+        #expect(written.query?.contains("key=deploy") == true)
         #expect(try SidebarRequest(url: written) == .pushNotification(payload))
     }
 
@@ -356,6 +391,8 @@ struct SidebarRequestTests {
         (.equalsInURLChoiceTitle("a=b"), "'a=b' holds '='"),
         (.askNeedsAnswers, "an ask needs at least one choice"),
         (.answerOutsideAsk, "only an ask's choices"),
+        (.blankKey, "a key needs more than whitespace"),
+        (.keyOnAsk, "an ask takes no key"),
         (.nulCharacter(field: "command"), "command holds a NUL character"),
     ])
     func describesErrors(error: SidebarRequestError, fragment: String) {

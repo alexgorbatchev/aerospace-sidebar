@@ -124,6 +124,7 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
     public static let maxCommandLength = 4096
     public static let maxWorkingDirectoryLength = Int(PATH_MAX)
     public static let maxChoices = 8
+    public static let maxKeyLength = 128
     /// UTF-8 bytes a field may take per character of its limit: four, the most one code point takes. A character
     /// can stack any number of code points, such as a letter with combining marks, so a character count alone
     /// bounds neither the text kept nor the request carrying it.
@@ -145,10 +146,13 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
     public let action: NotificationAction?
     /// Buttons on the card besides its click action, in order.
     public let choices: [PushedChoice]
+    /// Names the card: a later push from the same source with the same key replaces the card's content and stacks
+    /// onto it, whatever either says. Asks take none.
+    public let key: String?
 
     /// - Throws: `SidebarRequestError` when both title and body are empty, a field, the action's included,
-    ///   exceeds its limit in characters or `maxBytesPerCharacter` times that in UTF-8 bytes, or there are more
-    ///   than `maxChoices` choices or two with one title.
+    ///   exceeds its limit in characters or `maxBytesPerCharacter` times that in UTF-8 bytes, `key` holds a NUL or
+    ///   only whitespace, or there are more than `maxChoices` choices or two with one title.
     public init(
         title: String = "",
         subtitle: String = "",
@@ -158,7 +162,8 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
         icon: String? = nil,
         bundleIdentifier: String? = nil,
         action: NotificationAction? = nil,
-        choices: [PushedChoice] = []
+        choices: [PushedChoice] = [],
+        key: String? = nil
     ) throws(SidebarRequestError) {
         guard !title.isEmpty || !body.isEmpty else {
             throw .emptyNotification
@@ -187,6 +192,11 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
         ] + actionFields {
             try Self.check(field, value, limit: limit, forProcess: forProcess)
         }
+        let key = key?.isEmpty == false ? key : nil
+        if let key {
+            try Self.check("key", key, limit: Self.maxKeyLength, forProcess: true)
+            guard !key.allSatisfy(\.isWhitespace) else { throw .blankKey }
+        }
         self.title = title
         self.subtitle = subtitle
         self.body = body
@@ -196,6 +206,7 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
         self.bundleIdentifier = bundleIdentifier?.isEmpty == false ? bundleIdentifier : nil
         self.action = action
         self.choices = choices
+        self.key = key
     }
 
     /// - Parameter forProcess: The value goes into a process's arguments or environment, which cannot hold NUL.
@@ -214,7 +225,7 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
     public var asks: Bool { choices.contains { $0.action == .answer } }
 
     private enum CodingKeys: String, CodingKey {
-        case title, subtitle, body, markdown, severity, icon, bundleIdentifier, action, choices
+        case title, subtitle, body, markdown, severity, icon, bundleIdentifier, action, choices, key
     }
 
     public init(from decoder: Decoder) throws {
@@ -228,7 +239,8 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
             icon: container.decodeIfPresent(String.self, forKey: .icon),
             bundleIdentifier: container.decodeIfPresent(String.self, forKey: .bundleIdentifier),
             action: container.decodeIfPresent(NotificationAction.self, forKey: .action),
-            choices: container.decodeIfPresent([PushedChoice].self, forKey: .choices) ?? []
+            choices: container.decodeIfPresent([PushedChoice].self, forKey: .choices) ?? [],
+            key: container.decodeIfPresent(String.self, forKey: .key)
         )
     }
 }
@@ -258,6 +270,10 @@ public enum SidebarRequestError: Error, Equatable, Sendable {
     case askNeedsAnswers
     /// Only an ask's choices answer it.
     case answerOutsideAsk
+    /// A key holds only whitespace.
+    case blankKey
+    /// Asks never stack, so they take no key.
+    case keyOnAsk
 }
 
 extension SidebarRequestError: CustomStringConvertible {
@@ -285,6 +301,8 @@ extension SidebarRequestError: CustomStringConvertible {
         case .equalsInURLChoiceTitle(let title): "choice title '\(title)' holds '=', which ends a title in a URL"
         case .askNeedsAnswers: "an ask needs at least one choice, and every choice must answer it"
         case .answerOutsideAsk: "only an ask's choices can answer it"
+        case .blankKey: "a key needs more than whitespace"
+        case .keyOnAsk: "an ask takes no key: asks never stack"
         }
     }
 }
@@ -295,9 +313,10 @@ extension SidebarRequestError: CustomStringConvertible {
 /// so they never carry commands and only open `http`/`https` links on click.
 ///
 /// Supported routes:
-/// - `aerospace-sidebar://notification/push?title=…&subtitle=…&body=…&markdown=1&severity=high&icon=slack&open=https://…&choice=Docs=https://…`
+/// - `aerospace-sidebar://notification/push?title=…&subtitle=…&body=…&markdown=1&severity=high&icon=slack&open=https://…&choice=Docs=https://…&key=build`
 ///
-/// `markdown=1` (or `true`) renders the body as markdown (`NotificationPayload.markdown`). `choice` repeats, one
+/// `markdown=1` (or `true`) renders the body as markdown (`NotificationPayload.markdown`). `key` names the card, so
+/// a later URL push with that key replaces it (`NotificationPayload.key`). `choice` repeats, one
 /// link button each: its title, then `=`, then the `http` or `https` URL it opens.
 public enum SidebarRequest: Equatable, Sendable {
     case pushNotification(NotificationPayload)
@@ -344,7 +363,8 @@ public enum SidebarRequest: Equatable, Sendable {
             severity: severity ?? .normal,
             icon: query["icon"],
             action: action,
-            choices: choices
+            choices: choices,
+            key: query["key"]
         ))
     }
 
@@ -373,7 +393,7 @@ public enum SidebarRequest: Equatable, Sendable {
                 ("markdown", payload.markdown ? "1" : ""),
                 ("severity", payload.severity == .normal ? "" : payload.severity.rawValue), ("icon", payload.icon ?? ""),
                 ("open", openValue ?? ""),
-            ] + choices)
+            ] + choices + [("key", payload.key ?? "")])
             .filter { !$0.1.isEmpty }
             .map { URLQueryItem(name: $0.0, value: $0.1) }
             // URLComponents leaves "+" unescaped, and many URL consumers read it as a space.

@@ -7,8 +7,9 @@ public enum ControlRequest: Codable, Equatable, Sendable {
     /// `ControlResponse` and reads an `AskAnswer` from it. Closing the connection withdraws the notification.
     case askNotification(NotificationPayload)
 
-    /// - Throws: `SidebarRequestError.answerOutsideAsk` for a push with a choice that answers an ask, and
-    ///   `.askNeedsAnswers` for an ask without choices or with one that does not answer it.
+    /// - Throws: `SidebarRequestError.answerOutsideAsk` for a push with a choice that answers an ask,
+    ///   `.askNeedsAnswers` for an ask without choices or with one that does not answer it, and `.keyOnAsk` for an
+    ///   ask with a key.
     public func validate() throws(SidebarRequestError) {
         switch self {
         case .pushNotification(let payload):
@@ -17,6 +18,7 @@ public enum ControlRequest: Codable, Equatable, Sendable {
             guard !payload.choices.isEmpty, payload.choices.allSatisfy({ $0.action == .answer }) else {
                 throw .askNeedsAnswers
             }
+            guard payload.key == nil else { throw .keyOnAsk }
         }
     }
 }

@@ -66,16 +66,19 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
     public let nativeChoices: NativeChoices?
     /// Buttons a push put on the card besides its click action (`SidebarModel.cardChoices(of:)`).
     public let pushedChoices: [PushedChoice]
+    /// The key a push named (`NotificationPayload.key`): a later push from the same source with the same key
+    /// replaces this entry's content and stacks onto it (`stacks(with:)`).
+    public let key: String?
     /// The NotificationCenter notifications this entry stands for, newest first: their `AXIdentifier`s, which
     /// are also their UUIDs in the notification database. A click opens the newest one that still exists, as
     /// clicking it in macOS would, so the posting app learns which notification was clicked.
     public let nativeIdentifiers: [String]
     /// When the most recent copy arrived.
     public let receivedAt: Date
-    /// How many identical notifications this entry stands for (see `SidebarModel.add(_:)`).
+    /// How many identical notifications, or pushes with its key, this entry stands for (see `SidebarModel.add(_:)`).
     public let occurrences: Int
 
-    /// Reads a saved entry. An entry without pushed choices or a markdown body may leave out their keys, like
+    /// Reads a saved entry. An entry without pushed choices, a markdown body or a key may leave out their keys, like
     /// `nativeChoices`: every entry in a list saved before cards carried them does, and none of those has either.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -95,6 +98,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
             shownByMacOS: try container.decode(Bool.self, forKey: .shownByMacOS),
             nativeChoices: try container.decodeIfPresent(NativeChoices.self, forKey: .nativeChoices),
             pushedChoices: try container.decodeIfPresent([PushedChoice].self, forKey: .pushedChoices) ?? [],
+            key: try container.decodeIfPresent(String.self, forKey: .key),
             nativeIdentifiers: try container.decode([String].self, forKey: .nativeIdentifiers),
             receivedAt: try container.decode(Date.self, forKey: .receivedAt),
             occurrences: try container.decode(Int.self, forKey: .occurrences)
@@ -117,6 +121,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         shownByMacOS: Bool = false,
         nativeChoices: NativeChoices? = nil,
         pushedChoices: [PushedChoice] = [],
+        key: String? = nil,
         nativeIdentifiers: [String] = [],
         receivedAt: Date = Date(),
         occurrences: Int = 1
@@ -136,6 +141,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
         self.shownByMacOS = shownByMacOS
         self.nativeChoices = nativeChoices
         self.pushedChoices = pushedChoices
+        self.key = key
         self.nativeIdentifiers = nativeIdentifiers
         self.receivedAt = receivedAt
         self.occurrences = occurrences
@@ -162,6 +168,7 @@ public struct SidebarNotification: Identifiable, Codable, Equatable, Sendable {
             invalidIcon: icon == nil ? payload.icon : nil,
             action: action,
             pushedChoices: payload.choices,
+            key: payload.key,
             receivedAt: receivedAt
         )
     }
@@ -178,6 +185,15 @@ extension SidebarNotification {
             && severity == other.severity && icon == other.icon && invalidIcon == other.invalidIcon
             && action == other.action && shownByMacOS == other.shownByMacOS && nativeChoices == other.nativeChoices
             && pushedChoices == other.pushedChoices && !asks && !other.asks
+    }
+
+    /// Whether `other` stacks onto this entry, or this one onto it: two pushes from one source with the same key,
+    /// whatever their content, or two entries without a key and with the same content. Asks never stack: each card
+    /// answers its own asker.
+    func stacks(with other: SidebarNotification) -> Bool {
+        guard key == other.key else { return false }
+        guard key != nil else { return hasSameContent(as: other) }
+        return source == other.source && !asks && !other.asks
     }
 
     /// Whether a choice answers the `notification ask` command waiting for the card.
@@ -202,6 +218,7 @@ extension SidebarNotification {
             shownByMacOS: shownByMacOS,
             nativeChoices: nativeChoices,
             pushedChoices: pushedChoices.filter { $0.action != .answer },
+            key: key,
             nativeIdentifiers: nativeIdentifiers,
             receivedAt: receivedAt,
             occurrences: occurrences
@@ -214,24 +231,27 @@ extension SidebarNotification {
     static let maxNativeIdentifiers = 20
 
     /// This entry with `newer` folded in: it keeps its identity, takes `newer`'s time, adds its count, and
-    /// stands for `newer`'s native notifications too, newest first, up to `maxNativeIdentifiers`.
+    /// stands for `newer`'s native notifications too, newest first, up to `maxNativeIdentifiers`. A keyed entry
+    /// also takes `newer`'s content, which may differ from its own.
     func stacking(_ newer: SidebarNotification) -> SidebarNotification {
-        SidebarNotification(
+        let content = key == nil ? self : newer
+        return SidebarNotification(
             id: id,
-            source: source,
-            title: title,
-            subtitle: subtitle,
-            body: body,
-            markdown: markdown,
-            severity: severity,
-            postedSeverity: postedSeverity,
-            icon: icon,
-            bundleIdentifier: bundleIdentifier,
-            invalidIcon: invalidIcon,
-            action: action,
-            shownByMacOS: shownByMacOS,
-            nativeChoices: nativeChoices,
-            pushedChoices: pushedChoices,
+            source: content.source,
+            title: content.title,
+            subtitle: content.subtitle,
+            body: content.body,
+            markdown: content.markdown,
+            severity: content.severity,
+            postedSeverity: content.postedSeverity,
+            icon: content.icon,
+            bundleIdentifier: content.bundleIdentifier,
+            invalidIcon: content.invalidIcon,
+            action: content.action,
+            shownByMacOS: content.shownByMacOS,
+            nativeChoices: content.nativeChoices,
+            pushedChoices: content.pushedChoices,
+            key: key,
             nativeIdentifiers: Array((newer.nativeIdentifiers + nativeIdentifiers.filter { !newer.nativeIdentifiers.contains($0) })
                 .prefix(Self.maxNativeIdentifiers)),
             receivedAt: max(receivedAt, newer.receivedAt),
@@ -260,6 +280,7 @@ extension SidebarNotification {
             shownByMacOS: false,
             nativeChoices: nativeChoices,
             pushedChoices: pushedChoices,
+            key: key,
             nativeIdentifiers: nativeIdentifiers,
             receivedAt: receivedAt,
             occurrences: occurrences
@@ -284,6 +305,7 @@ extension SidebarNotification {
             shownByMacOS: shownByMacOS,
             nativeChoices: nativeChoices,
             pushedChoices: pushedChoices,
+            key: key,
             nativeIdentifiers: nativeIdentifiers,
             receivedAt: receivedAt,
             occurrences: occurrences
@@ -533,8 +555,9 @@ public final class SidebarModel {
     }
 
     /// Inserts the notification by severity, then recency, after the first matching rule has changed its
-    /// severity or hidden it. A notification with the same content as a listed one is stacked onto it
-    /// instead: the entry counts both and moves up as the newest. Beyond `history.maxCount`, the least
+    /// severity or hidden it. A notification with the same content as a listed one, or a push with the key of a
+    /// listed push from its source, is stacked onto it instead: the entry counts both, shows the newer content
+    /// for a key, and moves up as the newest. A rule that hides a keyed push leaves the listed card as it was. Beyond `history.maxCount`, the least
     /// severe and oldest entries are dropped.
     ///
     /// A notification older than `history.retention`, such as one the notification database lists after a
@@ -574,10 +597,11 @@ public final class SidebarModel {
         }
     }
 
-    /// Adds an arriving notification to `received`, as the newest, stacked onto a copy with the same content.
+    /// Adds an arriving notification to `received`, as the newest, stacked onto a copy with the same content, or
+    /// with the same key, whose entry then holds the newest push's content.
     private func record(_ notification: SidebarNotification) {
         var notification = notification
-        if let existing = received.firstIndex(where: { $0.hasSameContent(as: notification) }) {
+        if let existing = received.firstIndex(where: { $0.stacks(with: notification) }) {
             notification = received.remove(at: existing).stacking(notification)
         }
         // Newest first by arrival: the database lists a notification seconds after a newer banner may have.
@@ -598,7 +622,7 @@ public final class SidebarModel {
               var notification = rules.apply(to: notification)
         else { return nil }
         if !composing.contains(notification.id), let existing = notifications.firstIndex(where: {
-            $0.hasSameContent(as: notification) && !composing.contains($0.id)
+            $0.stacks(with: notification) && !composing.contains($0.id)
         }) {
             notification = notifications.remove(at: existing).stacking(notification)
         }

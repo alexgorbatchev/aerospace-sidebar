@@ -53,22 +53,35 @@ struct NotificationContent: ParsableArguments {
 
     /// - Parameter defaultIcon: The icon when `--icon` names none.
     func payload(
-        action: NotificationAction? = nil, choices: [PushedChoice] = [], bundleIdentifier: String? = nil, defaultIcon: String? = nil
+        action: NotificationAction? = nil, choices: [PushedChoice] = [], bundleIdentifier: String? = nil, defaultIcon: String? = nil,
+        key: String? = nil
     ) throws -> NotificationPayload {
         try NotificationPayload(
             title: title, subtitle: subtitle, body: body, markdown: markdown, severity: severity, icon: icon ?? defaultIcon,
-            bundleIdentifier: bundleIdentifier, action: action, choices: choices
+            bundleIdentifier: bundleIdentifier, action: action, choices: choices, key: key
         )
     }
 
     /// The payload of a notification sent from this command's process: without `--icon` the card shows the app the
     /// command runs in, such as its terminal, else a terminal glyph.
-    func payload(sentFrom context: CLIContext, action: NotificationAction? = nil, choices: [PushedChoice]) throws -> NotificationPayload {
+    func payload(
+        sentFrom context: CLIContext, action: NotificationAction? = nil, choices: [PushedChoice], key: String? = nil
+    ) throws -> NotificationPayload {
         let hostApp = context.hostApp
         return try payload(
-            action: action, choices: choices, bundleIdentifier: hostApp, defaultIcon: hostApp == nil ? PushCommand.fallbackIcon : nil
+            action: action, choices: choices, bundleIdentifier: hostApp, defaultIcon: hostApp == nil ? PushCommand.fallbackIcon : nil,
+            key: key
         )
     }
+}
+
+/// `--key`, shared by `notification push` and `notification url`. Asks never stack, so they take none.
+struct KeyOption: ParsableArguments {
+    @Option(help: ArgumentHelp(
+        "Name the card: a later push with the same key replaces its content and counts as a repeat.",
+        valueName: "id"
+    ))
+    var key: String?
 }
 
 /// `--open`, shared by `notification push` and `notification url`.
@@ -146,6 +159,7 @@ struct PushCommand: AsyncParsableCommand {
     var replyChoices: [TitledValue] = []
 
     @OptionGroup var links: LinkChoicesOption
+    @OptionGroup var key: KeyOption
 
     func validate() throws {
         if open.openURL != nil, command != nil {
@@ -162,7 +176,7 @@ struct PushCommand: AsyncParsableCommand {
         } + replyChoices.map { choice in
             try PushedChoice(title: choice.title, action: .run(command: choice.value, workingDirectory: directory), asksForText: true)
         } + links.choices()
-        try await context.sender.push(content.payload(sentFrom: context, action: action, choices: choices))
+        try await context.sender.push(content.payload(sentFrom: context, action: action, choices: choices, key: key.key))
         try context.emit(context.isAgent ? "OK: pushed\n" : "[OK] Notification sent to the sidebar.\n")
     }
 }
@@ -263,9 +277,11 @@ struct URLCommand: AsyncParsableCommand {
     @OptionGroup var content: NotificationContent
     @OptionGroup var open: OpenOption
     @OptionGroup var links: LinkChoicesOption
+    @OptionGroup var key: KeyOption
 
     func run() async throws {
-        let url = try SidebarRequest.pushNotification(content.payload(action: open.openAction(), choices: links.choices())).url()
+        let payload = try content.payload(action: open.openAction(), choices: links.choices(), key: key.key)
+        let url = try SidebarRequest.pushNotification(payload).url()
         try CLIContext.current.emit(url.absoluteString + "\n")
     }
 }
