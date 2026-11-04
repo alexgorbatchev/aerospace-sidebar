@@ -21,18 +21,21 @@ setup:
     swift package resolve
     command -v alerter >/dev/null || brew install vjeantet/tap/alerter
 
-# Build the app bundle into .build/AerospaceSidebar.app and the CLI into bin/; version sets CFBundleShortVersionString
+# Build the app bundle into .build/AerospaceSidebar.app (CLI included in Contents/Helpers) and the CLI into bin/; version sets CFBundleShortVersionString
 bundle version="":
     swift build -c release --product AerospaceSidebar
     swift build -c release --product aerospace-sidebar
     rm -rf {{ app }}
-    mkdir -p {{ app }}/Contents/MacOS {{ app }}/Contents/Resources bin
+    mkdir -p {{ app }}/Contents/MacOS {{ app }}/Contents/Helpers {{ app }}/Contents/Resources bin
     cp "$(swift build -c release --show-bin-path)/AerospaceSidebar" {{ app }}/Contents/MacOS/
     cp Resources/Info.plist {{ app }}/Contents/Info.plist
     cp -R {{ app_font }} {{ app }}/Contents/Resources/
     # PermissionFlow looks for its resource bundle in Contents/Resources; codesign rejects one at the .app root.
     cp -R "$(swift build -c release --show-bin-path)/PermissionFlow_PermissionFlow.bundle" {{ app }}/Contents/Resources/
     {{ if version != "" { "plutil -replace CFBundleShortVersionString -string " + quote(version) + " " + app + "/Contents/Info.plist" } else { "true" } }}
+    # Nested code is signed before the bundle that contains it.
+    cp "$(swift build -c release --show-bin-path)/aerospace-sidebar" {{ app }}/Contents/Helpers/
+    codesign --force --sign "{{ signing_identity }}" {{ app }}/Contents/Helpers/aerospace-sidebar
     codesign --force --sign "{{ signing_identity }}" {{ app }}
     cp "$(swift build -c release --show-bin-path)/aerospace-sidebar" {{ cli }}
 
