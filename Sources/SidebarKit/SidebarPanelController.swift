@@ -36,7 +36,7 @@ public final class SidebarPanelController: NSObject {
     ///   - workspaceCenter: Reports which app is in front.
     ///   - openSettings: Shows the Settings window on a group.
     ///   - setUp: Starts granting a permission from a button at a frame on screen.
-    public init(
+    public convenience init(
         model: SidebarModel,
         settings: SettingsStore,
         targetVisibleFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenVisibleFrame,
@@ -45,6 +45,25 @@ public final class SidebarPanelController: NSObject {
         workspaceCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
         openSettings: @escaping @MainActor (SettingsGroup) -> Void = { _ in },
         setUp: @escaping @MainActor (PermissionFlowPane, CGRect?) -> Void = { _, _ in }
+    ) {
+        self.init(
+            model: model, settings: settings, targetVisibleFrame: targetVisibleFrame, targetScreenFrame: targetScreenFrame,
+            notificationCenter: notificationCenter, workspaceCenter: workspaceCenter, panelType: SidebarPanel.self,
+            openSettings: openSettings, setUp: setUp
+        )
+    }
+
+    /// - Parameter panelType: The panel's class. Tests pass one that keeps the frames they pin it to on any display.
+    init(
+        model: SidebarModel,
+        settings: SettingsStore,
+        targetVisibleFrame: @escaping @MainActor () -> CGRect?,
+        targetScreenFrame: @escaping @MainActor () -> CGRect?,
+        notificationCenter: NotificationCenter,
+        workspaceCenter: NotificationCenter,
+        panelType: SidebarPanel.Type,
+        openSettings: @escaping @MainActor (SettingsGroup) -> Void,
+        setUp: @escaping @MainActor (PermissionFlowPane, CGRect?) -> Void
     ) {
         self.settings = settings
         self.targetVisibleFrame = targetVisibleFrame
@@ -55,7 +74,7 @@ public final class SidebarPanelController: NSObject {
         // from zero width.
         let strip = targetVisibleFrame().map { SidebarLayout(settings.settings.sidebar).frame(in: $0) } ?? .zero
         self.panel = Self.makePanel(
-            contentRect: strip, model: model, settings: settings, openSettings: openSettings, setUp: setUp
+            type: panelType, contentRect: strip, model: model, settings: settings, openSettings: openSettings, setUp: setUp
         )
         follower = SystemSettingsFollower(window: panel, level: Self.level, workspaceCenter: workspaceCenter)
         super.init()
@@ -100,6 +119,7 @@ public final class SidebarPanelController: NSObject {
     }
 
     private static func makePanel(
+        type: SidebarPanel.Type,
         contentRect: CGRect,
         model: SidebarModel,
         settings: SettingsStore,
@@ -108,7 +128,7 @@ public final class SidebarPanelController: NSObject {
     ) -> NSPanel {
         // Borderless with no close button: combined with LSUIElement, AeroSpace classifies
         // the window as a popup and neither tiles it nor hides it on workspace switches.
-        let panel = SidebarPanel(
+        let panel = type.init(
             contentRect: contentRect,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -165,7 +185,12 @@ struct SidebarPanelContent: View {
 /// window takes over, whatever `canBecomeKey` says later (measured on macOS 26.6). AppKit makes the first visible
 /// window that can become key the key window once the app finishes launching, and picks another when a key window
 /// closes, such as Settings; either would move the user's keyboard focus to the sidebar unasked.
-final class SidebarPanel: NSPanel {
+class SidebarPanel: NSPanel {
+    /// Required so that `SidebarPanelController` can make the panel from its class (`panelType`).
+    required override init(contentRect: NSRect, styleMask: NSWindow.StyleMask, backing: NSWindow.BackingStoreType, defer flag: Bool) {
+        super.init(contentRect: contentRect, styleMask: styleMask, backing: backing, defer: flag)
+    }
+
     override var canBecomeKey: Bool { acceptsKeyStatus(during: currentEvent) }
 
     /// Set only while `takeKeyboard()` makes the panel key.

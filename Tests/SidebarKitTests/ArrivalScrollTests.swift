@@ -370,17 +370,17 @@ struct ArrivalScrollHostedTests {
         // A low card, delivered before the others, lands at the very end, and the list scrolls to its end, margin
         // included.
         model.add(listed("late", severity: .low, at: -61))
-        #expect(try await sidebar.settles { $0.offset > 1000 && abs($0.offset - $0.maxOffset) < 1 })
+        #expect(try await sidebar.settles { $0.offset > 1000 && abs($0.offset - $0.maxOffset) < 1 }, "\(sidebar.state)")
 
         // A new card on top: the top of the list, with the room above the card for its dismiss button.
         model.add(listed("news", at: 0))
-        #expect(try await sidebar.settles { abs($0.offset) < 0.5 })
+        #expect(try await sidebar.settles { abs($0.offset) < 0.5 }, "\(sidebar.state)")
 
         // On the sidebar, a newer low card lands far below the visible cards, and the list stays.
         pointerIsOn.value = true
         model.add(listed("quiet", severity: .low, at: 0))
         try await Task.sleep(for: .milliseconds(800))
-        #expect(abs(sidebar.offset) < 0.5)
+        #expect(abs(sidebar.offset) < 0.5, "\(sidebar.state)")
 
         // Elsewhere, a card dropping in among the visible ones, under the bottom fade, comes out from under it.
         pointerIsOn.value = false
@@ -502,6 +502,8 @@ final class HostedSidebar {
     }
 
     var offset: CGFloat { clip.bounds.minY }
+    /// Where the list is scrolled and how far it scrolls, for failure messages.
+    var state: String { "offset \(offset) of \(maxOffset), visible \(visibleHeight)" }
     var maxOffset: CGFloat { clip.constrainBoundsRect(CGRect(origin: CGPoint(x: 0, y: 1e6), size: clip.bounds.size)).minY }
     var visibleHeight: CGFloat { clip.bounds.height }
 
