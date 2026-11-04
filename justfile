@@ -161,17 +161,52 @@ fill-notifications count="20":
     echo "Pushed {{ count }} notifications"
 
 # The Swift toolchain leaves empty TemporaryDirectory.* folders in TMPDIR, so run command with TMPDIR in a
-# fresh child of .tmp/ and remove it when command exits. SwiftPM keeps the lock file that stops two builds
-# from sharing .build at once in TMPDIR too, so command holds .state/swift.lock in its place.
+# fresh child of .tmp/ and remove it once command exits. SwiftPM keeps the lock file that stops two builds
+# from sharing .build at once in TMPDIR too, so this script holds .state/swift.lock while command runs: Swift
+# commands in one checkout wait for each other, but the other steps of concurrent recipes can still overlap.
+# Job control puts command in its own process group, which the signals that stop a recipe do not reach: just
+# forwards SIGTERM only to this script, and the terminal sends SIGINT, SIGQUIT and SIGHUP to just's group.
+# SwiftPM stops its compile jobs only on SIGINT (on SIGTERM it exits and leaves them running), so the script
+# answers each of them with SIGINT to command's process group, then waits for the group to exit before removing
+# TMPDIR and releasing the lock. SwiftPM gives its jobs 30 seconds; after 40 the script kills what is left.
 [positional-arguments]
 _scratch-tmpdir +command:
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p .tmp .state
+    exec 9>>.state/swift.lock
+    lockf 9
     TMPDIR="$(mktemp -d "$PWD/.tmp/swift.XXXXXX")"
     trap 'rm -rf "$TMPDIR"' EXIT
     export TMPDIR
-    lockf -k .state/swift.lock "$@"
+    child=""
+    signaled=""
+    for signal in INT QUIT TERM HUP; do
+        trap "signaled=$signal; [[ -z \$child ]] || kill -s INT -- -\$child 2>/dev/null || true" "$signal"
+    done
+    # Job control gives command its own process group, with default signal handling.
+    set -m
+    "$@" 9>&- &
+    child=$!
+    # A signal that arrived before command started still stops it.
+    [[ -z "$signaled" ]] || kill -s INT -- -"$child" 2>/dev/null || true
+    # wait returns when command exits, or early, with a status above 128, when a trapped signal arrives.
+    if wait "$child"; then status=0; else status=$?; fi
+    if [[ -n "$signaled" ]]; then
+        for _ in {1..400}; do
+            kill -0 -- -"$child" 2>/dev/null || break
+            sleep 0.1
+        done
+        kill -s KILL -- -"$child" 2>/dev/null || true
+        # After an interrupted wait, command's own status is still to be collected; 127 means wait had it.
+        if ((status > 128)); then
+            if wait "$child" 2>/dev/null; then status=0; else
+                collected=$?
+                ((collected == 127)) || status=$collected
+            fi
+        fi
+    fi
+    exit "$status"
 
 # Tests run with a one-thread cooperative pool, so blocking calls on Swift's thread pool deadlock
 # here instead of only on few-core CI runners.
