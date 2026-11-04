@@ -241,6 +241,33 @@ struct AeroSpaceSetupTests {
         #expect(cli.calls == [AeroSpaceSetup.check, AeroSpaceSetup.check, ["reload-config", "--no-gui"]])
     }
 
+    /// A config only its owner may read keeps its permissions through the edit and a restore, and its backup, which
+    /// replaces an older one others could read, takes them too.
+    @Test func keepsTheConfigsPermissions() async throws {
+        let original = "[gaps]\nouter.right = 5\n"
+        try home.write(original, to: ".config/aerospace/aerospace.toml")
+        try home.write("old", to: ".config/aerospace/aerospace.toml.bak")
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: backupURL.path)
+        func permissions(_ url: URL) throws -> Int? {
+            try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+        }
+
+        _ = try await setup().apply(sidebar: Self.sidebar)
+
+        #expect(try isConfigured(configURL))
+        #expect(try permissions(configURL) == 0o600)
+        #expect(try permissions(backupURL) == 0o600)
+        #expect(try String(contentsOf: backupURL, encoding: .utf8) == original)
+
+        let cli = CheckingAeroSpaceCLI(config: configURL, problems: ["monitor.main = 205": "bad key"])
+        await #expect(throws: AeroSpaceSetup.SetupError.self) {
+            try await setup(cli).apply(sidebar: SidebarSettings.Sidebar(side: .right, width: 200))
+        }
+        #expect(try isConfigured(configURL))
+        #expect(try permissions(configURL) == 0o600)
+    }
+
     @Test func restoresOriginalWhenAeroSpaceRejectsTheEdit() async throws {
         let original = "[gaps]\nouter.right = 5\n"
         try home.write(original, to: ".config/aerospace/aerospace.toml")

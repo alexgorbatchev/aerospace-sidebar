@@ -341,6 +341,29 @@ struct SettingsStoreTests {
         #expect(store.settings.history.maxCount == 80)
     }
 
+    /// Saving keeps the permissions of an existing file, also at a symlink's target; a new file gets the defaults.
+    @Test func savingKeepsTheFilesPermissions() throws {
+        func permissions(_ url: URL) throws -> Int? {
+            try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+        }
+        let fresh = SettingsFile(url: directory.url.appendingPathComponent("fresh/config.toml"))
+        try fresh.save(SidebarSettings())
+        let defaults = try permissions(fresh.url)
+        #expect(defaults != 0o600)
+
+        try directory.write("", to: "dotfiles/config.toml")
+        let target = directory.url.appendingPathComponent("dotfiles/config.toml")
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+        try FileManager.default.createSymbolicLink(at: file.url, withDestinationURL: target)
+
+        try file.save(SidebarSettings(history: .init(retentionHours: 12, maxCount: 40)))
+
+        #expect(try permissions(target) == 0o600)
+        #expect(try file.load().history.maxCount == 40)
+        try fresh.save(SidebarSettings(history: .init(retentionHours: 12, maxCount: 40)))
+        #expect(try permissions(fresh.url) == defaults)
+    }
+
     /// A config.toml kept elsewhere, such as in a dotfiles repository, and linked in, through relative and chained
     /// links, stays a link when saved: the write goes to its target, also when that is missing.
     @Test func savingASymlinkedFileWritesItsTarget() throws {

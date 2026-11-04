@@ -103,14 +103,15 @@ public struct AeroSpaceSetup: Sendable {
     /// Edits the config to reserve `sidebar`'s strip, checks it with `aerospace reload-config --dry-run` before
     /// and after the edit, restores the original when AeroSpace reports problems the edit added, and reloads
     /// AeroSpace. While AeroSpace is not running the edit is kept without either step. The previous config is
-    /// kept next to it as `aerospace.toml.bak`, replacing an older backup. Symlinked configs are edited at their
-    /// target.
+    /// kept next to it as `aerospace.toml.bak`, replacing an older backup, with the config's permissions, which the
+    /// edit and a restore keep. Symlinked configs are edited at their target (`URL.symlinkTarget`).
     /// Generated configs are edited too: the sidebar puts its block back after each regeneration.
     /// - Parameter rewritingBlock: Writes the managed block and reloads even when the config already matches.
     public func apply(sidebar: SidebarSettings.Sidebar, rewritingBlock: Bool = false) async throws(SetupError) -> Outcome {
         let url: URL
         do {
-            url = try AeroSpaceConfig.locate(home: home, environment: environment).resolvingSymlinksInPath()
+            let located = try AeroSpaceConfig.locate(home: home, environment: environment)
+            url = located.symlinkTarget ?? located
         } catch .notFound {
             throw .notFound
         } catch {
@@ -126,7 +127,12 @@ public struct AeroSpaceSetup: Sendable {
 
         let backup = url.appendingPathExtension("bak")
         do {
+            // Atomic writes keep an existing file's permissions, so the config keeps its own, and the backup, a
+            // copy of it, takes them: a new backup would get the defaults, an older one keeps whatever it had.
             try original.write(to: backup, atomically: true, encoding: .utf8)
+            if let permissions = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] {
+                try FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: backup.path)
+            }
             try edited.write(to: url, atomically: true, encoding: .utf8)
         } catch {
             throw .io(String(describing: error))

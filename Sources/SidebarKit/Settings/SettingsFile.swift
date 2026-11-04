@@ -29,9 +29,9 @@ public struct SettingsFile: Sendable {
         return try TOMLDecoder().decode(SidebarSettings.self, from: String(contentsOf: url, encoding: .utf8))
     }
 
-    /// Writes the settings atomically. A symlinked file, such as one kept in a dotfiles repository, is written at
-    /// its target, also when that is missing, and stays a symlink: an atomic write at the link would replace it
-    /// with a file of its own.
+    /// Writes the settings atomically; an existing file keeps its permissions. A symlinked file, such as one kept in a
+    /// dotfiles repository, is written at its target, also when that is missing, and stays a symlink: an atomic
+    /// write at the link would replace it with a file of its own.
     public func save(_ settings: SidebarSettings) throws {
         let encoder = TOMLEncoder()
         encoder.outputFormatting = [.sortedKeys]
