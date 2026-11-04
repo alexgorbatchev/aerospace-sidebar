@@ -43,6 +43,7 @@ bundle version="":
 
 # Capture the demo cards in docs/screenshot/ into docs/screenshot/sidebar.png (or output), reopening the running sidebar after
 screenshot output="": bundle
+    {{ with_scratch_tmpdir }} swiftc -swift-version 6 -O -o .build/screenshot-helper Tools/Screenshot/main.swift
     bash Tools/Screenshot/screenshot.sh {{ if output != "" { quote(output) } else { "" } }}
 
 # Build the Notification Sampler dev app into .build/NotificationSampler.app, signed like the sidebar

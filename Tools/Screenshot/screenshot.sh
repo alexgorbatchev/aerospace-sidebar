@@ -6,9 +6,8 @@ set -euo pipefail
 app=".build/AerospaceSidebar.app"
 demo="$PWD/docs/screenshot"
 output="${1:-$demo/sidebar.png}"
+# Built by the recipe, which runs Swift commands behind its scratch TMPDIR.
 helper=".build/screenshot-helper"
-
-swiftc -swift-version 6 -O -o "$helper" Tools/Screenshot/main.swift
 
 # Waits up to $2 seconds for process $1 to exit.
 wait_for_exit() {
