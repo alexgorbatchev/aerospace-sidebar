@@ -21,6 +21,17 @@ struct PushCommandTests {
         )])
     }
 
+    /// `--markdown` marks the body as markdown; without it the body is plain text, asterisks and all.
+    @Test func marksTheBodyAsMarkdownOnRequest() async throws {
+        let sender = RecordingSender()
+
+        #expect(await invoke(["notification", "push", "--body", "**done**", "--markdown"], sender: sender).status == 0)
+        #expect(await invoke(["notification", "push", "--body", "**done**"], sender: sender).status == 0)
+
+        #expect(sender.payloads.map(\.markdown) == [true, false])
+        #expect(sender.payloads.map(\.body) == ["**done**", "**done**"])
+    }
+
     @Test func pushesOpenActionAndReportsCompactlyForAgents() async throws {
         let sender = RecordingSender()
 
@@ -296,6 +307,15 @@ struct AskCommandTests {
         #expect(sender.timeouts == [nil])
     }
 
+    @Test func asksWithAMarkdownBody() async throws {
+        let sender = RecordingSender(answer: .answered(choice: "Yes", reply: nil))
+
+        let result = await invoke(["notification", "ask", "--body", "Ship `v2`?", "--markdown", "--choice", "Yes"], sender: sender)
+
+        #expect(result.status == 0)
+        #expect(sender.payloads.first?.markdown == true)
+    }
+
     /// People get the reply text for a choice that asks for it as the command's output.
     @Test func printsTheReplyText() async {
         let sender = RecordingSender(answer: .answered(choice: "Reply", reply: "on my way\nsoon"))
@@ -406,6 +426,13 @@ struct URLCommandTests {
         #expect(try SidebarRequest(url: url) == .pushNotification(NotificationPayload(
             title: "t", choices: [PushedChoice(title: "Docs", action: .open(URL(string: "https://example.com/docs")!))]
         )))
+    }
+
+    @Test func carriesTheMarkdownFlag() async throws {
+        let result = await invoke(["notification", "url", "--body", "**done**", "--markdown"])
+        let url = try #require(URL(string: result.output.trimmingCharacters(in: .newlines)))
+
+        #expect(try SidebarRequest(url: url) == .pushNotification(NotificationPayload(body: "**done**", markdown: true)))
     }
 
     @Test func urlCommandHasNoCommandOrReplyChoices() async {

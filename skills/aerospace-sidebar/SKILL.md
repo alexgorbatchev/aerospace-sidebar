@@ -1,7 +1,7 @@
 ---
 name: aerospace-sidebar
 description: Push notifications into the aerospace-sidebar macOS app with the aerospace-sidebar CLI or aerospace-sidebar:// URLs. Use when a task should alert the user on their Mac, report a finished build or agent run, offer click-to-run commands, buttons or links, or ask the user a question and wait for the answer.
-last_modified: 2026-10-29 17:17
+last_modified: 2026-11-04 14:58
 ---
 
 # aerospace-sidebar
@@ -32,6 +32,7 @@ Sends a notification to the running app over its control socket (`$(getconf DARW
 | `--title <title>` | string, up to 256 characters | empty | Bold first line |
 | `--subtitle <subtitle>` | string, up to 256 characters | empty | Line under the title |
 | `--body <body>` | string, up to 4096 characters | empty | Main text |
+| `--markdown` | flag | off | Show the body as markdown: `**bold**`, `*italic*`, `` `code` ``, `~~strikethrough~~` and `[text](https://…)` links. Lists, headings, tables and HTML show as written; links to anything but `http` or `https` keep only their text |
 | `--severity <severity>` | `low`, `normal`, `high`, `critical` | `normal` | Sort order and look: `low` is dimmed, `high` orange, `critical` red |
 | `--icon <id>` | sketchybar-app-font icon id, `slack` or `:slack:`, up to 64 characters | the app the command runs in, else a terminal | App icon shown before the sender, for example `ghostty`, `slack`, `google_chrome`, `github`. Each `iconName` in https://raw.githubusercontent.com/alexgorbatchev/aerospace-sidebar/main/Resources/sketchybar-app-font/icon_map.json is an id, listed with the app names it stands for |
 | `--open <url>` | absolute URL, up to 8192 characters | none | Opened with its default app when the notification is clicked |
@@ -41,6 +42,7 @@ Sends a notification to the running app over its control socket (`$(getconf DARW
 | `--choice-link <title=url>` | repeatable; title up to 64 characters, `http` or `https` URL up to 8192 | none | A button that opens the link with its default app |
 
 - A notification needs `--title` or `--body`.
+- `--body` limits count the markdown as written, syntax included. Without `--markdown`, `*` and backticks are ordinary characters.
 - Each value may also take at most four bytes of UTF-8 per character of its limit (1024 bytes for 256 characters). Only text stacking many code points into one character, such as combining marks or emoji sequences, reaches that first.
 - The whole request may take at most 65536 bytes as JSON. Values within their limits exceed it only when they are full of control characters or stacked code points; the command then fails with `too_large`.
 - Without `--icon`, the notification shows the icon of the app the command runs in, read from `__CFBundleIdentifier` (set by macOS for processes an app starts and inherited by their children), else from `TERM_PROGRAM` (`Apple_Terminal`, `ghostty`, `iTerm.app`, `vscode`, `WarpTerminal`, `WezTerm`). When neither names an installed app, it shows a terminal icon.
@@ -61,7 +63,7 @@ Shows a notification with buttons over the control socket, like `push` (same app
 
 | Option | Value | Default | Meaning |
 | --- | --- | --- | --- |
-| `--title`, `--subtitle`, `--body`, `--severity`, `--icon` | as for `push` | as for `push` | The notification's content; without `--icon` it shows the icon of the app the command runs in, else a terminal |
+| `--title`, `--subtitle`, `--body`, `--markdown`, `--severity`, `--icon` | as for `push` | as for `push` | The notification's content; without `--icon` it shows the icon of the app the command runs in, else a terminal |
 | `--choice <title>` | repeatable; up to 64 characters | none | A button; picking it answers with its title |
 | `--reply <title>` | repeatable; up to 64 characters | none | A button that opens a text field; sending it answers with the text (up to 4096 characters) |
 | `--timeout <seconds>` | number above 0, at most 31536000 | none: waits as long as it takes | Gives up after this long and removes the card |
@@ -76,7 +78,7 @@ Shows a notification with buttons over the control socket, like `push` (same app
 
 ### notification url
 
-Prints an `aerospace-sidebar://notification/push?…` URL without sending anything. Accepts `--title`, `--subtitle`, `--body`, `--severity`, `--icon`, `--open` and `--choice-link` with the same meaning as `push`. URLs cannot carry `--run`, `--choice`, `--reply` or questions, and their `--open` and link choices must be `http` or `https`, because any process or web page can open them.
+Prints an `aerospace-sidebar://notification/push?…` URL without sending anything. Accepts `--title`, `--subtitle`, `--body`, `--markdown`, `--severity`, `--icon`, `--open` and `--choice-link` with the same meaning as `push`; `--markdown` becomes `markdown=1`. URLs cannot carry `--run`, `--choice`, `--reply` or questions, and their `--open` and link choices must be `http` or `https`, because any process or web page can open them.
 
 Opening the URL (`open -g "<url>"`, a link on a web page after the browser's confirmation, Shortcuts' Open URL action) shows the notification and labels it with the app that opened the URL when known, else `URL`. Without `-g`, macOS brings the sidebar app forward to open the URL; it hands activation straight back to the app the user was working in (launchers such as Spotlight, Raycast and Alfred are passed over).
 

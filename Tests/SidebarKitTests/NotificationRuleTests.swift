@@ -78,6 +78,16 @@ struct NotificationRuleTests {
         #expect(rules.apply(to: other) == other)
     }
 
+    /// A markdown body is matched as the card shows it, without its syntax; a plain body as written.
+    @Test func matchesMarkdownBodiesAsShown() {
+        let rules = NotificationRules([Rule(body: "^deploy done$", action: .hide), Rule(body: "\\*\\*", action: .severity(.low))])
+        let markdown = SidebarNotification(source: "cli", title: "t", body: "**deploy** done", markdown: true)
+        let plain = SidebarNotification(source: "cli", title: "t", body: "**deploy** done")
+
+        #expect(rules.apply(to: markdown) == nil)
+        #expect(rules.apply(to: plain)?.severity == .low)
+    }
+
     @Test func modelChangesOrHidesArrivingNotifications() {
         let store = InMemoryStore()
         let model = SidebarModel(

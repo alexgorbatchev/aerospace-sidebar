@@ -141,7 +141,7 @@ struct NotificationHistoryTests {
         let directory = try TemporaryDirectory()
         let store = FileNotificationStore(url: directory.url.appendingPathComponent("nested/notifications.json"))
         let notifications = [
-            SidebarNotification(source: "cli", title: "t", subtitle: "s", body: "b", severity: .critical, postedSeverity: .low,
+            SidebarNotification(source: "cli", title: "t", subtitle: "s", body: "**b**", markdown: true, severity: .critical, postedSeverity: .low,
                                 action: .run(command: "ls", workingDirectory: "/"), receivedAt: start),
             SidebarNotification(source: "Mail", title: "m", bundleIdentifier: "com.apple.mail", action: .activateApp(name: "Mail"),
                                 shownByMacOS: true, receivedAt: start),
@@ -155,7 +155,8 @@ struct NotificationHistoryTests {
         #expect(store.load() == notifications)
     }
 
-    /// Entries for notifications without choices have no `nativeChoices` or `pushedChoices` key.
+    /// Entries for notifications without choices have no `nativeChoices` or `pushedChoices` key, and entries saved
+    /// before markdown bodies no `markdown` key.
     @Test func fileStoreLoadsEntriesSavedWithoutChoices() throws {
         let directory = try TemporaryDirectory()
         let url = directory.url.appendingPathComponent("notifications.json")
@@ -170,6 +171,7 @@ struct NotificationHistoryTests {
         #expect(loaded.map(\.title) == ["Privacy & Security"])
         #expect(loaded.map(\.nativeChoices) == [nil])
         #expect(loaded.map(\.pushedChoices) == [[]])
+        #expect(loaded.map(\.markdown) == [false])
     }
 
     /// An entry that does not read, such as an alert whose choices were saved as plain titles, is left out

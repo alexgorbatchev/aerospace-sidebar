@@ -34,6 +34,11 @@ enum NotificationLinks {
         return links
     }
 
+    /// Whether `url` is a web link a card may open: `http` or `https`, with a host.
+    static func isWebLink(_ url: URL) -> Bool {
+        url.scheme.map { schemes.contains($0.lowercased()) } == true && url.host?.isEmpty == false
+    }
+
     private static func search(_ text: String) -> [(range: NSRange, url: URL)] {
         let whole = NSRange(text.startIndex..., in: text)
         return (detector?.matches(in: text, range: whole) ?? []).compactMap { match in
@@ -47,10 +52,21 @@ enum NotificationLinks {
 
     /// `text` with its web links marked as links, each underlined in `underline`.
     static func linked(_ text: String, underline: Color) -> AttributedString {
-        var linked = AttributedString(text)
-        for link in links(in: text) {
-            guard let range = Range(link.range, in: linked) else { continue }
+        linked(AttributedString(text), underline: underline)
+    }
+
+    /// `text`, such as a markdown body, with the web links written out in it marked as links too, outside its own
+    /// links and code (the runs `NotificationMarkdown.styled` gives a font of their own), and every link underlined
+    /// in `underline`.
+    static func linked(_ text: AttributedString, underline: Color) -> AttributedString {
+        var linked = text
+        for link in links(in: String(text.characters)) {
+            guard let range = Range(link.range, in: linked),
+                  linked[range].runs.allSatisfy({ $0.link == nil && $0.swiftUI.font == nil })
+            else { continue }
             linked[range].link = link.url
+        }
+        for case (.some, let range) in linked.runs[\.link] {
             linked[range].underlineStyle = Text.LineStyle(pattern: .solid, color: underline)
         }
         return linked
@@ -98,12 +114,16 @@ struct LinkedText: View {
     }
 
     /// `text` with each link's runs marked by `Link`, and the link starting at `hovered` underlined in
-    /// `hoverUnderline`.
+    /// `hoverUnderline`. A link spans several runs where its words differ in style, as markdown can write them;
+    /// each run is marked with where its whole link starts.
     static func text(_ text: AttributedString, hovered: Int?, hoverUnderline: Color) -> Text {
-        text.runs.reduce(Text(verbatim: "")) { result, run in
+        let links = text.runs[\.link].compactMap { link, range in link == nil ? nil : range }
+        return text.runs.reduce(Text(verbatim: "")) { result, run in
             var segment = AttributedString(text[run.range])
-            guard run.link != nil else { return Text("\(result)\(Text(segment))") }
-            let location = text.characters.distance(from: text.startIndex, to: run.range.lowerBound)
+            guard let link = links.first(where: { $0.contains(run.range.lowerBound) }) else {
+                return Text("\(result)\(Text(segment))")
+            }
+            let location = text.characters.distance(from: text.startIndex, to: link.lowerBound)
             if location == hovered {
                 segment.underlineStyle = Text.LineStyle(pattern: .solid, color: hoverUnderline)
             }

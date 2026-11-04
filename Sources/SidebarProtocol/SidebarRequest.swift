@@ -132,6 +132,9 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
     public let title: String
     public let subtitle: String
     public let body: String
+    /// The body is markdown: the card shows its inline styles and http and https links (bold, italic, code,
+    /// strikethrough), and everything else as written. Field limits apply to the markdown itself.
+    public let markdown: Bool
     public let severity: NotificationSeverity
     /// sketchybar-app-font icon id, such as `slack` or `:slack:`. The app resolves it; an unknown id is
     /// noted on the notification rather than rejected.
@@ -150,6 +153,7 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
         title: String = "",
         subtitle: String = "",
         body: String = "",
+        markdown: Bool = false,
         severity: NotificationSeverity = .normal,
         icon: String? = nil,
         bundleIdentifier: String? = nil,
@@ -186,6 +190,7 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
         self.title = title
         self.subtitle = subtitle
         self.body = body
+        self.markdown = markdown
         self.severity = severity
         self.icon = icon?.isEmpty == false ? icon : nil
         self.bundleIdentifier = bundleIdentifier?.isEmpty == false ? bundleIdentifier : nil
@@ -209,7 +214,7 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
     public var asks: Bool { choices.contains { $0.action == .answer } }
 
     private enum CodingKeys: String, CodingKey {
-        case title, subtitle, body, severity, icon, bundleIdentifier, action, choices
+        case title, subtitle, body, markdown, severity, icon, bundleIdentifier, action, choices
     }
 
     public init(from decoder: Decoder) throws {
@@ -218,6 +223,7 @@ public struct NotificationPayload: Codable, Equatable, Sendable {
             title: container.decodeIfPresent(String.self, forKey: .title) ?? "",
             subtitle: container.decodeIfPresent(String.self, forKey: .subtitle) ?? "",
             body: container.decodeIfPresent(String.self, forKey: .body) ?? "",
+            markdown: container.decodeIfPresent(Bool.self, forKey: .markdown) ?? false,
             severity: container.decodeIfPresent(NotificationSeverity.self, forKey: .severity) ?? .normal,
             icon: container.decodeIfPresent(String.self, forKey: .icon),
             bundleIdentifier: container.decodeIfPresent(String.self, forKey: .bundleIdentifier),
@@ -236,6 +242,8 @@ public enum SidebarRequestError: Error, Equatable, Sendable {
     case nulCharacter(field: String)
     case invalidOpenURL(String)
     case invalidSeverity(String)
+    /// A URL's `markdown` is neither `1`/`true` nor `0`/`false`.
+    case invalidMarkdownFlag(String)
     case actionNotAllowedInURL
     case emptyChoiceTitle
     case duplicateChoice(String)
@@ -265,6 +273,7 @@ extension SidebarRequestError: CustomStringConvertible {
         case .invalidOpenURL(let value): "'\(value)' is not an http or https URL"
         case .invalidSeverity(let value):
             "'\(value)' is not a severity, expected \(NotificationSeverity.allCases.map(\.rawValue).joined(separator: ", "))"
+        case .invalidMarkdownFlag(let value): "'\(value)' is not a markdown flag, expected 1, true, 0 or false"
         case .actionNotAllowedInURL:
             "commands, reply fields and asks cannot be sent through a URL; use the aerospace-sidebar CLI"
         case .emptyChoiceTitle: "a choice needs a title"
@@ -286,9 +295,10 @@ extension SidebarRequestError: CustomStringConvertible {
 /// so they never carry commands and only open `http`/`https` links on click.
 ///
 /// Supported routes:
-/// - `aerospace-sidebar://notification/push?title=…&subtitle=…&body=…&severity=high&icon=slack&open=https://…&choice=Docs=https://…`
+/// - `aerospace-sidebar://notification/push?title=…&subtitle=…&body=…&markdown=1&severity=high&icon=slack&open=https://…&choice=Docs=https://…`
 ///
-/// `choice` repeats, one link button each: its title, then `=`, then the `http` or `https` URL it opens.
+/// `markdown=1` (or `true`) renders the body as markdown (`NotificationPayload.markdown`). `choice` repeats, one
+/// link button each: its title, then `=`, then the `http` or `https` URL it opens.
 public enum SidebarRequest: Equatable, Sendable {
     case pushNotification(NotificationPayload)
 
@@ -319,10 +329,18 @@ public enum SidebarRequest: Equatable, Sendable {
             guard let severity = NotificationSeverity(rawValue: value.lowercased()) else { throw .invalidSeverity(value) }
             return severity
         }
+        let markdown = try query["markdown"].map { value throws(SidebarRequestError) in
+            switch value.lowercased() {
+            case "1", "true": return true
+            case "0", "false": return false
+            default: throw .invalidMarkdownFlag(value)
+            }
+        }
         self = .pushNotification(try NotificationPayload(
             title: query["title"] ?? "",
             subtitle: query["subtitle"] ?? "",
             body: query["body"] ?? "",
+            markdown: markdown ?? false,
             severity: severity ?? .normal,
             icon: query["icon"],
             action: action,
@@ -352,6 +370,7 @@ public enum SidebarRequest: Equatable, Sendable {
             components.path = "/push"
             components.queryItems = ([
                 ("title", payload.title), ("subtitle", payload.subtitle), ("body", payload.body),
+                ("markdown", payload.markdown ? "1" : ""),
                 ("severity", payload.severity == .normal ? "" : payload.severity.rawValue), ("icon", payload.icon ?? ""),
                 ("open", openValue ?? ""),
             ] + choices)

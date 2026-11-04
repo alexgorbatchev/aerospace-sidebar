@@ -892,6 +892,22 @@ struct PushedChoicesTests {
         #expect(asker.answers.isEmpty)
     }
 
+    /// The same body as markdown and as plain text shows differently, so the two never stack; a pushed payload
+    /// keeps its flag on its card.
+    @Test func stacksOnlyBodiesShownAlike() throws {
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore())
+        let markdown = try NotificationPayload(title: "build", body: "**done**", markdown: true)
+        let card = SidebarNotification(payload: markdown, source: "cli", icons: AppIconFont(ids: []))
+        #expect(card.markdown)
+
+        model.add(card)
+        model.add(SidebarNotification(payload: markdown, source: "cli", icons: AppIconFont(ids: [])))
+        model.add(SidebarNotification(source: "cli", title: "build", body: "**done**"))
+
+        #expect(model.notifications.map(\.occurrences).sorted() == [1, 2])
+        #expect(model.notifications.filter(\.markdown).map(\.occurrences) == [2])
+    }
+
     /// Each ask has its own asker, so identical asks never stack; other pushed notifications stack only with the
     /// same choices.
     @Test func stacksOnlyNotificationsWithTheSameChoices() throws {

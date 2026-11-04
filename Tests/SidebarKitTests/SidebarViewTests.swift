@@ -222,6 +222,31 @@ struct SidebarViewTests {
         #expect(model.notifications.map(\.id) == [notification.id])
     }
 
+    /// A markdown body shows without its syntax, which VoiceOver does not read either; its web links are actions
+    /// like any link in a body, while a link to another scheme keeps only its text.
+    @Test func showsMarkdownBodiesWithoutTheirSyntax() throws {
+        let body = "**Build** failed: [log](https://ci.example.com/runs/42), [app](slack://open), `make test`"
+        model.add(SidebarNotification(source: "cli", title: "CI", body: body, markdown: true))
+        let notification = try #require(model.notifications.first)
+
+        let sut = try card(notification, hovered: false).inspect()
+        let button = try sut.find(ViewType.Button.self)
+
+        #expect(throws: Never.self) { try sut.find(text: "Build failed: log, app, make test") }
+        #expect(try button.accessibilityLabel().string().hasSuffix(", CI, Build failed: log, app, make test"))
+        try button.accessibilityActions().find(button: "Open ci.example.com").tap()
+        #expect(throws: (any Error).self) { try button.accessibilityActions().find(button: "Open open") }
+        #expect(performer.actions == [.open(URL(string: "https://ci.example.com/runs/42")!)])
+    }
+
+    /// Without the flag, markdown syntax is text like any other.
+    @Test func showsPlainBodiesAsWritten() throws {
+        model.add(SidebarNotification(source: "cli", title: "CI", body: "**Build** failed"))
+        let notification = try #require(model.notifications.first)
+
+        #expect(throws: Never.self) { try card(notification, hovered: false).inspect().find(text: "**Build** failed") }
+    }
+
     @Test func notesUnknownIconLikeOtherCardNotes() throws {
         model.add(SidebarNotification(source: "cli", title: "Typo", invalidIcon: "slak"))
 
