@@ -259,6 +259,53 @@ struct SidebarPanelControllerTests {
         #expect(!panel.acceptsKeyStatus(during: event(.leftMouseDown, in: other)))
     }
 
+    /// A click makes the panel key only on the view it hits answering `needsPanelToBecomeKey`
+    /// (`becomesKeyOnlyIfNeeded`). `NSHostingView` answers yes everywhere, so a click on a card took the keyboard
+    /// from the app the user was typing in; the sidebar's host answers no, and SwiftUI's text fields still answer yes.
+    @Test func onlyAClickOnAFieldMakesThePanelKey() throws {
+        let controller = SidebarPanelController.forTesting(
+            model: SidebarModel(performer: RecordingPerformer(), store: InMemoryStore()),
+            settings: settings,
+            targetVisibleFrame: { CGRect(x: 0, y: 0, width: 1440, height: 900) },
+            notificationCenter: NotificationCenter()
+        )
+        let panel = try #require(controller.panel as? NSPanel)
+        #expect(panel.becomesKeyOnlyIfNeeded)
+        #expect(panel.contentView is SidebarHostingView<SidebarPanelContent>)
+
+        struct Card: View {
+            @State var reply = ""
+            var body: some View {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        Button("Card") {}.frame(width: 200, height: 50)
+                        TextField("Reply", text: $reply).frame(width: 200, height: 30)
+                    }
+                }
+                .frame(width: 200, height: 80)
+            }
+        }
+        let host = SidebarHostingView(rootView: Card())
+        host.frame = CGRect(x: 0, y: 0, width: 200, height: 80)
+        let window = TestPanel(contentRect: host.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        func clickNeedsKey(atY y: CGFloat) throws -> Bool {
+            try #require(host.hitTest(CGPoint(x: 100, y: y))).needsPanelToBecomeKey
+        }
+
+        // SwiftUI promises no flipping, so locate the field and click the button's half on the other side of it.
+        func textField(in view: NSView) -> NSTextField? {
+            view as? NSTextField ?? view.subviews.lazy.compactMap(textField(in:)).first
+        }
+        let field = try #require(textField(in: host))
+        // hitTest takes a point in the superview's coordinates, which are the window's here.
+        let fieldY = field.convert(field.bounds, to: nil).midY
+        #expect(!(try clickNeedsKey(atY: fieldY < 40 ? 55 : 25)))
+        #expect(try clickNeedsKey(atY: fieldY))
+        #expect(!host.needsPanelToBecomeKey)
+    }
+
     /// Opening a field to type into makes the panel key, which VoiceOver does without a click: the content asks
     /// through `requestKeyboard`, and the panel grants itself key status for that one call only.
     @Test func panelTakesTheKeyboardWhenAFieldOpens() throws {

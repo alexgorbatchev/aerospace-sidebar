@@ -143,8 +143,11 @@ public final class SidebarPanelController: NSObject {
         panel.isOpaque = false
         panel.backgroundColor = NSColor.black.withAlphaComponent(0.01)
         panel.hasShadow = false
+        // A click makes the panel key only on a view that takes typing, such as a reply field; a click on a card
+        // leaves the keyboard with the app the user types in.
+        panel.becomesKeyOnlyIfNeeded = true
 
-        let content = NSHostingView(rootView: SidebarPanelContent(
+        let content = SidebarHostingView(rootView: SidebarPanelContent(
             model: model, settings: settings, openSettings: openSettings, setUp: setUp,
             requestKeyboard: { [weak panel] in panel?.takeKeyboard() },
             pointerIsOn: { [weak panel] in panel?.hasPointer ?? false }
@@ -152,6 +155,14 @@ public final class SidebarPanelController: NSObject {
         panel.contentView = content
         return panel
     }
+}
+
+/// Hosts the sidebar's content. `NSHostingView` reports that a click anywhere on it needs the panel to become key,
+/// so with `becomesKeyOnlyIfNeeded` a click on a card would still take the keyboard from the app the user types in,
+/// which no click action or activation of that app gives back while it is already active. This view answers no for
+/// itself and leaves the decision to the view clicked: SwiftUI's text fields are `NSTextField`s that answer yes.
+final class SidebarHostingView<Content: View>: NSHostingView<Content> {
+    override var needsPanelToBecomeKey: Bool { false }
 }
 
 /// Renders `SidebarView` on the configured side; reading the settings in a view body keeps it current.
@@ -180,8 +191,9 @@ struct SidebarPanelContent: View {
 /// the sidebar and keyboard input from reaching it. `.nonactivatingPanel` lets it become
 /// key without activating the app or stealing activation from the frontmost app.
 ///
-/// The panel takes key status only for a click on it, or when the user opens a field to type into, such as a
-/// reply on a card, which VoiceOver does without a click (`takeKeyboard()`). Once key, it stays key until another
+/// The panel takes key status only for a click on a view that takes typing (`becomesKeyOnlyIfNeeded`,
+/// `SidebarHostingView`), or when the user opens a field to type into, such as a reply on a card, with a click or
+/// through VoiceOver (`takeKeyboard()`). Once key, it stays key until another
 /// window takes over, whatever `canBecomeKey` says later (measured on macOS 26.6). AppKit makes the first visible
 /// window that can become key the key window once the app finishes launching, and picks another when a key window
 /// closes, such as Settings; either would move the user's keyboard focus to the sidebar unasked.
