@@ -39,6 +39,10 @@ bundle version="":
     codesign --force --sign "{{ signing_identity }}" {{ app }}
     cp "$(swift build -c release --show-bin-path)/aerospace-sidebar" {{ cli }}
 
+# Capture the demo cards in docs/screenshot/ into docs/screenshot/sidebar.png (or output), reopening the running sidebar after
+screenshot output="": bundle
+    bash Tools/Screenshot/screenshot.sh {{ if output != "" { quote(output) } else { "" } }}
+
 # Build the Notification Sampler dev app into .build/NotificationSampler.app, signed like the sidebar
 sampler:
     rm -rf {{ sampler_app }}

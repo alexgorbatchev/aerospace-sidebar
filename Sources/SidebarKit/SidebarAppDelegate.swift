@@ -48,6 +48,8 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     private let makeSettingsWindow: @MainActor (SettingsStore, AeroSpaceSync, OnboardingModel, AppNotificationsModel, SidebarModel) -> SettingsWindowController
     private let urlSender: @MainActor () -> String?
     private let activation: ActivationYielder
+    /// Shows the cards it was given and nothing else (`SidebarDemo`).
+    public let isDemo: Bool
 
     /// - Parameters:
     ///   - identities: Notifications already listed; tests pass one that is not saved in `UserDefaults.standard`.
@@ -55,6 +57,8 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     ///   - urlSender: Name of the process that opened the URL being handled.
     ///   - activation: Hands activation back to the app the user was in; tests that call
     ///     `applicationDidBecomeActive` pass one that activates and deactivates nothing.
+    ///   - demo: Pins the panel and follows the settings, but intercepts nothing, opens no control socket, handles
+    ///     no URLs and leaves the AeroSpace config alone (`SidebarDemo`).
     public init(
         settings: SettingsStore = SettingsStore(file: SettingsFile(
             home: FileManager.default.homeDirectoryForCurrentUser,
@@ -95,7 +99,8 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
             }
         },
         urlSender: @escaping @MainActor () -> String? = SidebarAppDelegate.currentAppleEventSender,
-        activation: ActivationYielder = ActivationYielder()
+        activation: ActivationYielder = ActivationYielder(),
+        demo: Bool = false
     ) {
         self.settings = settings
         self.model = makeModel(settings.settings)
@@ -113,6 +118,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         self.makeSettingsWindow = makeSettingsWindow
         self.urlSender = urlSender
         self.activation = activation
+        self.isDemo = demo
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
@@ -120,6 +126,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         let controller = makeController(model, settings, { [weak self] in self?.showSettings($0) }, { [weak self] in self?.setUp($0, from: $1) })
         controller.pin()
         self.controller = controller
+        if isDemo { return startDemo() }
 
         aeroSpace.start()
 
@@ -165,9 +172,25 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Follows the demo's settings; nothing else runs, and no note asks for a permission.
+    private func startDemo() {
+        model.interception = .active
+        settings.observe { [model] settings in
+            model.apply(history: settings.history)
+            model.apply(rules: settings.rules)
+            model.apply(listsSwitchedOffApps: settings.notifications.listsSwitchedOffApps)
+        }
+        do {
+            try settings.startWatching()
+        } catch {
+            Self.logger.error("Cannot watch settings: \(String(describing: error), privacy: .public)")
+        }
+    }
+
     public func applicationWillTerminate(_ notification: Notification) {
         pruneTimer?.invalidate()
         settings.stopWatching()
+        guard !isDemo else { return }
         aeroSpace.stop()
         monitor?.stop()
         databaseMonitor?.stop()
@@ -247,6 +270,8 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
 
     /// Handles `aerospace-sidebar://` URLs; see `SidebarRequest` for the routes.
     public func application(_ application: NSApplication, open urls: [URL]) {
+        // The demo's cards are the fixture's alone.
+        guard !isDemo else { return }
         let source = urlSender() ?? "URL"
         for url in urls {
             do {

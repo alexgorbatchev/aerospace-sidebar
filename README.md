@@ -1,5 +1,8 @@
 `aerospace-sidebar` is a permanent notification sidebar for macOS users of the [AeroSpace](https://github.com/nikitabobko/AeroSpace) tiling window manager. It takes over the right or left edge of the main display, replaces macOS notification banners with a list that stays until you deal with it, and lets scripts, agents and web pages push their own notifications with click actions and buttons, or ask you a question and wait for the answer.
 
+
+<img src="docs/screenshot/sidebar.png" alt="The sidebar listing notifications: a failed deploy with Retry and Logs buttons, a stacked Slack message, an agent summary in markdown, a deploy question with buttons, a calendar reminder and a dimmed low-priority update" width="340">
+
 # What It Does
 
 - **Reserved screen strip**: a panel on the right or left edge of the main display that tiled windows never cover, on every Space and over full-screen apps.

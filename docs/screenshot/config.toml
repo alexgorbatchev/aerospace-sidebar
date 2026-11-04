@@ -1,0 +1,9 @@
+# Settings for the screenshot demo (`just screenshot`).
+
+[sidebar]
+side = "right"
+width = 340
+
+[font]
+name = ""
+size = 13.0
