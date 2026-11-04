@@ -286,7 +286,7 @@ struct SidebarViewTests {
     }
 
     /// A pushed notification's choices show and work like a native one's, without interception, and VoiceOver
-    /// reaches them as the card's actions. The card's help says what each does.
+    /// reaches them as the card's actions. The card shows no tooltip; its VoiceOver hint says what each does.
     @Test func offersPushedChoices() throws {
         let logs = URL(string: "https://ci.example/logs")!
         model.add(SidebarNotification(source: "cli", title: "Build", pushedChoices: [
@@ -299,7 +299,8 @@ struct SidebarViewTests {
         let docs = try #require(model.notifications.first { $0.title == "Docs" })
 
         let buildCard = try card(build, hovered: false).inspect().find(ViewType.Button.self)
-        #expect(try buildCard.help().string() == "Click to dismiss\nDeploy runs in /repo:\nmake deploy\nNote asks for text, then runs in /repo:\nnotes\nLogs opens https://ci.example/logs")
+        #expect(throws: (any Error).self) { try buildCard.help() }
+        #expect(try buildCard.accessibilityHint().string() == "Click to dismiss\nDeploy runs in /repo:\nmake deploy\nNote asks for text, then runs in /repo:\nnotes\nLogs opens https://ci.example/logs")
         try buildCard.labelView().find(button: "Deploy").tap()
         try card(docs, hovered: false).inspect().find(ViewType.Button.self).accessibilityActions().find(button: "Logs").tap()
 
