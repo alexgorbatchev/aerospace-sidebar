@@ -61,6 +61,8 @@ curl -sSL https://github.com/alexgorbatchev/aerospace-sidebar/releases/latest/do
 curl -sSL https://github.com/alexgorbatchev/aerospace-sidebar/releases/latest/download/aerospace-sidebar_X.X.X_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin
 ```
 
+The app also carries the command at `AerospaceSidebar.app/Contents/Helpers/aerospace-sidebar`, so linking that onto your `PATH` works instead of the second download.
+
 # Setup
 
 Open `~/Applications/AerospaceSidebar.app`, click the gear button at the top of the sidebar, choose the sidebar's side and width under **Sidebar** if the default (300 points on the right) does not suit you, check that **Sidebar** shows the AeroSpace config as updated, and work through **Permissions**. **Permissions** explains what each permission is for and has a **Remove** button that takes AerospaceSidebar off that list in System Settings. Each step can also be done by hand:
