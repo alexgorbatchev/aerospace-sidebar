@@ -73,6 +73,17 @@ final class TestPanel: NSPanel {
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+
+    /// Keeps the frame a test sets: tests pretend screens that can be larger than the displays of the machine they
+    /// run on (CI's is), and AppKit would constrain the window to those (`TestSidebarPanel`).
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+}
+
+/// The sidebar's panel, keeping the frames tests pin it to whatever displays the machine has. AppKit moves a
+/// borderless window taller than the display it overlaps down to the display's bottom edge (measured on macOS 26.6:
+/// asked for y = 40, it ends at y = 0), and a titled one onto the display as it is ordered in.
+final class TestSidebarPanel: SidebarPanel {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }
 
 extension SettingsWindowController {
@@ -97,8 +108,9 @@ extension SettingsWindowController {
 }
 
 extension SidebarPanelController {
-    /// A controller whose panel is transparent, so pinning it neither covers the desktop nor takes clicks.
-    /// The panel never takes keyboard focus on its own: it is borderless, and nothing in tests makes it key.
+    /// A controller whose panel is transparent, so pinning it neither covers the desktop nor takes clicks, and that
+    /// keeps the frames it is pinned to on any display (`TestSidebarPanel`). The panel never takes keyboard focus on
+    /// its own: it is borderless, and nothing in tests makes it key.
     static func forTesting(
         model: SidebarModel,
         settings: SettingsStore,
@@ -111,7 +123,7 @@ extension SidebarPanelController {
     ) -> SidebarPanelController {
         let controller = SidebarPanelController(
             model: model, settings: settings, targetVisibleFrame: targetVisibleFrame, targetScreenFrame: targetScreenFrame,
-            notificationCenter: notificationCenter, workspaceCenter: workspaceCenter,
+            notificationCenter: notificationCenter, workspaceCenter: workspaceCenter, panelType: TestSidebarPanel.self,
             openSettings: openSettings, setUp: setUp
         )
         controller.panel.alphaValue = 0
