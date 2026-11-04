@@ -45,15 +45,17 @@ struct SidebarAppDelegateTests {
     ///   - activation: Hands activation over; by default to no app and deactivates nothing, so nothing on the
     ///     desktop changes.
     ///   - appNotificationSwitch: Stands in for System Settings' Allow Notifications switches.
+    ///   - restored: The list the model restores at launch.
     func makeDelegate(
         socketPath: String = ControlServerTests.socketPath(),
         sender: String? = "Safari",
         activation: ActivationYielder? = nil,
-        appNotificationSwitch: FakeAppNotificationSwitch = FakeAppNotificationSwitch()
+        appNotificationSwitch: FakeAppNotificationSwitch = FakeAppNotificationSwitch(),
+        restored: [SidebarNotification] = []
     ) -> SidebarAppDelegate {
         SidebarAppDelegate(
             settings: settings,
-            makeModel: { SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), history: $0.history) },
+            makeModel: { SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(restored), history: $0.history) },
             icons: .vendored,
             identities: identities,
             notificationDatabase: database.database,
@@ -125,6 +127,32 @@ struct SidebarAppDelegateTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(!model.notificationsAreOff("com.vivaldi.vivaldi"))
+    }
+
+    /// Notifications from switched-off apps are not listed by default, restored cards included, and the setting
+    /// lists them from when it is saved until it is turned off again, which drops their cards.
+    @Test func listsSwitchedOffAppsAsTheSettingsSay() throws {
+        let preferences = NotificationPreferencesFixture(directory: directory)
+        try preferences.write(["com.vivaldi.Vivaldi": false])
+        func vivaldi(_ title: String) -> SidebarNotification {
+            SidebarNotification(source: "Vivaldi", title: title, bundleIdentifier: "com.vivaldi.vivaldi", nativeIdentifiers: [title])
+        }
+        let codex = SidebarNotification(source: "Codex", title: "Codex", bundleIdentifier: "com.openai.codex", nativeIdentifiers: ["codex"])
+        let delegate = makeDelegate(restored: [vivaldi("Restored"), codex])
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
+        let model = delegate.model
+
+        #expect(model.notifications.map(\.title) == ["Codex"])
+        model.add(vivaldi("Hidden"))
+        #expect(model.notifications.map(\.title) == ["Codex"])
+
+        settings.update { $0.notifications.listsSwitchedOffApps = true }
+        model.add(vivaldi("Listed"))
+        #expect(model.notifications.map(\.title) == ["Listed", "Codex"])
+
+        settings.update { $0.notifications.listsSwitchedOffApps = false }
+        #expect(model.notifications.map(\.title) == ["Codex"])
     }
 
     /// Text fields get ⌘Z, ⇧⌘Z, ⌘X, ⌘C, ⌘V and ⌘A only from main menu items, which an `LSUIElement` app

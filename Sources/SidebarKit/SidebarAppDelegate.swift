@@ -66,7 +66,8 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
                 receivedStore: FileNotificationStore(url: FileNotificationStore.receivedURL),
                 defaults: .standard,
                 history: $0.history,
-                rules: $0.rules
+                rules: $0.rules,
+                listsSwitchedOffApps: $0.notifications.listsSwitchedOffApps
             )
         },
         icons: AppIconFont = .bundled(),
@@ -135,6 +136,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
             self?.sidebarChanged(to: settings.sidebar)
             model.apply(history: settings.history)
             model.apply(rules: settings.rules)
+            model.apply(listsSwitchedOffApps: settings.notifications.listsSwitchedOffApps)
             if settings.notifications.replaceSystem {
                 monitor.start()
                 databaseMonitor.start()

@@ -249,7 +249,7 @@ struct SettingsEditorTests {
         store.reload()
 
         #expect(!editor.save())
-        #expect(editor.status == "config.toml is invalid (notifications: unknown key replace_sytem; expected replace_system, actionable_left_to_macos, or apps_left_to_macos). Save again to replace it with these settings, or Cancel to fix it by hand.")
+        #expect(editor.status == "config.toml is invalid (notifications: unknown key replace_sytem; expected replace_system, actionable_left_to_macos, apps_left_to_macos, or list_switched_off_apps). Save again to replace it with these settings, or Cancel to fix it by hand.")
 
         #expect(editor.save())
         #expect(store.loadError == nil)
@@ -566,6 +566,7 @@ struct SettingsPaneTests {
         try notifications.find(ViewType.Toggle.self).tap()
         try notifications.find(ViewType.Toggle.self, where: { try $0.labelView().text().string() == "Keep banners with buttons cards cannot offer" }).tap()
         try notifications.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Keep banners for" }).setInput("zoom.us, Calendar")
+        try notifications.find(ViewType.Toggle.self, where: { try $0.labelView().text().string() == "List notifications macOS keeps hidden" }).tap()
         try font.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Font" }).setInput("Menlo")
         try font.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Size" }).setInput("15")
         try font.find(button: "Choose…").tap()
@@ -576,7 +577,9 @@ struct SettingsPaneTests {
         try sidebar.find(button: "Save").tap()
 
         #expect(store.settings.sidebar == .init(side: .left, width: 420))
-        #expect(store.settings.notifications == .init(replaceSystem: false, actionableLeftToMacOS: false, appsLeftToMacOS: ["zoom.us", "Calendar"]))
+        #expect(store.settings.notifications == .init(
+            replaceSystem: false, actionableLeftToMacOS: false, appsLeftToMacOS: ["zoom.us", "Calendar"], listsSwitchedOffApps: true
+        ))
         #expect(store.settings.font == SidebarSettings.Font(name: "Menlo", size: 15))
         #expect(closed == 1)
     }

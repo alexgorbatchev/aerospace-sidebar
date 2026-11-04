@@ -430,6 +430,10 @@ public final class SidebarModel {
     @ObservationIgnored public private(set) var history: SidebarSettings.History
     /// Change or hide notifications as they arrive.
     @ObservationIgnored private var rules: NotificationRules
+    /// Whether notifications from apps whose notifications are switched off (`notificationsAreOff`) are listed.
+    /// macOS never shows them; while this is off they are only recorded in `received`, which Settings ›
+    /// Notifications lists the apps from.
+    @ObservationIgnored public private(set) var listsSwitchedOffApps: Bool
     /// The native notifications listed after the last change, to tell when a change drops one.
     @ObservationIgnored private var listedNotifications: Set<String> = []
     /// Cards on which the user is typing a reply. Nothing stacks onto them, nor they onto another card: a stack
@@ -446,6 +450,7 @@ public final class SidebarModel {
         defaults: UserDefaults? = nil,
         history: SidebarSettings.History = SidebarSettings.History(),
         rules: [SidebarSettings.Rule] = [],
+        listsSwitchedOffApps: Bool = false,
         now: @escaping () -> Date = Date.init
     ) {
         self.performer = performer
@@ -455,6 +460,7 @@ public final class SidebarModel {
         fullDiskAccessNoteDismissed = defaults?.bool(forKey: Self.fullDiskAccessNoteDismissedKey) ?? false
         self.history = history
         self.rules = NotificationRules(rules)
+        self.listsSwitchedOffApps = listsSwitchedOffApps
         self.now = now
         let cutoff = now().addingTimeInterval(-history.retention)
         // A relaunch lost the clients waiting for asks, so their cards no longer offer the choices that answer them.
@@ -507,6 +513,15 @@ public final class SidebarModel {
         }
     }
 
+    /// Lists notifications from apps whose notifications are switched off as they arrive, or stops listing them
+    /// and drops the listed cards of apps that are switched off now.
+    public func apply(listsSwitchedOffApps: Bool) {
+        self.listsSwitchedOffApps = listsSwitchedOffApps
+        guard !listsSwitchedOffApps, notifications.contains(where: appNotificationsAreOff) else { return }
+        notifications.removeAll(where: appNotificationsAreOff)
+        didChange()
+    }
+
     /// Inserts the notification by severity, then recency, after the first matching rule has changed its
     /// severity or hidden it. A notification with the same content as a listed one is stacked onto it
     /// instead: the entry counts both and moves up as the newest. Beyond `history.maxCount`, the least
@@ -514,7 +529,8 @@ public final class SidebarModel {
     ///
     /// A notification older than `history.retention`, such as one the notification database lists after a
     /// relaunch, is not added at all: the next prune would drop it, after it had pushed newer notifications
-    /// past `history.maxCount`.
+    /// past `history.maxCount`. One from an app whose notifications are switched off is only recorded in
+    /// `received` unless `listsSwitchedOffApps`.
     public func add(_ notification: SidebarNotification) {
         guard notification.receivedAt >= now().addingTimeInterval(-history.retention) else { return settleAsks() }
         record(notification)
@@ -564,10 +580,13 @@ public final class SidebarModel {
     }
 
     /// `add(_:)` without saving: the card the notification was listed on, which the history limits may have
-    /// dropped at once; nil when a rule hides the notification.
+    /// dropped at once; nil when a rule hides the notification or its app's notifications are switched off
+    /// while `listsSwitchedOffApps` is off.
     @discardableResult
     private func insert(_ notification: SidebarNotification) -> SidebarNotification.ID? {
-        guard var notification = rules.apply(to: notification) else { return nil }
+        guard listsSwitchedOffApps || !appNotificationsAreOff(for: notification),
+              var notification = rules.apply(to: notification)
+        else { return nil }
         if !composing.contains(notification.id), let existing = notifications.firstIndex(where: {
             $0.hasSameContent(as: notification) && !composing.contains($0.id)
         }) {

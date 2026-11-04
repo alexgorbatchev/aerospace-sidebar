@@ -61,6 +61,12 @@ struct NotificationsPane: View {
                     .frame(width: SettingsMetrics.fieldWidth * typography.scale)
             }
             SettingsHint(text: "Comma-separated app names, also listed here.")
+            SettingsRow(label: "Switched off") {
+                Toggle("List notifications macOS keeps hidden", isOn: $editor.draft.notifications.listsSwitchedOffApps)
+                    .toggleStyle(.checkbox)
+                    .fixedSize()
+            }
+            SettingsHint(text: "From apps with notifications off in System Settings.")
             SwitchedOffAppsRows(model: appNotifications)
         }
         // Notifications are switched on and off in System Settings while this window is open.
@@ -77,7 +83,7 @@ struct SwitchedOffAppsRows: View {
     @Environment(\.appIcon) private var appIcon
 
     var body: some View {
-        SettingsRow(label: "Switched off") {
+        SettingsRow(label: "Apps") {
             if model.appsWithNotificationsOff.isEmpty {
                 HStack(alignment: .firstTextBaseline, spacing: SettingsMetrics.columnSpacing) {
                     Image(systemName: model.canTell ? "checkmark.circle.fill" : "circle")

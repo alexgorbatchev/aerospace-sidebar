@@ -546,6 +546,7 @@ struct SidebarViewTests {
     /// one app's are being switched on, every badge waits.
     @Test func badgesCardsOfSwitchedOffAppsAndSwitchesThemOn() async throws {
         let appIcon = NSImage(size: NSSize(width: 64, height: 64))
+        model.apply(listsSwitchedOffApps: true)
         model.notificationsAreOff = { $0 == "com.vivaldi.Vivaldi" }
         var allowed: [String] = []
         var finish: CheckedContinuation<Void, Never>?
@@ -612,6 +613,7 @@ struct SidebarViewTests {
     /// When a badge cannot switch its app's notifications on, the sidebar says what is left to do until dismissed;
     /// the next attempt starts without it.
     @Test func saysWhatIsLeftWhenABadgeCannotSwitchAnAppOn() async throws {
+        model.apply(listsSwitchedOffApps: true)
         model.notificationsAreOff = { _ in true }
         model.allowAppNotifications = { _, name in "Switch on Allow Notifications for \(name) in System Settings." }
         model.add(SidebarNotification(

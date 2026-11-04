@@ -23,7 +23,7 @@ struct SettingsFileTests {
         let file = SettingsFile(url: directory.url.appendingPathComponent("nested/config.toml"))
         let settings = SidebarSettings(
             sidebar: .init(side: .left, width: 420),
-            notifications: .init(replaceSystem: false, actionableLeftToMacOS: false, appsLeftToMacOS: ["zoom.us", "Calendar"]),
+            notifications: .init(replaceSystem: false, actionableLeftToMacOS: false, appsLeftToMacOS: ["zoom.us", "Calendar"], listsSwitchedOffApps: true),
             history: .init(retentionHours: 48, maxCount: 500),
             font: .init(name: "Menlo", size: 14.5),
             background: .init(color: SidebarSettings.RGBColor(red: 0x1E, green: 0x2A, blue: 0x3B), opacity: 0.6)
@@ -39,6 +39,7 @@ struct SettingsFileTests {
         #expect(text.contains("[font]") && text.contains("name = \"Menlo\""))
         #expect(text.contains("apps_left_to_macos = [") && text.contains("\"zoom.us\""))
         #expect(text.contains("actionable_left_to_macos = false"))
+        #expect(text.contains("list_switched_off_apps = true"))
         #expect(text.contains("[background]") && text.contains("color = \"#1E2A3B\"") && text.contains("opacity = 0.6"))
         // Without rules there is no `rules = []` above the tables.
         #expect(!text.contains("rules"))
@@ -54,6 +55,7 @@ struct SettingsFileTests {
         #expect(settings == SidebarSettings(history: .init(retentionHours: 24, maxCount: 50)))
         #expect(settings.notifications.replaceSystem)
         #expect(settings.notifications.actionableLeftToMacOS)
+        #expect(!settings.notifications.listsSwitchedOffApps)
     }
 
     @Test func fontSizeAcceptsIntegers() throws {
@@ -72,6 +74,7 @@ struct SettingsFileTests {
         ("[sidebar]\nwidth = 100\n", "sidebar.width: width must be between 150 and 1000"),
         ("[sidebar]\nside = \"top\"\n", "sidebar.side"),
         ("[notifications]\nreplace_system = \"yes\"\n", "notifications.replace_system"),
+        ("[notifications]\nlist_switched_off_apps = 1\n", "notifications.list_switched_off_apps"),
         ("[background]\nopacity = 1.5\n", "background.opacity: opacity must be between 0 and 1"),
         ("[background]\ncolor = \"red\"\n", "background.color: color must be written #RRGGBB, not red"),
         ("[background]\ncolor = \"#+12345\"\n", "background.color: color must be written #RRGGBB, not #+12345"),
@@ -92,7 +95,7 @@ struct SettingsFileTests {
         ("[notification]\nreplace_system = false\n", "unknown key notification; expected sidebar, notifications, history, font, background, or rules"),
         ("replace_system = false\n", "unknown key replace_system; expected sidebar, notifications, history, font, background, or rules"),
         ("[background]\nalpha = 0.5\n", "background: unknown key alpha; expected color or opacity"),
-        ("[notifications]\nreplace_sytem = false\n", "notifications: unknown key replace_sytem; expected replace_system, actionable_left_to_macos, or apps_left_to_macos"),
+        ("[notifications]\nreplace_sytem = false\n", "notifications: unknown key replace_sytem; expected replace_system, actionable_left_to_macos, apps_left_to_macos, or list_switched_off_apps"),
         ("[sidebar]\nwdth = 300\nsid = \"left\"\n", "sidebar: unknown keys sid and wdth; expected side or width"),
         ("sidebar.wide = 300\n", "sidebar: unknown key wide; expected side or width"),
         ("[history]\nmax = 50\n", "history: unknown key max; expected retention_hours or max_count"),

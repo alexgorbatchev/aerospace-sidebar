@@ -11,6 +11,7 @@ import Foundation
 /// replace_system = true
 /// actionable_left_to_macos = true
 /// apps_left_to_macos = ["Zoom"]
+/// list_switched_off_apps = false
 ///
 /// [history]
 /// retention_hours = 24
@@ -78,17 +79,25 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
         public var actionableLeftToMacOS = true
         /// Apps whose notifications macOS keeps presenting; matched case-insensitively by app name.
         public var appsLeftToMacOS: [String] = []
+        /// List notifications from apps whose notifications are switched off in System Settings › Notifications,
+        /// which macOS records in the notification database but never shows.
+        public var listsSwitchedOffApps = false
 
         enum CodingKeys: String, CodingKey, CaseIterable {
             case replaceSystem = "replace_system"
             case actionableLeftToMacOS = "actionable_left_to_macos"
             case appsLeftToMacOS = "apps_left_to_macos"
+            case listsSwitchedOffApps = "list_switched_off_apps"
         }
 
-        public init(replaceSystem: Bool = true, actionableLeftToMacOS: Bool = true, appsLeftToMacOS: [String] = []) {
+        public init(
+            replaceSystem: Bool = true, actionableLeftToMacOS: Bool = true, appsLeftToMacOS: [String] = [],
+            listsSwitchedOffApps: Bool = false
+        ) {
             self.replaceSystem = replaceSystem
             self.actionableLeftToMacOS = actionableLeftToMacOS
             self.appsLeftToMacOS = appsLeftToMacOS
+            self.listsSwitchedOffApps = listsSwitchedOffApps
         }
 
         public init(from decoder: Decoder) throws {
@@ -96,6 +105,7 @@ public struct SidebarSettings: Codable, Equatable, Sendable {
             replaceSystem = try container.decodeIfPresent(Bool.self, forKey: .replaceSystem) ?? true
             actionableLeftToMacOS = try container.decodeIfPresent(Bool.self, forKey: .actionableLeftToMacOS) ?? true
             appsLeftToMacOS = try container.decodeIfPresent([String].self, forKey: .appsLeftToMacOS) ?? []
+            listsSwitchedOffApps = try container.decodeIfPresent(Bool.self, forKey: .listsSwitchedOffApps) ?? false
         }
 
         /// Whether notifications from `appName` stay native.

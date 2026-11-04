@@ -477,11 +477,66 @@ struct SidebarModelTests {
         #expect(notification.clickDescription == "Click to open in Vivaldi")
     }
 
+    /// macOS records notifications from an app whose notifications are switched off without showing them. They are
+    /// not listed unless the settings ask for them, but `received` keeps them, so Settings › Notifications still
+    /// lists the app with Allow; pushed notifications naming the app and other apps' notifications are listed.
+    @Test func listsSwitchedOffAppsOnlyWhenAsked() {
+        let store = InMemoryStore()
+        let model = SidebarModel(performer: RecordingPerformer(), store: store)
+        model.notificationsAreOff = { $0 == "com.vivaldi.Vivaldi" }
+        let off = SidebarNotification(source: "Vivaldi", title: "Off", bundleIdentifier: "com.vivaldi.Vivaldi", nativeIdentifiers: ["a"])
+        let on = SidebarNotification(source: "Codex", title: "On", bundleIdentifier: "com.openai.codex", nativeIdentifiers: ["b"])
+        let pushed = SidebarNotification(source: "cli", title: "Pushed", bundleIdentifier: "com.vivaldi.Vivaldi")
+
+        #expect(!model.listsSwitchedOffApps)
+        for notification in [off, on, pushed] {
+            model.add(notification)
+        }
+
+        #expect(model.notifications.map(\.title) == ["Pushed", "On"])
+        #expect(model.received.map(\.title) == ["Pushed", "On", "Off"])
+        #expect(model.arrivals.count == 2)
+        #expect(model.arrivals.cards(after: 0) == [on.id, pushed.id])
+
+        model.apply(listsSwitchedOffApps: true)
+        let again = SidebarNotification(source: "Vivaldi", title: "Again", bundleIdentifier: "com.vivaldi.Vivaldi", nativeIdentifiers: ["c"])
+        model.add(again)
+
+        #expect(model.listsSwitchedOffApps)
+        #expect(model.notifications.map(\.title) == ["Again", "Pushed", "On"])
+    }
+
+    /// Turning the setting off drops the cards of apps that are switched off now and saves the list; with none
+    /// listed, nothing changes.
+    @Test func stopsListingSwitchedOffAppsAndDropsTheirCards() {
+        let store = InMemoryStore()
+        let alerts = RecordingNativeNotifications()
+        let model = SidebarModel(performer: RecordingPerformer(), store: store, listsSwitchedOffApps: true)
+        model.nativeNotifications = alerts
+        model.notificationsAreOff = { $0 == "com.vivaldi.Vivaldi" }
+        model.add(SidebarNotification(source: "Vivaldi", title: "Off", bundleIdentifier: "com.vivaldi.Vivaldi", nativeIdentifiers: ["a"]))
+        model.add(SidebarNotification(source: "Codex", title: "On", bundleIdentifier: "com.openai.codex", nativeIdentifiers: ["b"]))
+        let saves = store.saves
+
+        model.apply(listsSwitchedOffApps: true)
+        #expect(store.saves == saves)
+
+        model.apply(listsSwitchedOffApps: false)
+        #expect(model.notifications.map(\.title) == ["On"])
+        #expect(store.stored.map(\.title) == ["On"])
+        #expect(store.saves == saves + 1)
+        #expect(!model.lists(notification: "a"))
+        #expect(alerts.releases == 1)
+
+        model.apply(listsSwitchedOffApps: false)
+        #expect(store.saves == saves + 1)
+    }
+
     /// NotificationCenter never holds notifications from an app whose notifications are switched off, so its
     /// cards switch to the app at once and say why; other apps' cards still open theirs.
     @Test func switchesToAppsWhoseNotificationsAreOff() async {
         let performer = RecordingPerformer()
-        let model = SidebarModel(performer: performer, store: InMemoryStore())
+        let model = SidebarModel(performer: performer, store: InMemoryStore(), listsSwitchedOffApps: true)
         let alerts = RecordingNativeNotifications()
         model.nativeNotifications = alerts
         model.notificationsAreOff = { $0 == "com.vivaldi.Vivaldi" }
