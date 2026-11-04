@@ -1,6 +1,6 @@
 ---
 created_on: 2026-10-26 11:54
-last_modified: 2026-11-03 12:07
+last_modified: 2026-11-04 15:18
 status: current
 ---
 
@@ -28,6 +28,8 @@ Swift package (`Package.swift`) driven by `justfile`:
 CI (`.github/workflows/ci.yml`) runs `just coverage` on `macos-26` for pushes to `main` and pull requests, with `AEROSPACE_SIDEBAR_SCREEN_TESTS=1` so the tests that show windows on screen run too (Gotchas). `.github/workflows/release.yml` runs on `v*` tags: coverage gate, `just release-archives`, then `gh release create` with `AerospaceSidebar_<version>_darwin_arm64.tar.gz`, `aerospace-sidebar_<version>_darwin_arm64.tar.gz` and `checksums.txt`. CI has no Developer ID, so release builds are ad-hoc signed and users re-grant Accessibility after each update. The README's installation section depends on these asset names.
 
 `just coverage` runs `swift test --enable-code-coverage`, prints `llvm-cov report` for the test binary, and fails when line or function coverage over `Sources/` drops below 90% or when any `Sources/**/*.swift` file is missing from the report. It excludes `.build/` and `Tests/`. Test targets depend on both executables so each `main.swift` is compiled into the report; they stay unexecuted, so keep them minimal.
+
+Recipes run every Swift toolchain command (`swift`, `swiftc`) behind the `with_scratch_tmpdir` prefix, the private `_scratch-tmpdir` recipe: it points `TMPDIR` at a fresh `.tmp/swift.XXXXXX` directory and removes it when the command exits, including on failure or interrupt, because the toolchain leaves empty `TemporaryDirectory.*` folders in `TMPDIR`. Prefix new Swift toolchain commands the same way. SwiftPM keeps its lock files in `TMPDIR` too, including the one that stops two builds from using `.build` at once, so the wrapper holds `.state/swift.lock` with `lockf` in its place: concurrent Swift toolchain commands in one checkout wait for each other, but the other steps of concurrent recipes (`bundle`'s `rm`, `cp` and `codesign`) can still overlap. A bare `swift build` outside the recipes still locks in the global `TMPDIR` and does not wait for them. The wrapper runs the command in its own process group, so it answers SIGINT, SIGQUIT, SIGHUP and SIGTERM by sending SIGINT to that group (the one signal on which SwiftPM stops its compile jobs), waits for the group to exit, killing it after 40 seconds, and only then removes the scratch directory.
 
 Always launch the bundle, not `swift run`. The bundle supplies the bundle id, `LSUIElement` (which AeroSpace relies on, see Architecture) and the `aerospace-sidebar` URL scheme. `just bundle` signs it with the Developer ID identity in `AEROSPACE_SIDEBAR_SIGNING_IDENTITY` (default `Developer ID Application: Alex Gorb (4XCZD8P4CJ)`); a stable identity keeps the Accessibility permission across rebuilds, while ad-hoc signing loses it every build.
 

@@ -12,32 +12,34 @@ notifymehow_bundle_ids := "com.alexgorbatchev.notifymehow com.motleywoods.Notify
 # A stable signing identity keeps the Accessibility permission across rebuilds; ad-hoc builds lose it
 signing_identity := env("AEROSPACE_SIDEBAR_SIGNING_IDENTITY", "Developer ID Application: Alex Gorb (4XCZD8P4CJ)")
 coverage_min := "90"
+# Prefix for every Swift toolchain command; see _scratch-tmpdir
+with_scratch_tmpdir := quote(just_executable()) + " --justfile " + quote(justfile()) + " _scratch-tmpdir"
 
 default:
     @just --list
 
 # Resolve Swift package dependencies and install alerter for test-notifications
 setup:
-    swift package resolve
+    {{ with_scratch_tmpdir }} swift package resolve
     command -v alerter >/dev/null || brew install vjeantet/tap/alerter
 
 # Build the app bundle into .build/AerospaceSidebar.app (CLI included in Contents/Helpers) and the CLI into bin/; version sets CFBundleShortVersionString
 bundle version="":
-    swift build -c release --product AerospaceSidebar
-    swift build -c release --product aerospace-sidebar
+    {{ with_scratch_tmpdir }} swift build -c release --product AerospaceSidebar
+    {{ with_scratch_tmpdir }} swift build -c release --product aerospace-sidebar
     rm -rf {{ app }}
     mkdir -p {{ app }}/Contents/MacOS {{ app }}/Contents/Helpers {{ app }}/Contents/Resources bin
-    cp "$(swift build -c release --show-bin-path)/AerospaceSidebar" {{ app }}/Contents/MacOS/
+    cp "$({{ with_scratch_tmpdir }} swift build -c release --show-bin-path)/AerospaceSidebar" {{ app }}/Contents/MacOS/
     cp Resources/Info.plist {{ app }}/Contents/Info.plist
     cp -R {{ app_font }} {{ app }}/Contents/Resources/
     # PermissionFlow looks for its resource bundle in Contents/Resources; codesign rejects one at the .app root.
-    cp -R "$(swift build -c release --show-bin-path)/PermissionFlow_PermissionFlow.bundle" {{ app }}/Contents/Resources/
+    cp -R "$({{ with_scratch_tmpdir }} swift build -c release --show-bin-path)/PermissionFlow_PermissionFlow.bundle" {{ app }}/Contents/Resources/
     {{ if version != "" { "plutil -replace CFBundleShortVersionString -string " + quote(version) + " " + app + "/Contents/Info.plist" } else { "true" } }}
     # Nested code is signed before the bundle that contains it.
-    cp "$(swift build -c release --show-bin-path)/aerospace-sidebar" {{ app }}/Contents/Helpers/
+    cp "$({{ with_scratch_tmpdir }} swift build -c release --show-bin-path)/aerospace-sidebar" {{ app }}/Contents/Helpers/
     codesign --force --sign "{{ signing_identity }}" {{ app }}/Contents/Helpers/aerospace-sidebar
     codesign --force --sign "{{ signing_identity }}" {{ app }}
-    cp "$(swift build -c release --show-bin-path)/aerospace-sidebar" {{ cli }}
+    cp "$({{ with_scratch_tmpdir }} swift build -c release --show-bin-path)/aerospace-sidebar" {{ cli }}
 
 # Capture the demo cards in docs/screenshot/ into docs/screenshot/sidebar.png (or output), reopening the running sidebar after
 screenshot output="": bundle
@@ -47,7 +49,7 @@ screenshot output="": bundle
 sampler:
     rm -rf {{ sampler_app }}
     mkdir -p {{ sampler_app }}/Contents/MacOS
-    swiftc -swift-version 6 -o {{ sampler_app }}/Contents/MacOS/NotificationSampler Tools/NotificationSampler/main.swift
+    {{ with_scratch_tmpdir }} swiftc -swift-version 6 -o {{ sampler_app }}/Contents/MacOS/NotificationSampler Tools/NotificationSampler/main.swift
     cp Tools/NotificationSampler/Info.plist {{ sampler_app }}/Contents/Info.plist
     codesign --force --sign "{{ signing_identity }}" {{ sampler_app }}
 
@@ -162,18 +164,66 @@ fill-notifications count="20":
     done
     echo "Pushed {{ count }} notifications"
 
+# The Swift toolchain leaves empty TemporaryDirectory.* folders in TMPDIR, so run command with TMPDIR in a
+# fresh child of .tmp/ and remove it once command exits. SwiftPM keeps the lock file that stops two builds
+# from sharing .build at once in TMPDIR too, so this script holds .state/swift.lock while command runs: Swift
+# commands in one checkout wait for each other, but the other steps of concurrent recipes can still overlap.
+# Job control puts command in its own process group, which the signals that stop a recipe do not reach: just
+# forwards SIGTERM only to this script, and the terminal sends SIGINT, SIGQUIT and SIGHUP to just's group.
+# SwiftPM stops its compile jobs only on SIGINT (on SIGTERM it exits and leaves them running), so the script
+# answers each of them with SIGINT to command's process group, then waits for the group to exit before removing
+# TMPDIR and releasing the lock. SwiftPM gives its jobs 30 seconds; after 40 the script kills what is left.
+[positional-arguments]
+_scratch-tmpdir +command:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p .tmp .state
+    exec 9>>.state/swift.lock
+    lockf 9
+    TMPDIR="$(mktemp -d "$PWD/.tmp/swift.XXXXXX")"
+    trap 'rm -rf "$TMPDIR"' EXIT
+    export TMPDIR
+    child=""
+    signaled=""
+    for signal in INT QUIT TERM HUP; do
+        trap "signaled=$signal; [[ -z \$child ]] || kill -s INT -- -\$child 2>/dev/null || true" "$signal"
+    done
+    # Job control gives command its own process group, with default signal handling.
+    set -m
+    "$@" 9>&- &
+    child=$!
+    # A signal that arrived before command started still stops it.
+    [[ -z "$signaled" ]] || kill -s INT -- -"$child" 2>/dev/null || true
+    # wait returns when command exits, or early, with a status above 128, when a trapped signal arrives.
+    if wait "$child"; then status=0; else status=$?; fi
+    if [[ -n "$signaled" ]]; then
+        for _ in {1..400}; do
+            kill -0 -- -"$child" 2>/dev/null || break
+            sleep 0.1
+        done
+        kill -s KILL -- -"$child" 2>/dev/null || true
+        # After an interrupted wait, command's own status is still to be collected; 127 means wait had it.
+        if ((status > 128)); then
+            if wait "$child" 2>/dev/null; then status=0; else
+                collected=$?
+                ((collected == 127)) || status=$collected
+            fi
+        fi
+    fi
+    exit "$status"
+
 # Tests run with a one-thread cooperative pool, so blocking calls on Swift's thread pool deadlock
 # here instead of only on few-core CI runners.
 test:
-    LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test
+    LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 {{ with_scratch_tmpdir }} swift test
 
 # Run tests with coverage and enforce line and function minimums over Sources/
 coverage:
     #!/usr/bin/env bash
     set -euo pipefail
-    LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 swift test --enable-code-coverage
-    bin="$(swift build --show-bin-path)/aerospace-sidebarPackageTests.xctest/Contents/MacOS/aerospace-sidebarPackageTests"
-    profdata="$(dirname "$(swift test --show-codecov-path)")/default.profdata"
+    LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 {{ with_scratch_tmpdir }} swift test --enable-code-coverage
+    bin="$({{ with_scratch_tmpdir }} swift build --show-bin-path)/aerospace-sidebarPackageTests.xctest/Contents/MacOS/aerospace-sidebarPackageTests"
+    profdata="$(dirname "$({{ with_scratch_tmpdir }} swift test --show-codecov-path)")/default.profdata"
     ignore='(\.build|Tests)/'
     xcrun llvm-cov report "$bin" -instr-profile "$profdata" -ignore-filename-regex "$ignore"
     summary="$(xcrun llvm-cov export "$bin" -instr-profile "$profdata" -ignore-filename-regex "$ignore" -summary-only)"

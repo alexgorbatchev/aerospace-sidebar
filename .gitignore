@@ -2,3 +2,6 @@
 .swiftpm/
 bin/
 dist/
+.tmp/
+.state/
+.workspaces/
