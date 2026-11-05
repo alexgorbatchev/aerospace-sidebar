@@ -1,0 +1,30 @@
+name: Prepare Swift tests
+description: Restore SwiftPM dependencies and build instrumented tests with isolated toolchain scratch space.
+runs:
+  using: composite
+  steps:
+    - name: Install just
+      shell: bash
+      run: brew install just
+    - name: Identify toolchain
+      id: toolchain
+      shell: bash
+      run: |
+        mkdir -p .tmp
+        xcodebuild -version > .tmp/ci-toolchain.txt
+        just _scratch-tmpdir swift --version >> .tmp/ci-toolchain.txt
+        xcrun --show-sdk-version >> .tmp/ci-toolchain.txt
+        printf '%s\n' "$ImageVersion" >> .tmp/ci-toolchain.txt
+        echo "key=$(shasum -a 256 .tmp/ci-toolchain.txt | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+    - name: Cache SwiftPM dependencies and build outputs
+      uses: actions/cache@v6
+      with:
+        path: |
+          .build
+          ~/Library/Caches/org.swift.swiftpm
+        key: swift-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ github.sha }}
+        restore-keys: |
+          swift-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-
+    - name: Build tests with coverage
+      shell: bash
+      run: just _scratch-tmpdir swift build --build-tests --enable-code-coverage
