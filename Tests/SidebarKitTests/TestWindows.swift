@@ -128,6 +128,7 @@ extension SidebarPanelController {
         )
         controller.panel.alphaValue = 0
         controller.background.window.alphaValue = 0
+        controller.annoyancePanel.panel.alphaValue = 0
         return controller
     }
 }

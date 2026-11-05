@@ -111,23 +111,13 @@ struct SidebarView: View {
                 LazyVStack(spacing: 8) {
                     ForEach(model.notifications, id: \.viewIdentity) { notification in
                         NotificationCard(
-                            notification: notification,
-                            choices: model.cardChoices(of: notification),
-                            isAnswering: model.answering.contains(notification.id),
-                            clickDescription: model.clickDescription(of: notification),
+                            notification: notification, model: model,
                             isHovered: hoveredID == notification.id,
-                            hover: { hoveredID = Self.hoveredID(hoveredID, card: notification.id, hovering: $0) },
-                            activate: { model.activate(notification.id) },
-                            choose: { model.choose($0, for: notification.id) },
-                            reply: { model.reply($0, text: $1, for: notification.id) },
-                            openLink: { model.openLink($0) },
-                            dismiss: { model.dismiss(notification.id) },
-                            composingChanged: { model.setComposing($0, on: notification.id) },
-                            allowAppNotifications: model.appNotificationsAreOff(for: notification)
-                                ? { model.allowAppNotifications(for: notification.id) } : nil,
-                            isAllowingAppNotifications: model.allowingAppNotifications != nil,
-                            hasLostChoices: model.hasLostChoices(notification)
+                            hover: { hoveredID = Self.hoveredID(hoveredID, card: notification.id, hovering: $0) }
                         )
+                        .phaseAnimator([0.0, -5, 5, -5, 5, 0], trigger: model.annoyance.active?.id == notification.id ? model.annoyance.jiggle : 0) { card, offset in
+                            card.offset(x: reduceMotion ? 0 : offset)
+                        } animation: { _ in .easeInOut(duration: 0.09) }
                         .transition(cardTransition)
                         // Later cards draw above earlier ones, so when a card is removed the card
                         // sliding up into its place covers it while it fades out.
@@ -156,6 +146,11 @@ struct SidebarView: View {
             .contentMargins(.bottom, Self.margin, for: .scrollContent)
             .scrollIndicators(.never)
             .scrollPosition($scrollPosition)
+            .onChange(of: model.annoyance.jiggle) { _, _ in
+                guard !activity.isUsingList,
+                      let card = model.notifications.first(where: { $0.id == model.annoyance.active?.id }) else { return }
+                scrollPosition.scrollTo(id: card.viewIdentity, anchor: .center)
+            }
             // Notifications arriving while the user is elsewhere scroll into view. `scrollPosition` finds a card by
             // its `ForEach` identity; `scrollTargetLayout()` would also hold the top edge at the first card's top,
             // hiding the room above it for its dismiss button.

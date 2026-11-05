@@ -188,6 +188,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
+        controller?.annoyancePanel.stop()
         pruneTimer?.invalidate()
         settings.stopWatching()
         guard !isDemo else { return }

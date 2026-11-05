@@ -951,8 +951,8 @@ struct SettingsWindowControllerTests {
         defer { controller.window.close() }
         let before = controller.window.frame
 
-        // A long error under the login item makes Permissions the largest pane.
-        let reason = Array(repeating: "The login item service refused the request.", count: 40).joined(separator: " ")
+        // Make the error taller than the measured window, regardless of which settings pane is largest.
+        let reason = Array(repeating: "The login item service refused the request.", count: Int(before.height / 10) + 1).joined(separator: "\n")
         loginItems.error = NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: reason])
         onboarding.addLoginItem()
         for _ in 0..<100 where controller.window.frame.height == before.height {
