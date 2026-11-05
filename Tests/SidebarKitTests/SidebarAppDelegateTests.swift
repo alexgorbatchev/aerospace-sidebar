@@ -177,6 +177,7 @@ struct SidebarAppDelegateTests {
         let delegate = makeDelegate(socketPath: path)
 
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
         let payload = try NotificationPayload(title: "from cli", severity: .critical, icon: "ghostty")
         let response = try await UnixSocket.exchange(.pushNotification(payload), path: path)
 
@@ -215,6 +216,7 @@ struct SidebarAppDelegateTests {
         let delegate = makeDelegate()
 
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
         #expect(delegate.model.database == .reading)
 
         settings.update { $0.notifications.replaceSystem = false }
@@ -479,6 +481,7 @@ struct SidebarAppDelegateTests {
         let delegate = makeDelegate(socketPath: path)
 
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
 
         #expect(delegate.controller != nil)
         delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
@@ -505,6 +508,7 @@ struct SidebarAppDelegateTests {
         )
 
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
         delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
 
         #expect(delegate.controller != nil)
@@ -545,6 +549,7 @@ struct SidebarAppDelegateTests {
         try directory.write("[gaps]\nouter.right = [{ monitor.main = 305 }, 5]\n\n\(AeroSpaceConfigEditor.floatRule)\n", to: ".aerospace.toml")
         let delegate = makeDelegate()
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
         settings.update { $0.notifications.replaceSystem = false }
         #expect(cli.calls.isEmpty)
 

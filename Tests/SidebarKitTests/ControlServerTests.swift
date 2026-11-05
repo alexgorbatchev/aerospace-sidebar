@@ -155,9 +155,13 @@ struct ControlServerTests {
     /// with SIGPIPE (`SO_NOSIGPIPE`, which accepted connections also inherit from the listener), and the server
     /// goes on serving. It runs in a process of its own, where SIGPIPE kills only that process.
     @Test func survivesClientsThatCloseBeforeTheReply() async {
+        // The exit-test child is spawned directly by this process. Keep ownership in the parent,
+        // whose cleanup still runs if the child dies from SIGPIPE or exits before its defer.
+        let path = "/tmp/as-server-sigpipe-\(getpid()).sock"
+        defer { unlink(path) }
         await #expect(processExitsWith: .success) {
             signal(SIGPIPE, SIG_DFL)
-            let path = ControlServerTests.socketPath()
+            let path = "/tmp/as-server-sigpipe-\(getppid()).sock"
             let server = ControlServer(path: path) { _ in }
             try server.start()
             defer { server.stop() }
@@ -168,6 +172,7 @@ struct ControlServerTests {
 
             guard response == ControlResponse(error: nil) else { exit(EXIT_FAILURE) }
         }
+
     }
 
     /// Stopping closes the connections of asks still waiting; their clients read no answer.
@@ -177,6 +182,7 @@ struct ControlServerTests {
         let received = Received()
         let server = ControlServer(path: path) { received.record($0) }
         try server.start()
+        defer { server.stop() }
         let payload = try NotificationPayload(title: "t", choices: [PushedChoice(title: "Yes", action: .answer)])
 
         let connection = try await UnixSocket.send(.askNotification(payload), path: path)
@@ -203,6 +209,7 @@ struct ControlServerTests {
         let path = Self.socketPath()
         let server = ControlServer(path: path) { _ in }
         try server.start()
+        defer { server.stop() }
 
         server.stop()
         server.stop()
