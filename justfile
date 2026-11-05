@@ -215,14 +215,15 @@ _scratch-tmpdir +command:
 
 # Tests run with a one-thread cooperative pool, so blocking calls on Swift's thread pool deadlock
 # here instead of only on few-core CI runners.
+# Run cases serially: concurrent AppKit/SwiftUI setup can starve timed main-actor checks.
 test:
-    LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 {{ with_scratch_tmpdir }} swift test
+    LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 {{ with_scratch_tmpdir }} swift test --no-parallel
 
 # Run tests with coverage and enforce line and function minimums over Sources/
 coverage:
     #!/usr/bin/env bash
     set -euo pipefail
-    LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 {{ with_scratch_tmpdir }} swift test --enable-code-coverage
+    LIBDISPATCH_COOPERATIVE_POOL_STRICT=1 {{ with_scratch_tmpdir }} swift test --no-parallel --enable-code-coverage
     bin="$({{ with_scratch_tmpdir }} swift build --show-bin-path)/aerospace-sidebarPackageTests.xctest/Contents/MacOS/aerospace-sidebarPackageTests"
     profdata="$(dirname "$({{ with_scratch_tmpdir }} swift test --show-codecov-path)")/default.profdata"
     ignore='(\.build|Tests)/'
