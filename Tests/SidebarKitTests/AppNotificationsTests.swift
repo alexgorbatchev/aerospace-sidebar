@@ -211,6 +211,7 @@ struct AppNotificationsModelTests {
         let model = model(received: [])
         switcher.result = .refused
         var second: String?? = .none
+        defer { switcher.whileSwitching = {} }
         switcher.whileSwitching = { second = await model.switchOn(bundleIdentifier: "com.tinyspeck.slackmacgap", name: "Slack") }
 
         #expect(await model.switchOn(bundleIdentifier: "com.vivaldi.Vivaldi", name: "Vivaldi") != nil)
@@ -278,6 +279,8 @@ struct AppNotificationsModelTests {
         model.refresh()
         let slack = try #require(model.appsWithNotificationsOff.first)
         switcher.result = result
+        // The model owns the switcher; its callback owns the model and fixture until cleared.
+        defer { switcher.whileSwitching = {} }
         switcher.whileSwitching = { [fixture] in
             #expect(model.allowing == "com.tinyspeck.slackmacgap")
             if result == .switchedOn {
@@ -300,6 +303,7 @@ struct AppNotificationsModelTests {
         let model = model(received: [Self.fromMacOS("Slack", "com.tinyspeck.slackmacgap"), Self.fromMacOS("Vivaldi", "com.vivaldi.Vivaldi")])
         model.refresh()
         let vivaldi = AppNotificationsModel.App(bundleIdentifier: "com.vivaldi.Vivaldi", name: "Vivaldi")
+        defer { switcher.whileSwitching = {} }
         switcher.whileSwitching = { await model.allow(vivaldi) }
 
         await model.allow(model.appsWithNotificationsOff[0])
