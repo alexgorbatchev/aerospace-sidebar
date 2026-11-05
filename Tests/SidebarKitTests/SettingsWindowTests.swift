@@ -964,12 +964,13 @@ struct SettingsWindowControllerTests {
         #expect(controller.window.frame.width == before.width)
     }
 
-    @Test func previewResizesWindowAndCancelRestoresIt() throws {
+    @Test func previewResizesWindowAndCancelRestoresIt() async throws {
         _ = NSApplication.shared
         let directory = try TemporaryDirectory()
         let store = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
         let controller = SettingsWindowController.forTesting(store: store, aeroSpace: .fake(store: store, home: directory.url))
         controller.show()
+        defer { controller.window.close() }
         let before = controller.window.frame
         let panes = controller.paneSizes
         let list = controller.sidebarHeight
@@ -978,13 +979,21 @@ struct SettingsWindowControllerTests {
         #expect(controller.window.frame.height > before.height)
 
         controller.editor.revert()
-        // Failed once in about 50 full runs (650 points tall instead of 594) and never since; the sizes the window
-        // is fitted to tell which pane or the group list reported a different size.
+        // SwiftUI reports geometry after layout; AppKit's synchronous layout pass can leave some panes
+        // reporting the preview's measurements until the next update. Yield until all sizes are restored.
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(2))
+        while clock.now < deadline,
+              controller.window.frame != before || controller.paneSizes != panes || controller.sidebarHeight != list {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(store.font == store.settings.font)
+        #expect(controller.paneSizes == panes)
+        #expect(controller.sidebarHeight == list)
         #expect(
             controller.window.frame == before,
             "panes \(panes) became \(controller.paneSizes); group list \(list) became \(controller.sidebarHeight)"
         )
-        controller.window.close()
     }
 
     @Test func resizesWithFontSizeKeepingTopEdge() throws {
