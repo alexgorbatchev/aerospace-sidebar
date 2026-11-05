@@ -289,7 +289,7 @@ struct SettingsStoreTests {
     @Test func refusesAFileWithAnUnknownKey() throws {
         let rule = SidebarSettings.Rule(source: "Slack", title: "deploy failed", action: .hide)
         let typo = "[[rules]]\nsource = \"Slack\"\ntitel = \"deploy failed\"\naction = \"hide\"\n"
-        let message = "rules[0]: unknown key titel; expected source, title, subtitle, body, or action"
+        let message = "rules[0]: unknown key titel; expected source, title, subtitle, body, action, display, or interval_minutes"
         try directory.write(typo, to: "config.toml")
 
         let launched = SettingsStore(file: file)

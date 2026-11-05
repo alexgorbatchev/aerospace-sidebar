@@ -25,6 +25,7 @@ public final class SidebarPanelController: NSObject {
     let follower: SystemSettingsFollower
     /// Fills the strip from the top of the screen to the bottom when `[background]` asks for it.
     let background = SidebarBackground()
+    let annoyancePanel: AnnoyancePanel
     private let settings: SettingsStore
     private let targetVisibleFrame: @MainActor () -> CGRect?
     private let targetScreenFrame: @MainActor () -> CGRect?
@@ -77,6 +78,7 @@ public final class SidebarPanelController: NSObject {
             type: panelType, contentRect: strip, model: model, settings: settings, openSettings: openSettings, setUp: setUp
         )
         follower = SystemSettingsFollower(window: panel, level: Self.level, workspaceCenter: workspaceCenter)
+        annoyancePanel = AnnoyancePanel(model: model, settings: settings, panelType: panelType, screenFrame: targetScreenFrame)
         super.init()
         follower.onFollow = { [weak self] in self?.showBackground() }
         settings.observe { [weak self] settings in
@@ -95,6 +97,7 @@ public final class SidebarPanelController: NSObject {
 
     /// Moves the panel onto the reserved strip and shows it, or hides it when no target screen exists.
     public func pin() {
+        annoyancePanel.refresh()
         pinnedSidebar = settings.settings.sidebar
         // After the panel, which the background goes under.
         defer { showBackground() }

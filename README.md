@@ -223,11 +223,17 @@ opacity = 0                              # 0 (none) to 1
 source = "^Slack$"                       # source, title, subtitle, body: case-insensitive regular expressions
                                          # found anywhere in that text; omitted ones match anything, one is required
 action = "high"                          # "hide" drops the notification; "low", "normal", "high" or "critical" sets its severity
+display = "sidebar"                      # "sidebar", "jiggle", or "blackout" (ignored for hidden notifications)
+interval_minutes = 5                     # 1 to 1440; delay before the first interruption and between jiggles
 ```
 
 - A missing file or key uses the defaults shown.
 - An unknown or misspelled key makes the file invalid, and the error names it. An invalid file keeps the previous settings, or the defaults at launch, and the sidebar shows a note that opens Settings.
 - A font that is not installed falls back to the system font.
+
+In Settings › Rules, select **Jiggle periodically** or **Block screen** under Display to make matching notifications interrupt you. For a specific Slack sender, match `^Slack$` in Source and the person's name in the title or subtitle where Slack shows it; the Matches preview checks recent messages. The first matching rule controls both severity and display.
+
+Only the oldest eligible card runs its cycle. New arrivals and repeats do not restart its countdown. Dismissing or acting on it starts a full interval for the next card. Jiggle repeats at the configured interval; Reduce Motion suppresses the movement. Screen blocking covers the main display in black with the notification centered at 1.5× size, keeping its dismissal, choices and reply controls. It stays until the card is dismissed or successfully acted on, even past the history retention limit. Removing its rule or changing its display mode also stops it. Restarting the app begins a fresh countdown for restored cards.
 
 # URL Scheme
 

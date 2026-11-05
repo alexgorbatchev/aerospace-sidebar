@@ -15,7 +15,7 @@ struct RulesPane: View {
 
     static let matchLines = 4
     /// The editor's row labels.
-    static let editorLabels = SidebarSettings.Rule.Field.allCases.map(\.label) + ["Then", "Matches"]
+    static let editorLabels = SidebarSettings.Rule.Field.allCases.map(\.label) + ["Then", "Display", "Interval", "Matches"]
 
     var body: some View {
         // Views outside a grid row span the whole grid: the list and the editor use the pane's width, and
@@ -121,6 +121,19 @@ struct RulesPane: View {
                         .lineLimit(Self.matchLines, reservesSpace: true)
                         .frame(width: editorFieldWidth, alignment: .leading)
                 }
+                SettingsRow(label: "Display", alignment: .center) {
+                    PopUpPicker(title: "Display", options: SidebarSettings.Rule.Display.allCases.map {
+                        PopUpPicker.Option(label: $0.title, value: $0)
+                    }, selection: display, font: typography.bodyFont)
+                    .disabled(selectedRule?.action == .hide)
+                }
+                SettingsRow(label: "Interval", alignment: .center) {
+                    Stepper(value: intervalMinutes, in: 1...1440) {
+                        Text("\(intervalMinutes.wrappedValue) minutes")
+                    }
+                    .disabled(selectedRule?.display == .sidebar || selectedRule?.action == .hide)
+                }
+                SettingsHint(text: "Only the oldest matching card interrupts you. The first interruption waits one interval. Screen blocking stays until you dismiss or act on the card.", wraps: true, width: editorFieldWidth, columns: 1)
             }
             .opacity(selectedRule == nil ? 0 : 1)
             .disabled(selectedRule == nil)
@@ -203,6 +216,18 @@ struct RulesPane: View {
         )
     }
 
+    var display: Binding<SidebarSettings.Rule.Display> {
+        Binding(get: { selectedRule?.display ?? .sidebar }, set: { value in
+            selectedIndex.map { editor.draft.rules[$0].display = value }
+        })
+    }
+
+    var intervalMinutes: Binding<Int> {
+        Binding(get: { selectedRule?.intervalMinutes ?? 5 }, set: { value in
+            selectedIndex.map { editor.draft.rules[$0].intervalMinutes = value }
+        })
+    }
+
     /// Hiding, then each severity to list matches at.
     static let actionOptions = SidebarSettings.Rule.Action.allCases.map { action in
         switch action {
@@ -233,7 +258,8 @@ struct RulesPane: View {
         let patterns = SidebarSettings.Rule.Field.allCases
             .filter { !rule[$0].isEmpty }
             .map { "\($0.rawValue) ~ \(rule[$0])" }
-        return (patterns.isEmpty ? "No pattern" : patterns.joined(separator: ", ")) + " → " + rule.action.title
+        let display = rule.display == .sidebar || rule.action == .hide ? "" : " · \(rule.display.title) (\(rule.intervalMinutes) min)"
+        return (patterns.isEmpty ? "No pattern" : patterns.joined(separator: ", ")) + " → " + rule.action.title + display
     }
 }
 

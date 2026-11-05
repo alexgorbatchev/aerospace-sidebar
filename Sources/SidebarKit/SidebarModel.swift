@@ -423,6 +423,18 @@ public final class SidebarModel {
     /// changes it, and only for a notification that no rule hides and the history limits keep, so restoring the
     /// list at launch, applying rules, pruning and dismissals scroll nothing.
     public private(set) var arrivals = Arrivals()
+    private(set) var annoyance = NotificationAnnoyance()
+    @ObservationIgnored var annoyanceChanged: @MainActor () -> Void = {}
+
+    func advanceAnnoyance() {
+        annoyance.advance(at: now())
+        annoyanceChanged()
+    }
+
+    private func reconcileAnnoyance() {
+        annoyance.reconcile(notifications, rules: rules, now: now())
+        annoyanceChanged()
+    }
     public var interception: InterceptionStatus = .starting
     /// Whether notifications that showed no banner are listed from the notification database.
     public var database: NotificationDatabaseStatus = .stopped
@@ -506,6 +518,7 @@ public final class SidebarModel {
             .sorted { $0.receivedAt > $1.receivedAt }
             .prefix(history.maxCount))
         listedNotifications = Self.nativeIdentifiers(in: notifications)
+        reconcileAnnoyance()
     }
 
     static let fullDiskAccessNoteDismissedKey = "fullDiskAccessNoteDismissed"
@@ -521,7 +534,7 @@ public final class SidebarModel {
         self.history = history
         pruneExpired()
         if notifications.count > history.maxCount {
-            notifications.removeLast(notifications.count - history.maxCount)
+            trimNotifications()
             didChange()
         }
         if received.count > history.maxCount {
@@ -543,6 +556,7 @@ public final class SidebarModel {
         if notifications != listed {
             didChange()
         }
+        reconcileAnnoyance()
     }
 
     /// Lists notifications from apps whose notifications are switched off as they arrive, or stops listing them
@@ -631,7 +645,7 @@ public final class SidebarModel {
         } ?? notifications.endIndex
         notifications.insert(notification, at: index)
         if notifications.count > history.maxCount {
-            notifications.removeLast(notifications.count - history.maxCount)
+            trimNotifications()
         }
         return notification.id
     }
@@ -662,9 +676,21 @@ public final class SidebarModel {
             received.removeAll { $0.receivedAt < cutoff }
             receivedStore?.save(received)
         }
-        guard notifications.contains(where: { $0.receivedAt < cutoff }) else { return }
-        notifications.removeAll { $0.receivedAt < cutoff }
+        guard notifications.contains(where: { $0.receivedAt < cutoff && $0.id != protectedAnnoyance }) else { return }
+        notifications.removeAll { $0.receivedAt < cutoff && $0.id != protectedAnnoyance }
         didChange()
+    }
+
+    /// A blackout has no expiry, including history eviction while it is awaiting an answer.
+    private var protectedAnnoyance: SidebarNotification.ID? {
+        annoyance.blocking ? annoyance.active?.id : nil
+    }
+
+    private func trimNotifications() {
+        while notifications.count > history.maxCount,
+              let index = notifications.lastIndex(where: { $0.id != protectedAnnoyance }) {
+            notifications.remove(at: index)
+        }
     }
 
     /// Runs the notification's click action, then dismisses it. A card that stands for native notifications
@@ -843,6 +869,7 @@ public final class SidebarModel {
     /// Saves the list and reports native notifications whose cards it no longer holds, so they do not stay
     /// hidden.
     private func didChange() {
+        reconcileAnnoyance()
         settleAsks()
         composing.formIntersection(notifications.map(\.id))
         store.save(notifications)

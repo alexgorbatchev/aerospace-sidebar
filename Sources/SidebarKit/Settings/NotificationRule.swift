@@ -13,6 +13,17 @@ extension SidebarSettings {
     /// Each pattern is a case-insensitive regular expression searched anywhere in its field; an empty
     /// pattern matches anything, and a rule needs at least one. The first matching rule applies.
     public struct Rule: Codable, Equatable, Sendable {
+        public enum Display: String, Codable, CaseIterable, Sendable {
+            case sidebar, jiggle, blackout
+
+            var title: String {
+                switch self {
+                case .sidebar: "Sidebar only"
+                case .jiggle: "Jiggle periodically"
+                case .blackout: "Block screen"
+                }
+            }
+        }
         /// The notification text a pattern is matched against.
         public enum Field: String, CaseIterable, Sendable {
             case source, title, subtitle, body
@@ -59,12 +70,14 @@ extension SidebarSettings {
         public enum Problem: Error, Equatable, CustomStringConvertible {
             case matchesEverything
             case invalidPattern(Field, reason: String)
+            case invalidInterval
 
             /// Completes "Rule 2 …".
             public var description: String {
                 switch self {
                 case .matchesEverything: "needs at least one pattern"
                 case .invalidPattern(let field, let reason): "has an invalid \(field.rawValue) pattern: \(reason)"
+                case .invalidInterval: "needs an interval from 1 to 1440 minutes"
                 }
             }
         }
@@ -74,17 +87,23 @@ extension SidebarSettings {
         public var subtitle = ""
         public var body = ""
         public var action = Action.severity(.high)
+        public var display = Display.sidebar
+        public var intervalMinutes = 5
 
         enum CodingKeys: String, CodingKey, CaseIterable {
             case source, title, subtitle, body, action
+            case display
+            case intervalMinutes = "interval_minutes"
         }
 
-        public init(source: String = "", title: String = "", subtitle: String = "", body: String = "", action: Action = .severity(.high)) {
+        public init(source: String = "", title: String = "", subtitle: String = "", body: String = "", action: Action = .severity(.high), display: Display = .sidebar, intervalMinutes: Int = 5) {
             self.source = source
             self.title = title
             self.subtitle = subtitle
             self.body = body
             self.action = action
+            self.display = display
+            self.intervalMinutes = intervalMinutes
         }
 
         public init(from decoder: Decoder) throws {
@@ -98,6 +117,11 @@ extension SidebarSettings {
                 throw DecodingError.dataCorruptedError(forKey: .action, in: container, debugDescription: "action must be \(names)")
             }
             self.action = action
+            display = try container.decodeIfPresent(Display.self, forKey: .display) ?? .sidebar
+            intervalMinutes = try container.decodeIfPresent(Int.self, forKey: .intervalMinutes) ?? 5
+            guard (1...1440).contains(intervalMinutes) else {
+                throw DecodingError.dataCorruptedError(forKey: .intervalMinutes, in: container, debugDescription: Problem.invalidInterval.description)
+            }
             do {
                 _ = try Self.compile(self)
             } catch .invalidPattern(let field, let reason) {
@@ -116,6 +140,8 @@ extension SidebarSettings {
                 try container.encode(self[field], forKey: CodingKeys(rawValue: field.rawValue)!)
             }
             try container.encode(action.name, forKey: .action)
+            if display != .sidebar { try container.encode(display, forKey: .display) }
+            if intervalMinutes != 5 { try container.encode(intervalMinutes, forKey: .intervalMinutes) }
         }
 
         public subscript(field: Field) -> String {
@@ -139,6 +165,7 @@ extension SidebarSettings {
 
         /// The rule's patterns as case-insensitive regular expressions, by field.
         static func compile(_ rule: Rule) throws(Problem) -> [(Field, Regex<AnyRegexOutput>)] {
+            guard (1...1440).contains(rule.intervalMinutes) else { throw .invalidInterval }
             var patterns: [(Field, Regex<AnyRegexOutput>)] = []
             for field in Field.allCases where !rule[field].isEmpty {
                 do {
