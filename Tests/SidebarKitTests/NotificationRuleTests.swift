@@ -204,6 +204,9 @@ struct RulesPaneTests {
     @Test func addsRemovesAndReordersRules() throws {
         editor.draft.rules = [Rule(source: "a"), Rule(source: "b")]
 
+        let guidance = try pane().inspect().find(text: "Rules run from top to bottom. Only the first matching rule applies. Move specific rules above broader ones. Saving also updates currently visible notifications.")
+        #expect(!guidance.isHidden())
+
         try pane().inspect().find(viewWithAccessibilityLabel: "Add Rule").button().tap()
         #expect(editor.draft.rules == [Rule(source: "a"), Rule(source: "b"), Rule()])
 

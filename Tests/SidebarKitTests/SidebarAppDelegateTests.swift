@@ -51,11 +51,12 @@ struct SidebarAppDelegateTests {
         sender: String? = "Safari",
         activation: ActivationYielder? = nil,
         appNotificationSwitch: FakeAppNotificationSwitch = FakeAppNotificationSwitch(),
-        restored: [SidebarNotification] = []
+        restored: [SidebarNotification] = [],
+        now: @escaping () -> Date = Date.init
     ) -> SidebarAppDelegate {
         SidebarAppDelegate(
             settings: settings,
-            makeModel: { SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(restored), history: $0.history) },
+            makeModel: { SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(restored), history: $0.history, now: now) },
             icons: .vendored,
             identities: identities,
             notificationDatabase: database.database,
@@ -523,6 +524,43 @@ struct SidebarAppDelegateTests {
         delegate.application(NSApplication.shared, open: [try SidebarRequest.pushNotification(NotificationPayload(title: "Hidden")).url()])
 
         #expect(delegate.model.notifications.isEmpty)
+    }
+
+    @Test func savingRuleOrderReclassifiesVisibleCardsAndStartsAnnoyanceDelay() throws {
+        var now = Date()
+        let card = SidebarNotification(source: "Slack", title: "Message", body: "Kamal", receivedAt: now)
+        let delegate = makeDelegate(restored: [card], now: { now })
+        delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
+        let editor = SettingsEditor(store: settings)
+        let broad = SidebarSettings.Rule(source: "Slack", action: .severity(.high))
+        let specific = SidebarSettings.Rule(source: "Slack", body: "Kamal", action: .severity(.critical), display: .blackout)
+        editor.draft.rules = [broad, specific]
+        #expect(editor.save())
+        #expect(delegate.model.notifications.first?.severity == .high)
+        #expect(delegate.model.annoyance.active == nil)
+
+        now += 60
+        editor.draft.rules = [specific, broad]
+        #expect(delegate.model.notifications.first?.severity == .high)
+        #expect(editor.save())
+        #expect(delegate.model.notifications.first?.id == card.id)
+        #expect(delegate.model.notifications.first?.severity == .critical)
+        #expect(delegate.model.annoyance.active?.id == card.id)
+        #expect(delegate.model.annoyance.deadline == now + 300)
+        #expect(!delegate.model.annoyance.blocking)
+        now += 299
+        delegate.model.advanceAnnoyance()
+        #expect(!delegate.model.annoyance.blocking)
+        now += 1
+        delegate.model.advanceAnnoyance()
+        #expect(delegate.model.annoyance.blocking)
+
+        editor.draft.rules = [SidebarSettings.Rule(source: "Slack", action: .hide)]
+        #expect(editor.save())
+        #expect(delegate.model.notifications.isEmpty)
+        #expect(delegate.model.annoyance.active == nil)
+        #expect(!delegate.model.annoyance.blocking)
     }
 
     @Test func urlsPushNotificationsLabeledWithSender() throws {

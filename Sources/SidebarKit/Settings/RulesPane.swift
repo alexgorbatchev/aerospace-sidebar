@@ -22,9 +22,11 @@ struct RulesPane: View {
         // the editor lines up its own labels.
         SettingsPage(buttonBar: SettingsButtonBar(editor: editor, close: close)) {
             ruleList
-            Text("The first matching rule applies to new notifications.")
+            Text("Rules run from top to bottom. Only the first matching rule applies. Move specific rules above broader ones. Saving also updates currently visible notifications.")
                 .font(typography.font(.subheadline))
                 .foregroundStyle(.secondary)
+                .frame(width: contentWidth, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
             ruleEditor
         }
     }
