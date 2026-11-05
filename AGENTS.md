@@ -1,6 +1,6 @@
 ---
 created_on: 2026-10-26 11:54
-last_modified: 2026-11-04 15:18
+last_modified: 2026-11-05 10:51
 status: current
 ---
 
@@ -189,6 +189,7 @@ macOS has no public API for reserving screen space (no AppBar or strut equivalen
 
 ## Gotchas
 
+- `HostedSidebar` in `ArrivalScrollTests.swift` checks arrival offsets with uniform cards in a 300×600 alpha-zero `TestPanel`, constructing `SidebarPanelContent` directly without `SidebarPanelController`, its background panel or the full-height strip. It does not reproduce the launch offset drift caused by scaling the list's `ScrollView`, even with varying card heights and reply buttons. The cause of the difference is not isolated; do not assume transparency alone explains it or treat a passing hosted test as launch-regression coverage. Keep the structural guard `contentGrowsOutOfItsCornersOnTheScreenEdge`. A replacement behavioral test must fail when the scroll-view scale is restored and pass without it; any variant that shows a panel takes `.showsWindowsOnScreen` and runs only with `AEROSPACE_SIDEBAR_SCREEN_TESTS=1`.
 - `~/.config/aerospace/aerospace.toml` is generated. Never edit it directly; edit `~/.dotfiles/mac-apps/aerospace/base.toml` or `~/.dotfiles/mac-apps/aerospace/configs/<profile>.toml`, then regenerate.
 - The generator appends profile TOML sections after `base.toml`, and `[gaps]` already lives in `base.toml`. A `[gaps]` table in a profile file produces a duplicate-table TOML error. The sidebar's gap lives in the managed block inside `base.toml`'s `[gaps]`; the generator copies the block from the current generated config instead, so the sidebar's side and width survive regeneration.
 - `base.toml` binds `alt-f = 'fullscreen'` (all profiles). Do not add `--no-outer-gaps`; it makes fullscreen windows cover the sidebar. In the generated file this binding appears below the `# --- Profile: <name> ---` marker because profile bindings are injected directly after `[mode.main.binding]`; it is not profile-specific.

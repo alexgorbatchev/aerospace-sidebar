@@ -473,6 +473,14 @@ struct ArrivalScrollHostedTests {
 
 /// The sidebar's content in a transparent `TestPanel` as tall as a short screen, and the `NSScrollView` behind its
 /// list, whose clip view tells where the list is scrolled.
+///
+/// This exercises arrival scrolling with uniform cards, not the production panel's launch geometry. It builds
+/// `SidebarPanelContent` directly in a 300×600, alpha-zero window, without `SidebarPanelController`, its background
+/// panel or the full-height screen strip. Restoring a scale transform on the list's `ScrollView` does not reproduce
+/// the launch offset drift here, even with varying card heights and reply buttons; the cause of that difference
+/// has not been isolated. Passing these tests therefore does not establish that launch stays at the top.
+/// `contentGrowsOutOfItsCornersOnTheScreenEdge` guards the unscaled scroll-view structure instead. A future launch
+/// regression test must first fail with that transform restored; if it shows a panel, use `.showsWindowsOnScreen`.
 @MainActor
 final class HostedSidebar {
     let panel: TestPanel
