@@ -78,7 +78,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         identities: NotificationIdentities = NotificationIdentities(defaults: UserDefaults.standard),
         notificationDatabase: NotificationDatabase = NotificationDatabase(home: FileManager.default.homeDirectoryForCurrentUser),
         makeController: @escaping @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor (SettingsGroup) -> Void, _ setUp: @escaping @MainActor (PermissionFlowPane, CGRect?) -> Void) -> SidebarPanelController = {
-            SidebarPanelController(model: $0, settings: $1, openSettings: $2, setUp: $3)
+            SidebarPanelController(model: $0, settings: $1, escapeKey: .system, openSettings: $2, setUp: $3)
         },
         makeMonitor: @escaping @MainActor (SidebarModel, SettingsStore, NotificationIdentities, NotificationDatabase) -> NotificationCenterMonitor = {
             SidebarAppDelegate.makeMonitor(model: $0, settings: $1, identities: $2, declaredChoices: DeclaredChoices(database: $3))

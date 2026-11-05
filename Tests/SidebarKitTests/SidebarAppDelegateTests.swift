@@ -392,7 +392,7 @@ struct SidebarAppDelegateTests {
             identities: NotificationIdentities(defaults: database.defaults),
             notificationDatabase: database.database,
             makeController: { model, settings, _, _ in
-                SidebarPanelController(model: model, settings: settings, targetVisibleFrame: { nil }, notificationCenter: NotificationCenter())
+                SidebarPanelController(model: model, settings: settings, escapeKey: FakeEscapeKey().escapeKey, targetVisibleFrame: { nil }, notificationCenter: NotificationCenter())
             },
             makeMonitor: { [platform] model, settings, identities, _ in
                 NotificationCenterMonitor(
@@ -436,7 +436,7 @@ struct SidebarAppDelegateTests {
             identities: identities,
             notificationDatabase: database.database,
             makeController: { model, settings, _, _ in
-                SidebarPanelController(model: model, settings: settings, targetVisibleFrame: { nil }, notificationCenter: NotificationCenter())
+                SidebarPanelController(model: model, settings: settings, escapeKey: FakeEscapeKey().escapeKey, targetVisibleFrame: { nil }, notificationCenter: NotificationCenter())
             },
             makeMonitor: { [platform] model, settings, identities, _ in
                 SidebarAppDelegate.makeMonitor(
@@ -496,7 +496,7 @@ struct SidebarAppDelegateTests {
             identities: identities,
             notificationDatabase: database.database,
             makeController: { model, settings, _, _ in
-                SidebarPanelController(model: model, settings: settings, targetVisibleFrame: { nil }, notificationCenter: NotificationCenter())
+                SidebarPanelController(model: model, settings: settings, escapeKey: FakeEscapeKey().escapeKey, targetVisibleFrame: { nil }, notificationCenter: NotificationCenter())
             },
             makeMonitor: { [platform] model, _, _, _ in
                 NotificationCenterMonitor(platform: platform, interceptor: SystemNotificationInterceptor { model.add($0) },

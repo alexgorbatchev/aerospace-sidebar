@@ -1,5 +1,31 @@
 import AppKit
+import os
 import SwiftUI
+
+/// Whether Escape dismisses the blackout card, for the hint under it.
+@MainActor
+@Observable
+final class BlackoutEscape {
+    enum State: Equatable {
+        /// Not held: no blackout shows, or a reply typed on the card has Escape.
+        case released
+        /// Held for the blackout card.
+        case held
+        /// The system refused it, as when another app holds it.
+        case refused
+    }
+
+    fileprivate(set) var state = State.released
+
+    /// What the blackout says about Escape under the card.
+    var hint: String? {
+        switch state {
+        case .released: nil
+        case .held: "Press Esc to dismiss"
+        case .refused: "Another app holds Esc"
+        }
+    }
+}
 
 /// Uses the same nonactivating panel and card as the sidebar, covering its main display until answered.
 @MainActor
@@ -19,7 +45,9 @@ final class AnnoyancePanel {
     /// Holds Escape while the blackout shows, so the card can be dismissed from the keyboard whatever happens to
     /// the panel's own mouse and keyboard handling. Released while a reply is typed on the card, whose field
     /// closes on Escape.
-    private(set) var escapeRegistration: AnyObject?
+    private var escapeRegistration: AnyObject?
+    let escape = BlackoutEscape()
+    private let logger = Logger(category: "annoyance")
 
     init(model: SidebarModel, settings: SettingsStore, panelType: SidebarPanel.Type,
          screenFrame: @escaping @MainActor () -> CGRect?, escapeKey: EscapeKey) {
@@ -35,7 +63,7 @@ final class AnnoyancePanel {
         panel.isOpaque = false
         panel.hasShadow = false
         panel.becomesKeyOnlyIfNeeded = true
-        panel.contentView = SidebarHostingView(rootView: AnnoyanceContent(model: model, settings: settings)
+        panel.contentView = SidebarHostingView(rootView: AnnoyanceContent(model: model, settings: settings, escape: escape)
             .environment(\.requestKeyboard, { [weak panel] in panel?.takeKeyboard() }))
         model.annoyanceChanged = { [weak self] in self?.refresh() }
         settings.observeBackground { [weak self] in self?.showBackdrop($0) }
@@ -61,16 +89,33 @@ final class AnnoyancePanel {
         if model.annoyance.blocking, let frame = screenFrame() {
             panel.setFrame(frame, display: true)
             panel.orderFrontRegardless()
-            escapeRegistration = model.isComposingOnAnnoyance
-                ? nil : escapeRegistration ?? escapeKey.register { [weak self] in self?.escape() }
+            holdEscape(!model.isComposingOnAnnoyance)
         } else {
             panel.orderOut(nil)
+            holdEscape(false)
+        }
+    }
+
+    /// Registers Escape for the blackout card, or releases it. A refused registration is tried again at the next
+    /// refresh, since the app holding the key may let it go, and logged once until the key is released.
+    private func holdEscape(_ hold: Bool) {
+        guard hold else {
             escapeRegistration = nil
+            escape.state = .released
+            return
+        }
+        guard escapeRegistration == nil else { return }
+        escapeRegistration = escapeKey.register { [weak self] in self?.dismissOnEscape() }
+        if escapeRegistration != nil {
+            escape.state = .held
+        } else if escape.state != .refused {
+            escape.state = .refused
+            logger.error("Escape is held by another app, so only the blackout card's dismiss button dismisses it")
         }
     }
 
     /// Dismisses the card the blackout shows, like its dismiss button.
-    private func escape() {
+    private func dismissOnEscape() {
         guard model.annoyance.blocking, let id = model.annoyance.active?.id else { return }
         model.dismiss(id)
     }
@@ -79,7 +124,7 @@ final class AnnoyancePanel {
         timer?.invalidate()
         timer = nil
         panel.orderOut(nil)
-        escapeRegistration = nil
+        holdEscape(false)
     }
 
     isolated deinit {
@@ -94,6 +139,7 @@ struct AnnoyanceContent: View {
 
     let model: SidebarModel
     let settings: SettingsStore
+    let escape: BlackoutEscape
     @State private var hovered = false
     @Environment(\.typography) private var typography
 
@@ -103,13 +149,15 @@ struct AnnoyanceContent: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         NotificationCard(notification: notification, model: model, isHovered: hovered, hover: { hovered = $0 })
-                        Text("Press Esc to dismiss")
-                            .font(typography.font(.callout))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .background(.regularMaterial, in: Capsule())
-                            .padding(.top, Self.margin)
+                        if let hint = escape.hint {
+                            Text(hint)
+                                .font(typography.font(.callout))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(.regularMaterial, in: Capsule())
+                                .padding(.top, Self.margin)
+                        }
                     }
                     .padding(Self.margin)
                 }

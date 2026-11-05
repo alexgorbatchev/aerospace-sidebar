@@ -197,6 +197,7 @@ struct NotificationAnnoyanceTests {
         try #require(controller.annoyancePanel.timer).fire()
         #expect(panel.isVisible)
         #expect(escape.isRegistered)
+        #expect(controller.annoyancePanel.escape.hint == "Press Esc to dismiss")
         // Refreshing while it shows keeps the one registration.
         controller.annoyancePanel.refresh()
         #expect(escape.registrations == 1)
@@ -211,7 +212,39 @@ struct NotificationAnnoyanceTests {
         #expect(model.notifications.map(\.id) == [second.id])
         #expect(!panel.isVisible)
         #expect(!escape.isRegistered)
+        #expect(controller.annoyancePanel.escape.hint == nil)
         #expect(model.annoyance.active?.id == second.id)
+    }
+
+    @Test func escapeHeldByAnotherAppIsSaidAndTriedAgain() throws {
+        var now = Date()
+        let directory = try TemporaryDirectory()
+        let settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), rules: [Rule(source: "Slack", display: .blackout)], now: { now })
+        let escape = FakeEscapeKey()
+        escape.refuses = true
+        let controller = SidebarPanelController.forTesting(
+            model: model, settings: settings, targetScreenFrame: { CGRect(x: 0, y: 0, width: 1000, height: 800) }, escapeKey: escape
+        )
+        let blackout = controller.annoyancePanel
+        defer { blackout.stop() }
+        let card = SidebarNotification(source: "Slack", title: "Alice", receivedAt: now)
+        model.add(card)
+        now += 300
+        try #require(blackout.timer).fire()
+        #expect(blackout.panel.isVisible)
+        #expect(blackout.escape.state == .refused)
+        #expect(blackout.escape.hint == "Another app holds Esc")
+        escape.press()
+        #expect(model.notifications.map(\.id) == [card.id])
+
+        // The other app let go of it.
+        escape.refuses = false
+        blackout.refresh()
+        #expect(blackout.escape.state == .held)
+        escape.press()
+        #expect(model.notifications.isEmpty)
+        #expect(blackout.escape.state == .released)
     }
 
     @Test func replyTypedOnTheBlackoutCardKeepsEscape() throws {
@@ -236,6 +269,7 @@ struct NotificationAnnoyanceTests {
         #expect(escape.isRegistered)
         model.setComposing(true, on: card.id)
         #expect(!escape.isRegistered)
+        #expect(controller.annoyancePanel.escape.hint == nil)
         escape.press()
         #expect(model.notifications.contains { $0.id == card.id })
         model.setComposing(false, on: card.id)

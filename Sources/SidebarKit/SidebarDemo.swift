@@ -31,7 +31,7 @@ public struct SidebarDemo: Equatable, Sendable {
     public func makeDelegate(
         icons: AppIconFont = .bundled(),
         makeController: @escaping @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor (SettingsGroup) -> Void, _ setUp: @escaping @MainActor (PermissionFlowPane, CGRect?) -> Void) -> SidebarPanelController = {
-            SidebarPanelController(model: $0, settings: $1, openSettings: $2, setUp: $3)
+            SidebarPanelController(model: $0, settings: $1, escapeKey: .system, openSettings: $2, setUp: $3)
         }
     ) -> SidebarAppDelegate {
         let store = FixtureStore(notifications: FileNotificationStore(url: notificationsURL).load())

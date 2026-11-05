@@ -37,9 +37,12 @@ public final class SidebarPanelController: NSObject {
     ///   - workspaceCenter: Reports which app is in front.
     ///   - openSettings: Shows the Settings window on a group.
     ///   - setUp: Starts granting a permission from a button at a frame on screen.
+    /// - Parameter escapeKey: Registers Escape for the blackout. The app passes `.system`; tests pass a fake, since
+    ///   the real one takes Escape from every app on the machine.
     public convenience init(
         model: SidebarModel,
         settings: SettingsStore,
+        escapeKey: EscapeKey,
         targetVisibleFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenVisibleFrame,
         targetScreenFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenFrame,
         notificationCenter: NotificationCenter = .default,
@@ -50,14 +53,13 @@ public final class SidebarPanelController: NSObject {
         self.init(
             model: model, settings: settings, targetVisibleFrame: targetVisibleFrame, targetScreenFrame: targetScreenFrame,
             notificationCenter: notificationCenter, workspaceCenter: workspaceCenter, panelType: SidebarPanel.self,
-            escapeKey: .system, openSettings: openSettings, setUp: setUp
+            escapeKey: escapeKey, openSettings: openSettings, setUp: setUp
         )
     }
 
     /// - Parameters:
     ///   - panelType: The panel's class. Tests pass one that keeps the frames they pin it to on any display.
-    ///   - escapeKey: Registers Escape for the blackout; tests pass a fake, since the real one takes Escape from
-    ///     every app on the machine.
+    ///   - escapeKey: Registers Escape for the blackout.
     init(
         model: SidebarModel,
         settings: SettingsStore,

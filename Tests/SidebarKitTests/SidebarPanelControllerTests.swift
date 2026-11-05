@@ -385,7 +385,7 @@ struct SidebarPanelControllerTests {
         model.add(SidebarNotification(source: "test", title: "One card"))
         // Not `forTesting`: the window server skips transparent windows, so this panel shows on screen
         // briefly. Borderless and never made key, it leaves the user's keyboard focus alone.
-        let controller = SidebarPanelController(model: model, settings: settings, notificationCenter: NotificationCenter())
+        let controller = SidebarPanelController(model: model, settings: settings, escapeKey: FakeEscapeKey().escapeKey, notificationCenter: NotificationCenter())
         let panel = try #require(controller.panel as? SidebarPanel)
         panel.identifier = .windowServerProbe
         let screen = try #require(NSScreen.screens.first)

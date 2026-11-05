@@ -143,12 +143,15 @@ final class FakeEscapeKey {
     private var handler: (@MainActor () -> Void)?
     /// How many times Escape was registered.
     private(set) var registrations = 0
+    /// Refuses registrations, as the system does when another app holds Escape.
+    var refuses = false
 
     /// Whether Escape is registered: its registration is still held.
     var isRegistered: Bool { registration != nil }
 
     var escapeKey: EscapeKey {
         EscapeKey { [self] handler in
+            guard !refuses else { return nil }
             let registration = Registration()
             self.registration = registration
             self.handler = handler

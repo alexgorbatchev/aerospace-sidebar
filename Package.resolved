@@ -1,13 +1,13 @@
 {
-  "originHash" : "cb65eb325bbca54ebdfe960127fd8ae5fdee90f64e6827e99e8d69a93bc34506",
+  "originHash" : "e649da6dbfff2b343207287e75cdab4b1c8fa3966cf86e13cd865c6a4c5b0c46",
   "pins" : [
     {
-      "identity" : "hotkey",
+      "identity" : "magnet",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/soffes/HotKey",
+      "location" : "https://github.com/Clipy/Magnet",
       "state" : {
-        "revision" : "a3cf605d7a96f6ff50e04fcb6dea6e2613cfcbe4",
-        "version" : "0.2.1"
+        "revision" : "c721032f386a6664a234e04b98cb68823865369a",
+        "version" : "3.5.0"
       }
     },
     {
@@ -17,6 +17,15 @@
       "state" : {
         "revision" : "65434c9ae04dba97cf52c1dffbe3e4e62b547c82",
         "version" : "2.11.4"
+      }
+    },
+    {
+      "identity" : "sauce",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Clipy/Sauce",
+      "state" : {
+        "revision" : "1fce89ccc9cbb091022c17ef8f9939901d4e951a",
+        "version" : "2.5.2"
       }
     },
     {
