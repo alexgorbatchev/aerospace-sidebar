@@ -1,6 +1,6 @@
 ---
 created_on: 2026-10-26 11:54
-last_modified: 2026-11-05 11:58
+last_modified: 2026-11-05 12:14
 status: current
 ---
 
@@ -25,7 +25,7 @@ Swift package (`Package.swift`) driven by `justfile`:
 - Replace the vendored sketchybar-app-font with a release: `just update-app-font <tag>` (downloads `sketchybar-app-font.ttf`, `icon_map.json` and `LICENSE`, writes the tag to `VERSION`)
 - Release archives into `dist/` (what the release workflow runs): `just release-archives <version>`. Set `AEROSPACE_SIDEBAR_SIGNING_IDENTITY=-` for an ad-hoc build like CI; note that it replaces `.build/AerospaceSidebar.app`, so run `just run` afterwards to restore the Developer ID build.
 
-CI (`.github/workflows/ci.yml`) runs ten focused `ArrivalScrollHostedTests` executions followed by `just coverage` on `macos-26` for pushes to `main` and pull requests, with `AEROSPACE_SIDEBAR_SCREEN_TESTS=1` so the tests that show windows on screen run too (Gotchas). `.github/workflows/release.yml` runs on `v*` tags: coverage gate, `just release-archives`, then `gh release create` with `AerospaceSidebar_<version>_darwin_arm64.tar.gz`, `aerospace-sidebar_<version>_darwin_arm64.tar.gz` and `checksums.txt`. CI has no Developer ID, so release builds are ad-hoc signed and users re-grant Accessibility after each update. The README's installation section depends on these asset names.
+CI (`.github/workflows/ci.yml`) runs ten focused `ArrivalScrollHostedTests` executions followed by `just coverage` on `macos-26` for pushes to `main` and pull requests, with `AEROSPACE_SIDEBAR_SCREEN_TESTS=1` so the tests that show windows on screen run too (Gotchas). `.github/workflows/release.yml` runs on `v*` tags: coverage gate, `just release-archives`, then `gh release create` with `AerospaceSidebar_<version>_darwin_arm64.tar.gz`, `aerospace-sidebar_<version>_darwin_arm64.tar.gz` and `checksums.txt`. Both workflows use `.github/actions/prepare-swift` to cache SwiftPM downloads and `.build` by runner architecture/image, Xcode/Swift/SDK versions, and package manifest/lockfile. Each revision saves its own cache and may restore the latest matching dependency/toolchain cache; test builds always run through `_scratch-tmpdir` with coverage enabled, including after a cache hit. CI has no Developer ID, so release builds are ad-hoc signed and users re-grant Accessibility after each update. The README's installation section depends on these asset names.
 
 `just coverage` runs `swift test --enable-code-coverage`, prints `llvm-cov report` for the test binary, and fails when line or function coverage over `Sources/` drops below 90% or when any `Sources/**/*.swift` file is missing from the report. It excludes `.build/` and `Tests/`. Test targets depend on both executables so each `main.swift` is compiled into the report; they stay unexecuted, so keep them minimal.
 
