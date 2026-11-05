@@ -16,10 +16,9 @@ jobs:
       AEROSPACE_SIDEBAR_SIGNING_IDENTITY: "-"
     steps:
       - uses: actions/checkout@v7
-      - run: brew install just
-      - name: Build tests
+      - name: Prepare Swift tests
         timeout-minutes: 15
-        run: swift build --build-tests
+        uses: ./.github/actions/prepare-swift
       - name: Tests and coverage gate
         timeout-minutes: 10
         # A pseudo-terminal keeps test output line-buffered, so a hang shows the last test that started.
