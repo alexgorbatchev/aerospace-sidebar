@@ -18,6 +18,7 @@
 # How It Works
 
 1. AeroSpace leaves an empty strip on one edge of the main display, and the sidebar fills it.
+   Only one sidebar runs at a time: a second copy, from any build, quits as it starts and leaves the running one alone.
 2. When an app posts a macOS notification, its banner vanishes and a card appears at the top of its severity group.
 3. `aerospace-sidebar notification push` adds a card from the terminal, starting the sidebar when it is not running. `notification ask` also waits for your answer.
 4. Clicking a card runs its action, or opens the notification in the app that posted it, and removes the card. Option-click, or the × that appears on hover, removes it without acting.

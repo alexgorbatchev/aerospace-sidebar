@@ -25,13 +25,39 @@ struct SidebarDemoTests {
         }
     }
 
-    @Test func readsTheDirectoryAfterTheDemoArgument() {
+    @Test func readsTheDirectoryAfterTheDemoArgument() throws {
         #expect(SidebarDemo(arguments: ["app", "--demo", "/tmp/demo"])?.directory.path == "/tmp/demo")
         #expect(SidebarDemo(arguments: ["app", "-NSDocumentRevisionsDebugMode", "YES", "--demo", "/tmp/demo"])?.notificationsURL.path
             == "/tmp/demo/notifications.json")
         #expect(SidebarDemo(arguments: ["app", "--demo"]) == nil)
         #expect(SidebarDemo(arguments: ["app"]) == nil)
-        #expect(SidebarAppDelegate.launching(arguments: ["app", "--demo", Self.fixture.path]).isDemo)
+        let directory = try TemporaryDirectory()
+        let lockPath = directory.url.appendingPathComponent("sidebar.lock").path
+        #expect(SidebarAppDelegate.launching(arguments: ["app", "--demo", Self.fixture.path], lockPath: lockPath)?.isDemo == true)
+    }
+
+    /// One copy at a time: a launch while another holds the lock gets no delegate, the running copy keeps the
+    /// lock for as long as its delegate lives, and the next launch after it gets one.
+    @Test func launchesOnlyWhileNoOtherCopyRuns() throws {
+        let directory = try TemporaryDirectory()
+        let lockPath = directory.url.appendingPathComponent("sidebar.lock").path
+        let arguments = ["app", "--demo", Self.fixture.path]
+
+        var running = try #require(SidebarAppDelegate.launching(arguments: arguments, lockPath: lockPath))
+        #expect(running.instanceLock?.path == lockPath)
+        #expect(SidebarAppDelegate.launching(arguments: arguments, lockPath: lockPath) == nil)
+        #expect(SidebarAppDelegate.launching(arguments: ["app"], lockPath: lockPath) == nil)
+
+        running = try #require(SidebarAppDelegate.launching(arguments: arguments, lockPath: directory.url.appendingPathComponent("other.lock").path))
+        #expect(SidebarAppDelegate.launching(arguments: arguments, lockPath: lockPath)?.isDemo == true)
+        _ = running
+    }
+
+    /// A lock file that cannot be made leaves the sidebar running without the check rather than not at all.
+    @Test func launchesWhenTheLockCannotBeTaken() {
+        let delegate = SidebarAppDelegate.launching(arguments: ["app", "--demo", Self.fixture.path], lockPath: "/nonexistent-directory/sidebar.lock")
+        #expect(delegate?.isDemo == true)
+        #expect(delegate?.instanceLock == nil)
     }
 
     /// Every card in the fixture reads, under the fixture's settings, and none expires: the demo's clock stands at

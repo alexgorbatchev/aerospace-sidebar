@@ -399,12 +399,14 @@ struct SidebarRequestTests {
         #expect(error.description.contains(fragment))
     }
 
-    @Test func controlSocketLivesInPerUserTemporaryDirectory() {
+    @Test func controlSocketAndInstanceLockLiveInPerUserTemporaryDirectory() {
         var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
         confstr(_CS_DARWIN_USER_TEMP_DIR, &buffer, buffer.count)
         let directory = String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
 
         #expect(SidebarApp.controlSocketPath == URL(fileURLWithPath: directory)
             .appendingPathComponent("com.alexgorbatchev.aerospace-sidebar.sock").path)
+        #expect(SidebarApp.instanceLockPath == URL(fileURLWithPath: directory)
+            .appendingPathComponent("com.alexgorbatchev.aerospace-sidebar.lock").path)
     }
 }

@@ -1,5 +1,7 @@
 import Foundation
+import os
 import PermissionFlow
+import SidebarProtocol
 
 /// A sidebar that shows a fixed set of notifications for screenshots (`just screenshot`): the app launched with
 /// `--demo <directory>` lists the cards in the directory's `notifications.json` (the format
@@ -70,8 +72,28 @@ public struct SidebarDemo: Equatable, Sendable {
 }
 
 extension SidebarAppDelegate {
-    /// The delegate the app launches with: the demo the arguments name (`SidebarDemo`), else the sidebar.
-    public static func launching(arguments: [String]) -> SidebarAppDelegate {
-        SidebarDemo(arguments: arguments)?.makeDelegate() ?? SidebarAppDelegate()
+    /// The delegate the app launches with: the demo the arguments name (`SidebarDemo`), else the sidebar. Nil while
+    /// another sidebar or demo runs: only one copy at a time, whichever build it is, because two would stack their
+    /// panels on one strip, fight over NotificationCenter's windows and write the same saved list. The delegate keeps
+    /// the lock (`InstanceLock` at `lockPath`) for the life of the process. A lock that cannot be taken at all lets
+    /// the sidebar run, logged, rather than leave the user without one.
+    public static func launching(arguments: [String], lockPath: String = SidebarApp.instanceLockPath) -> SidebarAppDelegate? {
+        let lock: InstanceLock?
+        do throws(InstanceLock.ClaimError) {
+            lock = try InstanceLock.claim(at: lockPath)
+        } catch {
+            switch error {
+            case .held(let pid):
+                let holder = pid.map { "pid \($0)" } ?? "another process"
+                logger.error("Another sidebar is running (\(holder, privacy: .public)), so this copy quits")
+                return nil
+            case .unavailable(let path, let code):
+                logger.error("Cannot lock \(path, privacy: .public): \(String(cString: strerror(code)), privacy: .public); running without the one-copy check")
+                lock = nil
+            }
+        }
+        let delegate = SidebarDemo(arguments: arguments)?.makeDelegate() ?? SidebarAppDelegate()
+        delegate.instanceLock = lock
+        return delegate
     }
 }

@@ -6,16 +6,25 @@ public enum SidebarApp {
     /// Registered through `CFBundleURLTypes` in the app's Info.plist.
     public static let urlScheme = "aerospace-sidebar"
 
-    /// Control socket for local clients. It lives in the per-user temporary directory
-    /// (`confstr(_CS_DARWIN_USER_TEMP_DIR)`, mode 0700), which the app and a terminal
-    /// resolve identically even when `TMPDIR` differs.
+    /// Control socket for local clients, in the per-user temporary directory (`userTemporaryDirectory`).
     public static var controlSocketPath: String {
+        userTemporaryDirectory.appendingPathComponent("\(bundleIdentifier).sock").path
+    }
+
+    /// The file whose lock the one running sidebar holds (`InstanceLock`), beside the control socket.
+    public static var instanceLockPath: String {
+        userTemporaryDirectory.appendingPathComponent("\(bundleIdentifier).lock").path
+    }
+
+    /// The per-user temporary directory (`confstr(_CS_DARWIN_USER_TEMP_DIR)`, mode 0700), which the app and a
+    /// terminal resolve identically even when `TMPDIR` differs.
+    static var userTemporaryDirectory: URL {
         var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
         let length = confstr(_CS_DARWIN_USER_TEMP_DIR, &buffer, buffer.count)
         let directory = length > 0
             ? String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
             : NSTemporaryDirectory()
-        return URL(fileURLWithPath: directory).appendingPathComponent("\(bundleIdentifier).sock").path
+        return URL(fileURLWithPath: directory)
     }
 }
 

@@ -6,7 +6,7 @@ import SidebarProtocol
 /// Wires the sidebar panel, settings, notification interception, the URL scheme and the control socket.
 @MainActor
 public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
-    private static let logger = Logger(category: "app")
+    static let logger = Logger(category: "app")
 
     public let settings: SettingsStore
     public let model: SidebarModel
@@ -50,6 +50,8 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
     private let activation: ActivationYielder
     /// Shows the cards it was given and nothing else (`SidebarDemo`).
     public let isDemo: Bool
+    /// Keeps other copies from launching while this one runs (`launching(arguments:lockPath:)`).
+    public internal(set) var instanceLock: InstanceLock?
 
     /// - Parameters:
     ///   - identities: Notifications already listed; tests pass one that is not saved in `UserDefaults.standard`.
