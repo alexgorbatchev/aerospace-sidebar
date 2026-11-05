@@ -125,7 +125,7 @@ struct NotificationAnnoyanceTests {
         #expect(controller.annoyancePanel.timer == nil)
         #expect(panel.frame == frame)
         #expect(!panel.ignoresMouseEvents)
-        #expect(panel.backgroundColor == .black)
+        #expect(panel.backgroundColor == SidebarSettings.RGBColor.black.nsColor.withAlphaComponent(AnnoyancePanel.minimumBackdropOpacity))
         frame = CGRect(x: -1000, y: 0, width: 1000, height: 700)
         controller.annoyancePanel.refresh()
         #expect(panel.frame == frame)
@@ -139,6 +139,59 @@ struct NotificationAnnoyanceTests {
         card.dismiss()
         #expect(!panel.isVisible)
         #expect(model.notifications.isEmpty)
+    }
+
+    /// AppKit hit tests and tracks the pointer by view frames and ignores SwiftUI's render transforms, so a scaled
+    /// card would take clicks and hover only where it would sit unscaled.
+    @Test func blackoutCardTakesClicksWhereItIsDrawn() throws {
+        var now = Date()
+        let frame = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        let directory = try TemporaryDirectory()
+        let settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), rules: [Rule(source: "Slack", display: .blackout)], now: { now })
+        let controller = SidebarPanelController.forTesting(model: model, settings: settings, targetScreenFrame: { frame })
+        let panel = controller.annoyancePanel.panel
+        defer { controller.annoyancePanel.stop() }
+        model.add(SidebarNotification(source: "Slack", title: "Alice", body: "Are you there?", receivedAt: now))
+        now += 300
+        try #require(controller.annoyancePanel.timer).fire()
+        let content = try #require(panel.contentView)
+        content.layoutSubtreeIfNeeded()
+
+        let scrollViews = content.descendants(of: NSScrollView.self)
+        try #require(scrollViews.count == 1)
+        let card = try #require(scrollViews[0].documentView)
+        let drawn = card.convert(card.bounds, to: nil)
+        let width = CGFloat(settings.settings.sidebar.width) * AnnoyancePanel.magnification
+        #expect(drawn.width == width)
+        #expect(drawn.midX == frame.midX)
+        // `NSView.hitTest(_:)` and tracking areas use frames: the card's own frame must span what is drawn, and no
+        // view between it and the panel's content may draw through a layer transform.
+        #expect(card.frame.width == width)
+        var view = card
+        while view !== content, let superview = view.superview {
+            #expect(view.layer.map { CATransform3DIsIdentity($0.transform) } ?? true, "\(type(of: view)) draws through a transform")
+            view = superview
+        }
+    }
+
+    @Test func blackoutBackdropFollowsTheSidebarBackground() throws {
+        var now = Date()
+        let directory = try TemporaryDirectory()
+        let settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        settings.update { $0.background = .init(color: .init(red: 10, green: 20, blue: 30), opacity: 0.6) }
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), rules: [Rule(source: "Slack", display: .blackout)], now: { now })
+        let controller = SidebarPanelController.forTesting(model: model, settings: settings, targetScreenFrame: { CGRect(x: 0, y: 0, width: 1000, height: 800) })
+        let panel = controller.annoyancePanel.panel
+        defer { controller.annoyancePanel.stop() }
+        model.add(SidebarNotification(source: "Slack", title: "Alice", receivedAt: now))
+        now += 300
+        try #require(controller.annoyancePanel.timer).fire()
+        #expect(!panel.isOpaque)
+        #expect(panel.backgroundColor == SidebarSettings.RGBColor(red: 10, green: 20, blue: 30).nsColor.withAlphaComponent(0.6))
+        settings.preview(background: .init(color: .black, opacity: 0))
+        // Fully transparent pixels let clicks through to the windows below, so the backdrop keeps a trace.
+        #expect(panel.backgroundColor == SidebarSettings.RGBColor.black.nsColor.withAlphaComponent(AnnoyancePanel.minimumBackdropOpacity))
     }
 
     @Test func blackoutSurvivesCapacityEviction() {
@@ -169,5 +222,15 @@ struct NotificationAnnoyanceTests {
         #expect(editor.draft.rules[0].intervalMinutes == 8)
         #expect(editor.draft.rules[0].title == "Alice")
         #expect(RulesPane.summary(of: editor.draft.rules[0]).contains("Block screen (8 min)"))
+    }
+}
+
+private extension NSView {
+    /// Every view of `type` under this one, depth first.
+    func descendants<Descendant: NSView>(of type: Descendant.Type) -> [Descendant] {
+        subviews.flatMap { subview -> [Descendant] in
+            let own: [Descendant] = (subview as? Descendant).map { [$0] } ?? []
+            return own + subview.descendants(of: type)
+        }
     }
 }
