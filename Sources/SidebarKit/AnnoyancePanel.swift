@@ -4,6 +4,13 @@ import SwiftUI
 /// Uses the same nonactivating panel and card as the sidebar, covering its main display until answered.
 @MainActor
 final class AnnoyancePanel {
+    /// How much larger than in the sidebar the card is laid out. The card is laid out at this size, never scaled:
+    /// AppKit hit tests and tracks the pointer by view frames, which a SwiftUI scale leaves at their unscaled size,
+    /// so a scaled card's controls would take no clicks where they are drawn.
+    static let magnification: CGFloat = 1.5
+    /// The backdrop's least opacity: WindowServer passes clicks through fully transparent pixels to the windows
+    /// below, which the backdrop has to block.
+    static let minimumBackdropOpacity = 0.01
     let panel: SidebarPanel
     private let model: SidebarModel
     private let screenFrame: @MainActor () -> CGRect?
@@ -19,14 +26,20 @@ final class AnnoyancePanel {
         panel.hidesOnDeactivate = false
         panel.isMovable = false
         panel.isReleasedWhenClosed = false
-        panel.isOpaque = true
-        panel.backgroundColor = .black
+        panel.isOpaque = false
         panel.hasShadow = false
         panel.becomesKeyOnlyIfNeeded = true
         panel.contentView = SidebarHostingView(rootView: AnnoyanceContent(model: model, settings: settings)
             .environment(\.requestKeyboard, { [weak panel] in panel?.takeKeyboard() }))
         model.annoyanceChanged = { [weak self] in self?.refresh() }
+        settings.observeBackground { [weak self] in self?.showBackdrop($0) }
+        showBackdrop(settings.background)
         refresh()
+    }
+
+    /// Fills the backdrop like the sidebar's strip, in `[background]`'s color and opacity.
+    private func showBackdrop(_ background: SidebarSettings.Background) {
+        panel.backgroundColor = background.color.nsColor.withAlphaComponent(max(background.opacity, Self.minimumBackdropOpacity))
     }
 
     func refresh() {
@@ -60,6 +73,9 @@ final class AnnoyancePanel {
 }
 
 struct AnnoyanceContent: View {
+    /// Space around the card, inside the scroll view.
+    static let margin: CGFloat = 16
+
     let model: SidebarModel
     let settings: SettingsStore
     @State private var hovered = false
@@ -69,15 +85,15 @@ struct AnnoyanceContent: View {
             if let notification = model.notifications.first(where: { $0.id == model.annoyance.active?.id }), model.annoyance.blocking {
                 ScrollView {
                     NotificationCard(notification: notification, model: model, isHovered: hovered, hover: { hovered = $0 })
-                        .padding(16)
+                        .padding(Self.margin)
                 }
                 .defaultScrollAnchor(.center)
-                .frame(width: min(CGFloat(settings.settings.sidebar.width), geometry.size.width / 1.5), height: geometry.size.height / 1.5)
-                .scaleEffect(1.5)
+                .frame(width: min(CGFloat(settings.settings.sidebar.width) * AnnoyancePanel.magnification, geometry.size.width),
+                       height: geometry.size.height)
                 .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
             }
         }
-        .typography(settings)
+        .typography(settings, magnification: AnnoyancePanel.magnification)
         .sidebarTooltips()
     }
 }
