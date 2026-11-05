@@ -1,6 +1,6 @@
 ---
 created_on: 2026-10-26 11:54
-last_modified: 2026-11-05 10:51
+last_modified: 2026-11-05 11:36
 status: current
 ---
 
@@ -25,7 +25,7 @@ Swift package (`Package.swift`) driven by `justfile`:
 - Replace the vendored sketchybar-app-font with a release: `just update-app-font <tag>` (downloads `sketchybar-app-font.ttf`, `icon_map.json` and `LICENSE`, writes the tag to `VERSION`)
 - Release archives into `dist/` (what the release workflow runs): `just release-archives <version>`. Set `AEROSPACE_SIDEBAR_SIGNING_IDENTITY=-` for an ad-hoc build like CI; note that it replaces `.build/AerospaceSidebar.app`, so run `just run` afterwards to restore the Developer ID build.
 
-CI (`.github/workflows/ci.yml`) runs `just coverage` on `macos-26` for pushes to `main` and pull requests, with `AEROSPACE_SIDEBAR_SCREEN_TESTS=1` so the tests that show windows on screen run too (Gotchas). `.github/workflows/release.yml` runs on `v*` tags: coverage gate, `just release-archives`, then `gh release create` with `AerospaceSidebar_<version>_darwin_arm64.tar.gz`, `aerospace-sidebar_<version>_darwin_arm64.tar.gz` and `checksums.txt`. CI has no Developer ID, so release builds are ad-hoc signed and users re-grant Accessibility after each update. The README's installation section depends on these asset names.
+CI (`.github/workflows/ci.yml`) runs ten focused `ArrivalScrollHostedTests` executions followed by `just coverage` on `macos-26` for pushes to `main` and pull requests, with `AEROSPACE_SIDEBAR_SCREEN_TESTS=1` so the tests that show windows on screen run too (Gotchas). `.github/workflows/release.yml` runs on `v*` tags: coverage gate, `just release-archives`, then `gh release create` with `AerospaceSidebar_<version>_darwin_arm64.tar.gz`, `aerospace-sidebar_<version>_darwin_arm64.tar.gz` and `checksums.txt`. CI has no Developer ID, so release builds are ad-hoc signed and users re-grant Accessibility after each update. The README's installation section depends on these asset names.
 
 `just coverage` runs `swift test --enable-code-coverage`, prints `llvm-cov report` for the test binary, and fails when line or function coverage over `Sources/` drops below 90% or when any `Sources/**/*.swift` file is missing from the report. It excludes `.build/` and `Tests/`. Test targets depend on both executables so each `main.swift` is compiled into the report; they stay unexecuted, so keep them minimal.
 
@@ -190,6 +190,7 @@ macOS has no public API for reserving screen space (no AppBar or strut equivalen
 ## Gotchas
 
 - `HostedSidebar` in `ArrivalScrollTests.swift` checks arrival offsets with uniform cards in a 300×600 alpha-zero `TestPanel`, constructing `SidebarPanelContent` directly without `SidebarPanelController`, its background panel or the full-height strip. It does not reproduce the launch offset drift caused by scaling the list's `ScrollView`, even with varying card heights and reply buttons. The cause of the difference is not isolated; do not assume transparency alone explains it or treat a passing hosted test as launch-regression coverage. Keep the structural guard `contentGrowsOutOfItsCornersOnTheScreenEdge`. A replacement behavioral test must fail when the scroll-view scale is restored and pass without it; any variant that shows a panel takes `.showsWindowsOnScreen` and runs only with `AEROSPACE_SIDEBAR_SCREEN_TESTS=1`.
+- Hosted arrival-scroll assertions wait for SwiftUI to observe the current arrival count, an idle scroll phase, and stable clip bounds and content extent. Long gaps between main-actor samples do not count as stability. Initial readiness must succeed within 30 seconds; subsequent arrival waits retain their ten-second bound and geometry tolerances. Two matching offset samples alone can accept a position before the arrival is rendered.
 - `~/.config/aerospace/aerospace.toml` is generated. Never edit it directly; edit `~/.dotfiles/mac-apps/aerospace/base.toml` or `~/.dotfiles/mac-apps/aerospace/configs/<profile>.toml`, then regenerate.
 - The generator appends profile TOML sections after `base.toml`, and `[gaps]` already lives in `base.toml`. A `[gaps]` table in a profile file produces a duplicate-table TOML error. The sidebar's gap lives in the managed block inside `base.toml`'s `[gaps]`; the generator copies the block from the current generated config instead, so the sidebar's side and width survive regeneration.
 - `base.toml` binds `alt-f = 'fullscreen'` (all profiles). Do not add `--no-outer-gaps`; it makes fullscreen windows cover the sidebar. In the generated file this binding appears below the `# --- Profile: <name> ---` marker because profile bindings are injected directly after `[mode.main.binding]`; it is not profile-specific.

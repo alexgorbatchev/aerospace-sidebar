@@ -379,8 +379,7 @@ struct ArrivalScrollHostedTests {
         // On the sidebar, a newer low card lands far below the visible cards, and the list stays.
         pointerIsOn.value = true
         model.add(listed("quiet", severity: .low, at: 0))
-        try await Task.sleep(for: .milliseconds(800))
-        #expect(abs(sidebar.offset) < 0.5, "\(sidebar.state)")
+        #expect(try await sidebar.settles { abs($0.offset) < 0.5 }, "\(sidebar.state)")
 
         // Elsewhere, a card dropping in among the visible ones, under the bottom fade, comes out from under it.
         pointerIsOn.value = false
@@ -405,6 +404,20 @@ struct ArrivalScrollHostedTests {
         model.add(listed("fire", severity: .critical, at: 2))
         model.add(listed("noise", severity: .low, at: 2))
         #expect(try await sidebar.settles { abs($0.offset) < 0.5 })
+    }
+
+    /// An assertion matching the old position must not finish before SwiftUI observes the arrival.
+    @Test(.enabled(if: !NSScreen.screens.isEmpty, "requires a display"))
+    func settlingDoesNotAcceptThePositionBeforeAnArrival() async throws {
+        let model = model()
+        let sidebar = try HostedSidebar(model: model, pointerIsOn: Mutable(false))
+        defer { sidebar.close() }
+        try await sidebar.revealed()
+
+        model.add(listed("late", severity: .low, at: -61))
+        let acceptedOldPosition = try await sidebar.settles(timeout: .seconds(1)) { abs($0.offset) < 0.5 }
+        #expect(!acceptedOldPosition)
+        #expect(try await sidebar.settles { $0.offset > 1000 && abs($0.offset - $0.maxOffset) < 1 }, "\(sidebar.state)")
     }
 
     /// With Reduce Motion the list jumps to the arriving card, all the way to the end for the last one, although the
@@ -486,8 +499,12 @@ final class HostedSidebar {
     let panel: TestPanel
     let clip: NSClipView
     private let directory: TemporaryDirectory
+    private let model: SidebarModel
+    private let renderedArrivals = Mutable(-1)
+    private let scrollPhase = Mutable(ScrollPhase.idle)
 
     init(model: SidebarModel, pointerIsOn: Mutable<Bool>, reduceMotion: Bool = false) throws {
+        self.model = model
         directory = try TemporaryDirectory()
         let settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
         panel = TestPanel(
@@ -498,7 +515,9 @@ final class HostedSidebar {
             model: model, settings: settings, openSettings: { _ in }, setUp: { _, _ in }, requestKeyboard: {},
             pointerIsOn: { pointerIsOn.value }
         )
-        panel.contentView = NSHostingView(rootView: content.environment(\._accessibilityReduceMotion, reduceMotion))
+        panel.contentView = NSHostingView(rootView: ObservedSidebar(
+            model: model, renderedArrivals: renderedArrivals, scrollPhase: scrollPhase, content: content
+        ).environment(\._accessibilityReduceMotion, reduceMotion))
         panel.orderFrontRegardless()
         let view = try #require(panel.contentView)
         view.layoutSubtreeIfNeeded()
@@ -511,7 +530,9 @@ final class HostedSidebar {
 
     var offset: CGFloat { clip.bounds.minY }
     /// Where the list is scrolled and how far it scrolls, for failure messages.
-    var state: String { "offset \(offset) of \(maxOffset), visible \(visibleHeight)" }
+    var state: String {
+        "offset \(offset) of \(maxOffset), visible \(visibleHeight), arrivals \(renderedArrivals.value)/\(model.arrivals.count)"
+    }
     var maxOffset: CGFloat { clip.constrainBoundsRect(CGRect(origin: CGPoint(x: 0, y: 1e6), size: clip.bounds.size)).minY }
     var visibleHeight: CGFloat { clip.bounds.height }
 
@@ -526,48 +547,72 @@ final class HostedSidebar {
         return top...(top + pitch - spacing)
     }
 
-    /// Waits for the content to grow out of its corner as it first appears, which moves the list, until the list
-    /// stands still.
+    /// The initial view must have observed the model and finished laying out before the first arrival.
+    /// Suite startup can monopolize the main actor for over ten seconds; readiness gets a separate 30s bound.
     func revealed() async throws {
-        try await Task.sleep(for: .milliseconds(300))
-        var last = (offset, maxOffset)
-        var stillFor = 0
-        let deadline = ContinuousClock.now + .seconds(10)
-        while stillFor < 10, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(20))
-            let now = (offset, maxOffset)
-            stillFor = now == last ? stillFor + 1 : 0
-            last = now
-        }
+        try #require(try await settles(timeout: .seconds(30)) { $0.visibleHeight > 0 }, "\(state)")
     }
 
-    /// Waits up to `timeout` for the list to meet `condition` and stay still: an animated scroll meets it only once
-    /// it ends. The timeout is generous because other tests share the main actor; a list that settles returns at
-    /// once.
+    /// An unchanged offset alone is not a settled scroll: it can pause while the content still grows, and the
+    /// arrival may not even have reached SwiftUI yet. Wait for the observed arrival generation and stable clip
+    /// bounds/content extent for half a second, without changing the timeout or the caller's geometric tolerance.
     func settles(timeout: Duration = .seconds(10), _ condition: (HostedSidebar) -> Bool) async throws -> Bool {
-        var previous = offset
-        return try await Self.eventually(timeout: timeout) {
-            defer { previous = offset }
-            return condition(self) && offset == previous
-        }
+        try await waitForSettlement(timeout: timeout, still: .milliseconds(500), sample: { _ in }, until: condition)
     }
 
-    /// The offsets the list passes through, sampled every few milliseconds, until it meets `condition` and has stood
-    /// still for `still`, or `timeout` passes.
+    /// The distinct offsets traversed before the same layout/arrival barrier used by `settles` completes.
     func offsets(
         timeout: Duration = .seconds(10), still: Duration = .milliseconds(500), until condition: (HostedSidebar) -> Bool
     ) async throws -> [CGFloat] {
         var offsets = [offset]
-        var lastMove = ContinuousClock.now
-        let deadline = ContinuousClock.now + timeout
-        while ContinuousClock.now < deadline, !(condition(self) && ContinuousClock.now - lastMove >= still) {
-            try await Task.sleep(for: .milliseconds(5))
-            if abs(offsets[offsets.count - 1] - offset) >= 0.5 {
-                offsets.append(offset)
-                lastMove = .now
-            }
-        }
+        let settled = try await waitForSettlement(timeout: timeout, still: still, pollEvery: .milliseconds(5), sample: { offset in
+            if abs(offsets[offsets.count - 1] - offset) >= 0.5 { offsets.append(offset) }
+        }, until: condition)
+        #expect(settled, "\(state)")
         return offsets
+    }
+
+    private func waitForSettlement(
+        timeout: Duration, still: Duration, pollEvery: Duration = .milliseconds(20),
+        sample: (CGFloat) -> Void, until condition: (HostedSidebar) -> Bool
+    ) async throws -> Bool {
+        var previous = (clip.bounds, maxOffset)
+        var stableSince: ContinuousClock.Instant?
+        var lastSample = ContinuousClock.now
+        let deadline = lastSample + timeout
+        repeat {
+            // Apply pending hosting-view layout before inspecting AppKit's scroll geometry.
+            panel.contentView?.layoutSubtreeIfNeeded()
+            let current = (clip.bounds, maxOffset)
+            let now = ContinuousClock.now
+            let ready = renderedArrivals.value == model.arrivals.count && scrollPhase.value == .idle && condition(self)
+            // Time spent unable to sample the main actor is not evidence that animation finished.
+            if current != previous || !ready || now - lastSample >= still { stableSince = nil }
+            lastSample = now
+            previous = current
+            sample(offset)
+            if now >= deadline { return false }
+            if ready {
+                if let stableSince, now - stableSince >= still { return true }
+                if stableSince == nil { stableSince = now }
+            }
+            try await Task.sleep(for: pollEvery)
+        } while true
+    }
+
+    /// Observe arrivals from a view body, so this tracks rendered model changes rather than a value captured when
+    /// constructing the host. It observes production content without substituting its scrolling behavior.
+    private struct ObservedSidebar: View {
+        let model: SidebarModel
+        let renderedArrivals: Mutable<Int>
+        let scrollPhase: Mutable<ScrollPhase>
+        let content: SidebarPanelContent
+
+        var body: some View {
+            content
+                .onChange(of: model.arrivals.count, initial: true) { _, count in renderedArrivals.value = count }
+                .onScrollPhaseChange { _, phase in scrollPhase.value = phase }
+        }
     }
 
     static func scrollView(in view: NSView) -> NSScrollView? {
