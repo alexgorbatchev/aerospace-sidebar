@@ -456,7 +456,7 @@ public final class SidebarModel {
     /// Where `received` is kept; without one it lasts until the app quits.
     @ObservationIgnored private let receivedStore: (any NotificationStore)?
     /// Where choices such as `fullDiskAccessNoteDismissed` are kept; without one they last until the app quits.
-    @ObservationIgnored private let defaults: UserDefaults?
+    @ObservationIgnored private let defaults: (any Preferences)?
     @ObservationIgnored private let now: () -> Date
     /// How long and how many notifications are kept.
     @ObservationIgnored public private(set) var history: SidebarSettings.History
@@ -479,7 +479,7 @@ public final class SidebarModel {
         performer: any NotificationActionPerforming = WorkspaceActionPerformer(),
         store: any NotificationStore,
         receivedStore: (any NotificationStore)? = nil,
-        defaults: UserDefaults? = nil,
+        defaults: (any Preferences)? = nil,
         history: SidebarSettings.History = SidebarSettings.History(),
         rules: [SidebarSettings.Rule] = [],
         listsSwitchedOffApps: Bool = false,

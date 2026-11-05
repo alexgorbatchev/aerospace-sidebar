@@ -68,14 +68,14 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
             SidebarModel(
                 store: FileNotificationStore(),
                 receivedStore: FileNotificationStore(url: FileNotificationStore.receivedURL),
-                defaults: .standard,
+                defaults: UserDefaults.standard,
                 history: $0.history,
                 rules: $0.rules,
                 listsSwitchedOffApps: $0.notifications.listsSwitchedOffApps
             )
         },
         icons: AppIconFont = .bundled(),
-        identities: NotificationIdentities = NotificationIdentities(defaults: .standard),
+        identities: NotificationIdentities = NotificationIdentities(defaults: UserDefaults.standard),
         notificationDatabase: NotificationDatabase = NotificationDatabase(home: FileManager.default.homeDirectoryForCurrentUser),
         makeController: @escaping @MainActor (SidebarModel, SettingsStore, _ openSettings: @escaping @MainActor (SettingsGroup) -> Void, _ setUp: @escaping @MainActor (PermissionFlowPane, CGRect?) -> Void) -> SidebarPanelController = {
             SidebarPanelController(model: $0, settings: $1, openSettings: $2, setUp: $3)
@@ -325,7 +325,7 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         model: SidebarModel,
         identities: NotificationIdentities,
         database: NotificationDatabase,
-        defaults: UserDefaults = .standard,
+        defaults: any Preferences = UserDefaults.standard,
         onChoices: @escaping @MainActor (_ identifier: String, _ choices: [NativeChoice]) -> Void = { _, _ in }
     ) -> NotificationDatabaseMonitor {
         NotificationDatabaseMonitor(

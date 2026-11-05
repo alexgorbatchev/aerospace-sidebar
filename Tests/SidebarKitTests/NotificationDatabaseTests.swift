@@ -3,21 +3,15 @@ import Foundation
 import SQLite3
 import Testing
 
-/// A notification database shaped like macOS's, in a temporary directory, with its own defaults domain.
+/// A notification database shaped like macOS's, in a temporary directory, with memory-only preferences.
 final class NotificationDatabaseFixture {
     let directory: TemporaryDirectory
     let database: NotificationDatabase
-    let defaults: UserDefaults
-    private let suiteName = "aerospace-sidebar-tests-\(UUID().uuidString)"
+    let defaults = InMemoryPreferences()
 
     init() throws {
         directory = try TemporaryDirectory()
         database = NotificationDatabase(url: directory.url.appendingPathComponent("db2/db"))
-        defaults = try #require(UserDefaults(suiteName: suiteName))
-    }
-
-    deinit {
-        defaults.removePersistentDomain(forName: suiteName)
     }
 
     func create() throws {

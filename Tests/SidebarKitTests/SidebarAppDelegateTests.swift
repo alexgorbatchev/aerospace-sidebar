@@ -12,7 +12,7 @@ struct SidebarAppDelegateTests {
     let permissions = FakePermissions()
     let cli = FakeAeroSpaceCLI()
     let database: NotificationDatabaseFixture
-    /// Kept in the fixture's defaults domain, never `UserDefaults.standard`.
+    /// Kept in the fixture's memory-only preferences, never `UserDefaults.standard`.
     let identities: NotificationIdentities
 
     init() throws {
@@ -24,7 +24,7 @@ struct SidebarAppDelegateTests {
     }
 
     /// Reads a database in the test's directory, never the real one.
-    /// Keeps the read position in the fixture's defaults domain; the delegate hands it the fixture's database.
+    /// Keeps the read position in the fixture's memory-only preferences; the delegate hands it the fixture's database.
     func makeDatabaseMonitor(
         _ model: SidebarModel,
         _ identities: NotificationIdentities,

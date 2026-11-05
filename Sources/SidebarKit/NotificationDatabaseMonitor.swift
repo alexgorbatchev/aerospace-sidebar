@@ -51,7 +51,7 @@ public final class NotificationDatabaseMonitor {
 
     private let database: NotificationDatabase
     private let identities: NotificationIdentities
-    private let defaults: UserDefaults
+    private let defaults: any Preferences
     private let grace: TimeInterval
     private let installedApp: @MainActor (String) -> InstalledApps.App?
     private let now: () -> Date
@@ -83,7 +83,7 @@ public final class NotificationDatabaseMonitor {
     public init(
         database: NotificationDatabase,
         identities: NotificationIdentities,
-        defaults: UserDefaults = .standard,
+        defaults: any Preferences = UserDefaults.standard,
         grace: TimeInterval = 1,
         installedApp: @escaping @MainActor (String) -> InstalledApps.App? = InstalledApps.app,
         now: @escaping () -> Date = Date.init,

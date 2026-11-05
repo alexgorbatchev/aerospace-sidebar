@@ -1,5 +1,15 @@
 import Foundation
 
+/// The preference operations used by the sidebar. Production uses UserDefaults; tests keep values in memory.
+public protocol Preferences: AnyObject {
+    func object(forKey key: String) -> Any?
+    func bool(forKey key: String) -> Bool
+    func stringArray(forKey key: String) -> [String]?
+    func set(_ value: Any?, forKey key: String)
+}
+
+extension UserDefaults: Preferences {}
+
 /// The UUIDs of native notifications already listed. NotificationCenter shows each notification's UUID
 /// as its `AXIdentifier`, and the notification database records the same UUID (OmniWM), so both sources
 /// share this record and neither lists a notification the other already did.
@@ -12,12 +22,12 @@ public final class NotificationIdentities {
     static let capacity = 2000
     static let defaultsKey = "notificationIdentities"
 
-    private let defaults: UserDefaults?
+    private let defaults: (any Preferences)?
     private var order: [String]
     private var members: Set<String>
 
     /// - Parameter defaults: Where the record is kept between launches; nil keeps it in memory only.
-    public init(defaults: UserDefaults? = nil) {
+    public init(defaults: (any Preferences)? = nil) {
         self.defaults = defaults
         order = Array((defaults?.stringArray(forKey: Self.defaultsKey) ?? []).suffix(Self.capacity))
         members = Set(order)
