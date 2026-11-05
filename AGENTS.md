@@ -1,6 +1,6 @@
 ---
 created_on: 2026-10-26 11:54
-last_modified: 2026-11-05 14:21
+last_modified: 2026-11-05 14:26
 status: current
 ---
 
@@ -25,7 +25,7 @@ Swift package (`Package.swift`) driven by `justfile`:
 - Replace the vendored sketchybar-app-font with a release: `just update-app-font <tag>` (downloads `sketchybar-app-font.ttf`, `icon_map.json` and `LICENSE`, writes the tag to `VERSION`)
 - Release archives into `dist/` (what the release workflow runs): `just release-archives <version>`. Set `AEROSPACE_SIDEBAR_SIGNING_IDENTITY=-` for an ad-hoc build like CI; note that it replaces `.build/AerospaceSidebar.app`, so run `just run` afterwards to restore the Developer ID build.
 
-CI (`.github/workflows/ci.yml`) runs ten focused `ArrivalScrollHostedTests` executions followed by `just coverage` on `macos-26` for pushes to `main` and pull requests, with `AEROSPACE_SIDEBAR_SCREEN_TESTS=1` so the tests that show windows on screen run too (Gotchas). `.github/workflows/release.yml` runs on `v*` tags: coverage gate, `just release-archives`, then `gh release create` with `AerospaceSidebar_<version>_darwin_arm64.tar.gz`, `aerospace-sidebar_<version>_darwin_arm64.tar.gz` and `checksums.txt`. CI has no Developer ID, so release builds are ad-hoc signed and users re-grant Accessibility after each update. The README's installation section depends on these asset names.
+CI (`.github/workflows/ci.yml`) runs ten focused `ArrivalScrollHostedTests` executions followed by `just coverage` on `macos-26` for pushes to `main` and pull requests, with `AEROSPACE_SIDEBAR_SCREEN_TESTS=1` so the tests that show windows on screen run too (Gotchas). `.github/workflows/release.yml` runs on `v*` tags: coverage gate, `just release-archives`, then `gh release create` with `AerospaceSidebar_<version>_darwin_arm64.tar.gz`, `aerospace-sidebar_<version>_darwin_arm64.tar.gz` and `checksums.txt`. Both workflows use `.github/actions/prepare-swift` to cache SwiftPM downloads and `.build` by runner architecture/image, Xcode/Swift/SDK versions, and package manifest/lockfile. Each revision saves its own cache and may restore the latest matching dependency/toolchain cache; test builds always run through `_scratch-tmpdir` with coverage enabled, including after a cache hit. CI has no Developer ID, so release builds are ad-hoc signed and users re-grant Accessibility after each update. The README's installation section depends on these asset names.
 
 `just test` and `just coverage` pass `--no-parallel` to Swift Testing: concurrent AppKit/SwiftUI test setup can monopolize the main actor past hosted animation tests' deadlines. Keep the strict one-thread cooperative pool too; serial test cases do not disable concurrency exercised within a test. Focused CI repetitions use the same execution mode.
 
