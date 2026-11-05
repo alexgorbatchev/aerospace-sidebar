@@ -56,15 +56,16 @@
 
 # Installation
 
-Download the app and the command for macOS (Apple Silicon) from the [latest release](https://github.com/alexgorbatchev/aerospace-sidebar/releases/latest), replacing `X.X.X` with the version shown on that page.
+Download the app for macOS (Apple Silicon) from the [latest release](https://github.com/alexgorbatchev/aerospace-sidebar/releases/latest) and link the `aerospace-sidebar` command it carries onto your `PATH`:
 
 ```bash
+version=$(curl -sSI https://github.com/alexgorbatchev/aerospace-sidebar/releases/latest | sed -n 's|^location: .*/tag/v\(.*\)\r$|\1|ip')
 mkdir -p ~/Applications ~/.local/bin
-curl -sSL https://github.com/alexgorbatchev/aerospace-sidebar/releases/latest/download/AerospaceSidebar_X.X.X_darwin_arm64.tar.gz | tar -xz -C ~/Applications
-curl -sSL https://github.com/alexgorbatchev/aerospace-sidebar/releases/latest/download/aerospace-sidebar_X.X.X_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin
+curl -sSL "https://github.com/alexgorbatchev/aerospace-sidebar/releases/download/v$version/AerospaceSidebar_${version}_darwin_arm64.tar.gz" | tar -xz -C ~/Applications
+ln -sf ~/Applications/AerospaceSidebar.app/Contents/Helpers/aerospace-sidebar ~/.local/bin/aerospace-sidebar
 ```
 
-The app also carries the command at `AerospaceSidebar.app/Contents/Helpers/aerospace-sidebar`, so linking that onto your `PATH` works instead of the second download.
+Run the same commands to update. Each release also has the command on its own as `aerospace-sidebar_<version>_darwin_arm64.tar.gz`.
 
 # Setup
 
@@ -227,6 +228,68 @@ Each `choice` adds a link button: its value is the button's title, `=`, and the 
 ```html
 <a href="aerospace-sidebar://notification/push?title=Build%20done&severity=high&open=https%3A%2F%2Fci.example.com">Notify me</a>
 ```
+
+# Recipes
+
+## Claude Code and Codex turn cards
+
+Shows a card whenever a Claude Code or Codex turn ends, titled with the project and holding the agent's last message as markdown. Each project keeps one card that the next turn replaces, and clicking it brings the terminal forward. Inside a [herdr](https://herdr.dev) pane each pane keeps its own card, and clicking it also focuses that pane. Needs [`jq`](https://jqlang.org).
+
+Save this as `~/.local/bin/agent-turn-card` and make it executable (`chmod +x ~/.local/bin/agent-turn-card`):
+
+```bash
+#!/usr/bin/env bash
+# Posts an aerospace-sidebar card when a Claude Code or Codex turn ends.
+# Usage: agent-turn-card claude|codex, with the Stop hook's JSON on stdin.
+set -euo pipefail
+
+agent="$1"
+input="$(cat)"
+command -v aerospace-sidebar >/dev/null || exit 0
+
+project="$(basename "$(jq -r '.cwd' <<<"$input")")"
+message="$(jq -r '(.last_assistant_message // "")[:300]' <<<"$input")"
+
+if [ -n "${HERDR_PANE_ID:-}" ]; then
+  # One card per herdr pane; a click focuses the pane, then the terminal app.
+  key="herdr:$HERDR_PANE_ID"
+  click="$(printf 'HERDR_SOCKET_PATH=%q %q agent focus %q' \
+    "${HERDR_SOCKET_PATH:-$HOME/.config/herdr/herdr.sock}" "${HERDR_BIN_PATH:-herdr}" "$HERDR_PANE_ID")"
+else
+  # One card per project; a click brings the terminal app forward.
+  key="$agent:$project"
+  click="true"
+fi
+[ -n "${__CFBundleIdentifier:-}" ] && click+="; open -b $(printf '%q' "$__CFBundleIdentifier")"
+
+aerospace-sidebar notification push --markdown --icon "$agent" --key "$key" \
+  --title "$project" --body "$message" --run "$click" >/dev/null
+```
+
+Run it from Claude Code's `Stop` hook in `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "$HOME/.local/bin/agent-turn-card claude", "timeout": 10 }] }
+    ]
+  }
+}
+```
+
+And from Codex's in `~/.codex/config.toml`, then approve it once with `/hooks` in Codex:
+
+```toml
+[[hooks.Stop]]
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = "$HOME/.local/bin/agent-turn-card codex"
+timeout = 10
+```
+
+The message is cut to its first 300 characters, which can leave a markdown span open at the end. The click command records the herdr binary, socket and pane as they were when the card was pushed, so a card from a pane that has since moved to another tab focuses nothing.
 
 # License
 
