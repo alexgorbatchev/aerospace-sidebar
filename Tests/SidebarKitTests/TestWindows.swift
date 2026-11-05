@@ -118,17 +118,48 @@ extension SidebarPanelController {
         targetScreenFrame: @escaping @MainActor () -> CGRect? = SidebarPanelController.primaryScreenFrame,
         notificationCenter: NotificationCenter = NotificationCenter(),
         workspaceCenter: NotificationCenter = NotificationCenter(),
+        escapeKey: FakeEscapeKey = FakeEscapeKey(),
         openSettings: @escaping @MainActor (SettingsGroup) -> Void = { _ in },
         setUp: @escaping @MainActor (PermissionFlowPane, CGRect?) -> Void = { _, _ in }
     ) -> SidebarPanelController {
         let controller = SidebarPanelController(
             model: model, settings: settings, targetVisibleFrame: targetVisibleFrame, targetScreenFrame: targetScreenFrame,
             notificationCenter: notificationCenter, workspaceCenter: workspaceCenter, panelType: TestSidebarPanel.self,
-            openSettings: openSettings, setUp: setUp
+            escapeKey: escapeKey.escapeKey, openSettings: openSettings, setUp: setUp
         )
         controller.panel.alphaValue = 0
         controller.background.window.alphaValue = 0
         controller.annoyancePanel.panel.alphaValue = 0
         return controller
+    }
+}
+
+/// Stands in for `EscapeKey.system`, which would take Escape from every app on the machine while tests run.
+@MainActor
+final class FakeEscapeKey {
+    private final class Registration {}
+
+    private weak var registration: Registration?
+    private var handler: (@MainActor () -> Void)?
+    /// How many times Escape was registered.
+    private(set) var registrations = 0
+
+    /// Whether Escape is registered: its registration is still held.
+    var isRegistered: Bool { registration != nil }
+
+    var escapeKey: EscapeKey {
+        EscapeKey { [self] handler in
+            let registration = Registration()
+            self.registration = registration
+            self.handler = handler
+            registrations += 1
+            return registration
+        }
+    }
+
+    /// Presses Escape, which reaches the handler only while it is registered.
+    func press() {
+        guard isRegistered else { return }
+        handler?()
     }
 }

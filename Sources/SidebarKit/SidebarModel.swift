@@ -657,6 +657,13 @@ public final class SidebarModel {
         } else {
             composing.remove(id)
         }
+        // The blackout gives Escape back to a reply field typed on its card.
+        if id == annoyance.active?.id { annoyanceChanged() }
+    }
+
+    /// Whether a reply is being typed on the card that owns the annoyance cycle.
+    var isComposingOnAnnoyance: Bool {
+        annoyance.active.map { composing.contains($0.id) } ?? false
     }
 
     public func dismiss(_ id: SidebarNotification.ID) {

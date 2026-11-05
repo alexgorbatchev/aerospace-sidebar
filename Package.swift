@@ -14,6 +14,7 @@ let package = Package(
         .package(url: "https://github.com/mattt/swift-toml", from: "2.0.0"),
         .package(url: "https://github.com/nalexn/ViewInspector", from: "0.10.5"),
         .package(url: "https://github.com/jaywcjlove/PermissionFlow", from: "2.11.4"),
+        .package(url: "https://github.com/soffes/HotKey", from: "0.2.1"),
     ],
     targets: [
         .target(name: "SidebarProtocol"),
@@ -24,6 +25,7 @@ let package = Package(
                 .product(name: "TOMLDecoder", package: "TOMLDecoder"),
                 .product(name: "TOML", package: "swift-toml"),
                 .product(name: "PermissionFlow", package: "PermissionFlow"),
+                .product(name: "HotKey", package: "HotKey"),
             ]
         ),
         .executableTarget(

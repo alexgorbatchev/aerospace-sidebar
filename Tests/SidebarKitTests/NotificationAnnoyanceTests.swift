@@ -175,6 +175,75 @@ struct NotificationAnnoyanceTests {
         }
     }
 
+    @Test func escapeDismissesTheBlackoutCardOnlyWhileItShows() throws {
+        var now = Date()
+        var frame: CGRect? = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        let directory = try TemporaryDirectory()
+        let settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), rules: [Rule(source: "Slack", display: .blackout)], now: { now })
+        let escape = FakeEscapeKey()
+        let controller = SidebarPanelController.forTesting(model: model, settings: settings, targetScreenFrame: { frame }, escapeKey: escape)
+        let panel = controller.annoyancePanel.panel
+        defer { controller.annoyancePanel.stop() }
+        let first = SidebarNotification(source: "Slack", title: "first", receivedAt: now)
+        let second = SidebarNotification(source: "Slack", title: "second", receivedAt: now + 1)
+        model.add(first)
+        model.add(second)
+        #expect(!escape.isRegistered)
+        escape.press()
+        #expect(model.notifications.count == 2)
+
+        now += 300
+        try #require(controller.annoyancePanel.timer).fire()
+        #expect(panel.isVisible)
+        #expect(escape.isRegistered)
+        // Refreshing while it shows keeps the one registration.
+        controller.annoyancePanel.refresh()
+        #expect(escape.registrations == 1)
+        frame = nil
+        controller.annoyancePanel.refresh()
+        #expect(!escape.isRegistered)
+        frame = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        controller.annoyancePanel.refresh()
+        #expect(escape.isRegistered)
+
+        escape.press()
+        #expect(model.notifications.map(\.id) == [second.id])
+        #expect(!panel.isVisible)
+        #expect(!escape.isRegistered)
+        #expect(model.annoyance.active?.id == second.id)
+    }
+
+    @Test func replyTypedOnTheBlackoutCardKeepsEscape() throws {
+        var now = Date()
+        let directory = try TemporaryDirectory()
+        let settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
+        let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), rules: [Rule(source: "Slack", display: .blackout)], now: { now })
+        let escape = FakeEscapeKey()
+        let controller = SidebarPanelController.forTesting(
+            model: model, settings: settings, targetScreenFrame: { CGRect(x: 0, y: 0, width: 1000, height: 800) }, escapeKey: escape
+        )
+        defer { controller.annoyancePanel.stop() }
+        let card = SidebarNotification(source: "Slack", title: "Alice", receivedAt: now)
+        let other = SidebarNotification(source: "Mail", title: "Bob", receivedAt: now)
+        model.add(card)
+        model.add(other)
+        now += 300
+        try #require(controller.annoyancePanel.timer).fire()
+        #expect(escape.isRegistered)
+
+        model.setComposing(true, on: other.id)
+        #expect(escape.isRegistered)
+        model.setComposing(true, on: card.id)
+        #expect(!escape.isRegistered)
+        escape.press()
+        #expect(model.notifications.contains { $0.id == card.id })
+        model.setComposing(false, on: card.id)
+        #expect(escape.isRegistered)
+        controller.annoyancePanel.stop()
+        #expect(!escape.isRegistered)
+    }
+
     @Test func blackoutBackdropFollowsTheSidebarBackground() throws {
         var now = Date()
         let directory = try TemporaryDirectory()

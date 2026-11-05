@@ -50,11 +50,14 @@ public final class SidebarPanelController: NSObject {
         self.init(
             model: model, settings: settings, targetVisibleFrame: targetVisibleFrame, targetScreenFrame: targetScreenFrame,
             notificationCenter: notificationCenter, workspaceCenter: workspaceCenter, panelType: SidebarPanel.self,
-            openSettings: openSettings, setUp: setUp
+            escapeKey: .system, openSettings: openSettings, setUp: setUp
         )
     }
 
-    /// - Parameter panelType: The panel's class. Tests pass one that keeps the frames they pin it to on any display.
+    /// - Parameters:
+    ///   - panelType: The panel's class. Tests pass one that keeps the frames they pin it to on any display.
+    ///   - escapeKey: Registers Escape for the blackout; tests pass a fake, since the real one takes Escape from
+    ///     every app on the machine.
     init(
         model: SidebarModel,
         settings: SettingsStore,
@@ -63,6 +66,7 @@ public final class SidebarPanelController: NSObject {
         notificationCenter: NotificationCenter,
         workspaceCenter: NotificationCenter,
         panelType: SidebarPanel.Type,
+        escapeKey: EscapeKey,
         openSettings: @escaping @MainActor (SettingsGroup) -> Void,
         setUp: @escaping @MainActor (PermissionFlowPane, CGRect?) -> Void
     ) {
@@ -78,7 +82,9 @@ public final class SidebarPanelController: NSObject {
             type: panelType, contentRect: strip, model: model, settings: settings, openSettings: openSettings, setUp: setUp
         )
         follower = SystemSettingsFollower(window: panel, level: Self.level, workspaceCenter: workspaceCenter)
-        annoyancePanel = AnnoyancePanel(model: model, settings: settings, panelType: panelType, screenFrame: targetScreenFrame)
+        annoyancePanel = AnnoyancePanel(
+            model: model, settings: settings, panelType: panelType, screenFrame: targetScreenFrame, escapeKey: escapeKey
+        )
         super.init()
         follower.onFollow = { [weak self] in self?.showBackground() }
         settings.observe { [weak self] settings in

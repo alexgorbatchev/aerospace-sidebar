@@ -14,12 +14,18 @@ final class AnnoyancePanel {
     let panel: SidebarPanel
     private let model: SidebarModel
     private let screenFrame: @MainActor () -> CGRect?
+    private let escapeKey: EscapeKey
     private(set) var timer: Timer?
+    /// Holds Escape while the blackout shows, so the card can be dismissed from the keyboard whatever happens to
+    /// the panel's own mouse and keyboard handling. Released while a reply is typed on the card, whose field
+    /// closes on Escape.
+    private(set) var escapeRegistration: AnyObject?
 
     init(model: SidebarModel, settings: SettingsStore, panelType: SidebarPanel.Type,
-         screenFrame: @escaping @MainActor () -> CGRect?) {
+         screenFrame: @escaping @MainActor () -> CGRect?, escapeKey: EscapeKey) {
         self.model = model
         self.screenFrame = screenFrame
+        self.escapeKey = escapeKey
         panel = panelType.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         panel.level = .screenSaver
@@ -55,15 +61,25 @@ final class AnnoyancePanel {
         if model.annoyance.blocking, let frame = screenFrame() {
             panel.setFrame(frame, display: true)
             panel.orderFrontRegardless()
+            escapeRegistration = model.isComposingOnAnnoyance
+                ? nil : escapeRegistration ?? escapeKey.register { [weak self] in self?.escape() }
         } else {
             panel.orderOut(nil)
+            escapeRegistration = nil
         }
+    }
+
+    /// Dismisses the card the blackout shows, like its dismiss button.
+    private func escape() {
+        guard model.annoyance.blocking, let id = model.annoyance.active?.id else { return }
+        model.dismiss(id)
     }
 
     func stop() {
         timer?.invalidate()
         timer = nil
         panel.orderOut(nil)
+        escapeRegistration = nil
     }
 
     isolated deinit {
@@ -79,13 +95,23 @@ struct AnnoyanceContent: View {
     let model: SidebarModel
     let settings: SettingsStore
     @State private var hovered = false
+    @Environment(\.typography) private var typography
 
     var body: some View {
         GeometryReader { geometry in
             if let notification = model.notifications.first(where: { $0.id == model.annoyance.active?.id }), model.annoyance.blocking {
                 ScrollView {
-                    NotificationCard(notification: notification, model: model, isHovered: hovered, hover: { hovered = $0 })
-                        .padding(Self.margin)
+                    VStack(spacing: 0) {
+                        NotificationCard(notification: notification, model: model, isHovered: hovered, hover: { hovered = $0 })
+                        Text("Press Esc to dismiss")
+                            .font(typography.font(.callout))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(.regularMaterial, in: Capsule())
+                            .padding(.top, Self.margin)
+                    }
+                    .padding(Self.margin)
                 }
                 .defaultScrollAnchor(.center)
                 .frame(width: min(CGFloat(settings.settings.sidebar.width) * AnnoyancePanel.magnification, geometry.size.width),
