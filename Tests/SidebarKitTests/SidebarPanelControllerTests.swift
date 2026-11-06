@@ -269,7 +269,7 @@ struct SidebarPanelControllerTests {
             targetVisibleFrame: { CGRect(x: 0, y: 0, width: 1440, height: 900) },
             notificationCenter: NotificationCenter()
         )
-        let panel = try #require(controller.panel as? NSPanel)
+        let panel = controller.panel
         #expect(panel.becomesKeyOnlyIfNeeded)
         #expect(panel.contentView is SidebarHostingView<SidebarPanelContent>)
 
@@ -290,8 +290,8 @@ struct SidebarPanelControllerTests {
         let window = TestPanel(contentRect: host.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
         window.contentView = host
         host.layoutSubtreeIfNeeded()
-        func clickNeedsKey(atY y: CGFloat) throws -> Bool {
-            try #require(host.hitTest(CGPoint(x: 100, y: y))).needsPanelToBecomeKey
+        func clickNeedsKey(atY y: CGFloat) -> Bool? {
+            host.hitTest(CGPoint(x: 100, y: y))?.needsPanelToBecomeKey
         }
 
         // SwiftUI promises no flipping, so locate the field and click the button's half on the other side of it.
@@ -301,8 +301,8 @@ struct SidebarPanelControllerTests {
         let field = try #require(textField(in: host))
         // hitTest takes a point in the superview's coordinates, which are the window's here.
         let fieldY = field.convert(field.bounds, to: nil).midY
-        #expect(!(try clickNeedsKey(atY: fieldY < 40 ? 55 : 25)))
-        #expect(try clickNeedsKey(atY: fieldY))
+        #expect(clickNeedsKey(atY: fieldY < 40 ? 55 : 25) == false)
+        #expect(clickNeedsKey(atY: fieldY) == true)
         #expect(!host.needsPanelToBecomeKey)
     }
 

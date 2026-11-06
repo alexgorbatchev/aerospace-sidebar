@@ -177,12 +177,15 @@ struct NotificationAnnoyanceTests {
 
     @Test func escapeDismissesTheBlackoutCardOnlyWhileItShows() throws {
         var now = Date()
-        var frame: CGRect? = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        @MainActor final class Screen {
+            var frame: CGRect? = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        }
+        let screen = Screen()
         let directory = try TemporaryDirectory()
         let settings = SettingsStore(file: SettingsFile(url: directory.url.appendingPathComponent("config.toml")))
         let model = SidebarModel(performer: RecordingPerformer(), store: InMemoryStore(), rules: [Rule(source: "Slack", display: .blackout)], now: { now })
         let escape = FakeEscapeKey()
-        let controller = SidebarPanelController.forTesting(model: model, settings: settings, targetScreenFrame: { frame }, escapeKey: escape)
+        let controller = SidebarPanelController.forTesting(model: model, settings: settings, targetScreenFrame: { screen.frame }, escapeKey: escape)
         let panel = controller.annoyancePanel.panel
         defer { controller.annoyancePanel.stop() }
         let first = SidebarNotification(source: "Slack", title: "first", receivedAt: now)
@@ -201,10 +204,10 @@ struct NotificationAnnoyanceTests {
         // Refreshing while it shows keeps the one registration.
         controller.annoyancePanel.refresh()
         #expect(escape.registrations == 1)
-        frame = nil
+        screen.frame = nil
         controller.annoyancePanel.refresh()
         #expect(!escape.isRegistered)
-        frame = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        screen.frame = CGRect(x: 0, y: 0, width: 1000, height: 800)
         controller.annoyancePanel.refresh()
         #expect(escape.isRegistered)
 
