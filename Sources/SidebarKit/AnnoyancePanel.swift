@@ -30,10 +30,6 @@ final class BlackoutEscape {
 /// Uses the same nonactivating panel and card as the sidebar, covering its main display until answered.
 @MainActor
 final class AnnoyancePanel {
-    /// How much larger than in the sidebar the card is laid out. The card is laid out at this size, never scaled:
-    /// AppKit hit tests and tracks the pointer by view frames, which a SwiftUI scale leaves at their unscaled size,
-    /// so a scaled card's controls would take no clicks where they are drawn.
-    static let magnification: CGFloat = 1.5
     /// The backdrop's least opacity: WindowServer passes clicks through fully transparent pixels to the windows
     /// below, which the backdrop has to block.
     static let minimumBackdropOpacity = 0.01
@@ -133,10 +129,9 @@ final class AnnoyancePanel {
     }
 }
 
+/// The card exactly as the sidebar lays it out: as wide as the strip less `SidebarView.margin` on each side, in the
+/// sidebar's typography.
 struct AnnoyanceContent: View {
-    /// Space around the card, inside the scroll view.
-    static let margin: CGFloat = 16
-
     let model: SidebarModel
     let settings: SettingsStore
     let escape: BlackoutEscape
@@ -156,18 +151,18 @@ struct AnnoyanceContent: View {
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 4)
                                 .background(.regularMaterial, in: Capsule())
-                                .padding(.top, Self.margin)
+                                .padding(.top, SidebarView.margin)
                         }
                     }
-                    .padding(Self.margin)
+                    .padding(SidebarView.margin)
                 }
                 .defaultScrollAnchor(.center)
-                .frame(width: min(CGFloat(settings.settings.sidebar.width) * AnnoyancePanel.magnification, geometry.size.width),
+                .frame(width: min(CGFloat(settings.settings.sidebar.width), geometry.size.width),
                        height: geometry.size.height)
                 .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
             }
         }
-        .typography(settings, magnification: AnnoyancePanel.magnification)
+        .typography(settings)
         .sidebarTooltips()
     }
 }

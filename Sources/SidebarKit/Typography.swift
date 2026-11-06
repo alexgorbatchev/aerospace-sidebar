@@ -15,12 +15,11 @@ struct Typography: Equatable {
     /// Text whose width stands for the average width of body text.
     static let widthSample = "The quick brown fox jumps over the lazy dog 0123456789"
 
-    /// `magnification` enlarges every style past the settings' range, for views laid out larger than the sidebar.
-    init(_ settings: SidebarSettings.Font, magnification: CGFloat = 1) {
+    init(_ settings: SidebarSettings.Font) {
         family = Self.installedFamily(named: settings.name)
         // Previews show sizes before Save validates them.
         let range = SidebarSettings.Font.sizeRange
-        size = min(max(settings.size, range.lowerBound), range.upperBound) * magnification
+        size = min(max(settings.size, range.lowerBound), range.upperBound)
         scale = Self.sampleWidth(Self.bodyFont(family: family, size: size))
             / Self.sampleWidth(.systemFont(ofSize: SidebarSettings.Font.defaultSize))
     }
@@ -71,17 +70,16 @@ extension EnvironmentValues {
 extension View {
     /// Applies the current font, previewed or saved: text that picks a style reads `typography`, and other text gets
     /// the body font. Push buttons ignore it; title them with `Button(_:font:action:)`.
-    func typography(_ settings: SettingsStore, magnification: CGFloat = 1) -> some View {
-        modifier(TypographyModifier(settings: settings, magnification: magnification))
+    func typography(_ settings: SettingsStore) -> some View {
+        modifier(TypographyModifier(settings: settings))
     }
 }
 
 struct TypographyModifier: ViewModifier {
     let settings: SettingsStore
-    var magnification: CGFloat = 1
 
     func body(content: Content) -> some View {
-        let typography = Typography(settings.font, magnification: magnification)
+        let typography = Typography(settings.font)
         content
             .environment(\.typography, typography)
             .font(typography.font(.body))

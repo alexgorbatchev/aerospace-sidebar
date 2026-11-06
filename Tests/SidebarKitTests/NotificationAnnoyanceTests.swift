@@ -141,8 +141,9 @@ struct NotificationAnnoyanceTests {
         #expect(model.notifications.isEmpty)
     }
 
-    /// AppKit hit tests and tracks the pointer by view frames and ignores SwiftUI's render transforms, so a scaled
-    /// card would take clicks and hover only where it would sit unscaled.
+    /// The blackout shows the card at the sidebar's width, centered. AppKit hit tests and tracks the pointer by view
+    /// frames and ignores SwiftUI's render transforms, so a scaled card would take clicks and hover only where it
+    /// would sit unscaled.
     @Test func blackoutCardTakesClicksWhereItIsDrawn() throws {
         var now = Date()
         let frame = CGRect(x: 0, y: 0, width: 1000, height: 800)
@@ -162,7 +163,12 @@ struct NotificationAnnoyanceTests {
         try #require(scrollViews.count == 1)
         let card = try #require(scrollViews[0].documentView)
         let drawn = card.convert(card.bounds, to: nil)
-        let width = CGFloat(settings.settings.sidebar.width) * AnnoyancePanel.magnification
+        // The same card as in the sidebar: its list lays its cards out in a document as wide as the strip.
+        let sidebarContent = try #require(controller.panel.contentView)
+        sidebarContent.layoutSubtreeIfNeeded()
+        let sidebarList = try #require(sidebarContent.descendants(of: NSScrollView.self).first?.documentView)
+        let width = CGFloat(settings.settings.sidebar.width)
+        #expect(sidebarList.frame.width == width)
         #expect(drawn.width == width)
         #expect(drawn.midX == frame.midX)
         // `NSView.hitTest(_:)` and tracking areas use frames: the card's own frame must span what is drawn, and no

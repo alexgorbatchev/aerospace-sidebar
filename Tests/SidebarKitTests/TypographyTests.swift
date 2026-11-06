@@ -53,13 +53,6 @@ struct TypographyTests {
         #expect(Typography(SidebarSettings.Font(size: size)).size == rendered)
     }
 
-    @Test(arguments: [(13.0, 19.5), (32.0, 48.0), (500.0, 48.0)])
-    func magnificationEnlargesPastTheSettingsRange(size: Double, rendered: CGFloat) {
-        let typography = Typography(SidebarSettings.Font(size: size), magnification: 1.5)
-        #expect(typography.size == rendered)
-        #expect(typography.font(.body) == .system(size: rendered))
-    }
-
     @Test func missingFamilyFallsBackToSystemFont() {
         let typography = Typography(SidebarSettings.Font(name: "No Such Font Family", size: 13))
 
