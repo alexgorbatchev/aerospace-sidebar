@@ -1,5 +1,6 @@
 import AppKit
 import PermissionFlow
+import QuartzCore
 @testable import SidebarKit
 import SwiftUI
 import Testing
@@ -905,6 +906,49 @@ struct SettingsWindowControllerTests {
             // Panes sit below the toolbar, so the toolbar is not counted in their size.
             #expect(pane.view.convert(pane.view.bounds, to: nil).maxY <= controller.window.contentLayoutRect.maxY)
         }
+    }
+
+    /// Drive AppKit's window updates between native row selections; changing the navigation model
+    /// synchronously misses constraint loops that arise when presenting a new pane.
+    @Test(arguments: [false, true])
+    func switchingGroupsSettlesWithInvalidOrCurrentSettings(invalid: Bool) throws {
+        _ = NSApplication.shared
+        let directory = try TemporaryDirectory()
+        let file = SettingsFile(url: directory.url.appendingPathComponent("config.toml"))
+        if invalid {
+            try "unknown_setting = true".write(to: file.url, atomically: true, encoding: .utf8)
+        } else {
+            try file.save(SidebarSettings(rules: [.init(source: "Slack", display: .blackout)]))
+        }
+        let store = SettingsStore(file: file)
+        let controller = SettingsWindowController.forTesting(store: store, aeroSpace: .fake(store: store, home: directory.url))
+        controller.show()
+        defer { controller.window.close() }
+        let split = try #require(controller.window.contentViewController as? NSSplitViewController)
+        let sidebar = split.splitViewItems[0].viewController.view
+        let table = try #require(SettingsPaneTests.subviews(of: sidebar).compactMap { $0 as? NSTableView }.first)
+
+        func displayCycle() {
+            let deadline = Date().addingTimeInterval(0.1)
+            repeat {
+                CATransaction.flush()
+                NSApp.updateWindows()
+                controller.window.updateConstraintsIfNeeded()
+                controller.window.displayIfNeeded()
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            } while Date() < deadline
+        }
+        displayCycle()
+        for group in [SettingsGroup.rules] + SettingsGroup.allCases {
+            table.selectRowIndexes([group.rawValue], byExtendingSelection: false)
+            displayCycle()
+            #expect(controller.window.isVisible)
+            #expect(controller.tabs.selectedTabViewItemIndex == group.rawValue)
+            let frame = controller.window.frame
+            displayCycle()
+            #expect(controller.window.frame == frame)
+        }
+        #expect((store.loadError != nil) == invalid)
     }
 
     /// The group list is a sidebar `List`: selecting a row shows its group, and an empty selection, as

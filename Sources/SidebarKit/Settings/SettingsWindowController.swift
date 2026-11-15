@@ -33,6 +33,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// Set by opening the window until `sizeWindow` can center it: panes report their sizes after the
     /// event that opens it.
     private var centersOnNextSize = false
+    private var sizeUpdateScheduled = false
     /// Where `sizeWindow` last centered the window. While the window is still there, size changes keep it
     /// centered; once moved, it keeps its top edge instead.
     private var centeredFrame: NSRect?
@@ -122,7 +123,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
 
         let sidebar = SettingsSidebar(navigation: navigation) { [weak self] height in
             self?.sidebarHeight = height
-            self?.sizeWindow()
+            self?.scheduleWindowSize()
         }
         let sidebarItem = NSSplitViewItem(sidebarWithViewController: NSHostingController(rootView: sidebar.typography(store)))
         sidebarItem.canCollapse = false
@@ -205,6 +206,18 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         sizeWindow()
     }
 
+    /// Geometry reports arrive during SwiftUI rendering. Measuring and resizing synchronously there
+    /// reenters hosting-view layout and can make split-view safe-area constraints cycle indefinitely.
+    private func scheduleWindowSize() {
+        guard !sizeUpdateScheduled else { return }
+        sizeUpdateScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.sizeUpdateScheduled = false
+            self.sizeWindow()
+        }
+    }
+
     /// Fits the window to the largest pane and the group list, keeping its top edge in place, so switching
     /// groups does not resize it.
     private func sizeWindow() {
@@ -215,8 +228,8 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
         let pane = NSSize(width: paneSizes.values.map(\.width).max() ?? 0, height: paneSizes.values.map(\.height).max() ?? 0)
         let sidebarItem = split.splitViewItems[0]
         let sidebarWidth = (SettingsMetrics.sidebarWidth * Typography(store.font).scale).rounded()
-        sidebarItem.minimumThickness = sidebarWidth
-        sidebarItem.maximumThickness = sidebarWidth
+        if sidebarItem.minimumThickness != sidebarWidth { sidebarItem.minimumThickness = sidebarWidth }
+        if sidebarItem.maximumThickness != sidebarWidth { sidebarItem.maximumThickness = sidebarWidth }
         // What the window adds around the panes (title bar, sidebar) and around the group list
         // (the sidebar's margins), measured because the sidebar's margins differ between macOS versions.
         window.contentView?.layoutSubtreeIfNeeded()
@@ -231,7 +244,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
             frame.origin = origin
         }
         centersOnNextSize = false
-        window.setFrame(frame, display: true)
+        if window.frame != frame { window.setFrame(frame, display: true) }
         centeredFrame = centers ? window.frame : nil
     }
 
@@ -240,7 +253,7 @@ public final class SettingsWindowController: NSObject, NSWindowDelegate {
     private func pane(_ group: SettingsGroup, _ view: some View) -> NSViewController {
         let controller = NSHostingController(rootView: SettingsPaneHost(pane: view, store: store) { [weak self] size in
             self?.paneSizes[group] = size
-            self?.sizeWindow()
+            self?.scheduleWindowSize()
         })
         // Every pane fills the window; constraints from its own size would fight the window's.
         controller.sizingOptions = []
