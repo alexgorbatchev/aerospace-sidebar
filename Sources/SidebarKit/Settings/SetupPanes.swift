@@ -14,17 +14,21 @@ struct PermissionsPane: View {
             SettingsRow(label: "Accessibility") {
                 RemovableStep(remove: { Task { await onboarding.removeAccessibility() } }) {
                     SetupStep(title: "Open Accessibility", isDone: onboarding.accessibilityGranted, anchor: accessibilityAnchor) {
-                        onboarding.authorize(.accessibility, from: accessibilityAnchor.screenFrame)
+                        let sourceFrame = accessibilityAnchor.screenFrame
+                        Task { await onboarding.authorize(.accessibility, from: sourceFrame) }
                     }
                 }
+                .disabled(onboarding.isChangingPermission)
             }
             SettingsHint(text: "Required to read and hide banners.")
             SettingsRow(label: "Full Disk Access") {
                 RemovableStep(remove: { Task { await onboarding.removeFullDiskAccess() } }) {
                     SetupStep(title: "Open Full Disk Access", isDone: onboarding.fullDiskAccess == .granted, anchor: fullDiskAccessAnchor) {
-                        onboarding.authorize(.fullDiskAccess, from: fullDiskAccessAnchor.screenFrame)
+                        let sourceFrame = fullDiskAccessAnchor.screenFrame
+                        Task { await onboarding.authorize(.fullDiskAccess, from: sourceFrame) }
                     }
                 }
+                .disabled(onboarding.isChangingPermission)
             }
             SettingsHint(text: "Optional. Lists notifications that showed no banner.")
             SettingsHint(text: fullDiskAccessWarning, color: .orange, wraps: true)
@@ -39,7 +43,7 @@ struct PermissionsPane: View {
                 }
             }
             SettingsHint(text: loginHint)
-            SettingsHint(text: "After an update, Remove and grant it again.")
+            SettingsHint(text: "Permission setup removes old entries before opening System Settings.", wraps: true)
             SettingsHint(text: onboarding.message, wraps: true)
         }
         // Permissions and login items change in System Settings while this window is open.

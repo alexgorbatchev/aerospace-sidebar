@@ -208,11 +208,11 @@ public final class SidebarAppDelegate: NSObject, NSApplicationDelegate {
         window.show(group)
     }
 
-    /// Shows Settings › Permissions, where the step's status and Remove are, and opens `pane` in System
+    /// Shows Settings › Permissions, removes the old permission entry, then opens `pane` in System
     /// Settings with PermissionFlow's drag panel, which flies there from `sourceFrame` on screen.
     public func setUp(_ pane: PermissionFlowPane, from sourceFrame: CGRect?) {
         showSettings(.permissions)
-        onboarding.authorize(pane, from: sourceFrame)
+        Task { await onboarding.authorize(pane, from: sourceFrame) }
     }
 
     /// Checks the permissions now that Settings removed one, rather than at the monitors' next poll or read.

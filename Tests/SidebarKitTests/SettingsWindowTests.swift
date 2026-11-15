@@ -331,7 +331,7 @@ struct SettingsPaneTests {
     }
 
     /// Every permission is on one page with why the sidebar needs it; a granted one shows a checkmark only.
-    @Test func permissionsOfferStepsUntilGranted() throws {
+    @Test func permissionsOfferStepsUntilGranted() async throws {
         onboarding.refresh()
         let sut = try permissionsPane().inspect()
         #expect(sut.findAll(ViewType.Image.self, where: { try $0.accessibilityLabel().string() == "Not done" }).count == 3)
@@ -340,7 +340,12 @@ struct SettingsPaneTests {
         #expect(throws: Never.self) { try sut.find(text: "Optional. Starts the sidebar when you log in.") }
 
         try sut.find(button: "Open Full Disk Access").tap()
+        for _ in 0..<1000 where permissions.authorized.isEmpty { await Task.yield() }
+        #expect(permissions.resets == [.fullDiskAccess])
+        #expect(permissions.authorized == [.fullDiskAccess])
         try sut.find(button: "Open Accessibility").tap()
+        for _ in 0..<1000 where permissions.authorized.count < 2 { await Task.yield() }
+        #expect(permissions.resets == [.fullDiskAccess, .accessibility])
         #expect(permissions.authorized == [.fullDiskAccess, .accessibility])
         // Outside a window the buttons have no frame on screen, so the panel appears without flying in.
         #expect(permissions.sourceFrames == [nil, nil])
@@ -356,6 +361,38 @@ struct SettingsPaneTests {
         }
         #expect(throws: (any Error).self) { try granted.find(button: "Open Accessibility") }
         #expect(granted.findAll(ViewType.Button.self, where: { try $0.labelView().text().string() == "Remove" }).count == 3)
+    }
+
+    /// Resetting either entry prevents another privacy action until the first can open its grant flow.
+    /// Login-item controls remain usable because they do not reset a privacy permission.
+    @Test func permissionActionsWaitForReset() async throws {
+        let (resetGate, releaseReset) = AsyncStream<Void>.makeStream()
+        defer { releaseReset.finish() }
+        permissions.whileResetting = { _ in
+            for await _ in resetGate {}
+        }
+        let changing = Task { await onboarding.authorize(.accessibility) }
+        for _ in 0..<1000 where permissions.resets.isEmpty { await Task.yield() }
+
+        let inspection = Result {
+            #expect(onboarding.isChangingPermission)
+            let waiting = try permissionsPane().inspect()
+            #expect(try waiting.find(button: "Open Accessibility").isDisabled())
+            #expect(try waiting.find(button: "Open Full Disk Access").isDisabled())
+            let removes = waiting.findAll(ViewType.Button.self, where: { try $0.labelView().text().string() == "Remove" })
+            #expect(removes.count == 2)
+            for remove in removes { #expect(try remove.isDisabled()) }
+            #expect(try !waiting.find(button: "Add to Login Items").isDisabled())
+            #expect(permissions.authorized.isEmpty)
+        }
+        releaseReset.finish()
+        await changing.value
+        try inspection.get()
+
+        let finished = try permissionsPane().inspect()
+        #expect(try !finished.find(button: "Open Accessibility").isDisabled())
+        #expect(try !finished.find(button: "Open Full Disk Access").isDisabled())
+        #expect(permissions.authorized == [.accessibility])
     }
 
     /// A notification database that fails for another reason than missing access leaves Full Disk Access

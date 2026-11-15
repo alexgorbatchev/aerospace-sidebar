@@ -1,4 +1,5 @@
 import AppKit
+import PermissionFlow
 @testable import SidebarKit
 import SidebarProtocol
 import Testing
@@ -225,21 +226,24 @@ struct SidebarAppDelegateTests {
         delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification))
     }
 
-    /// The sidebar's Set Up… shows the Permissions steps and starts the one it asks for, with PermissionFlow's
-    /// drag panel flying from the button.
-    @Test func setUpShowsPermissionsAndStartsTheStep() throws {
+    /// The sidebar's Set Up… shows Permissions, resets the requested entry and starts its grant flow,
+    /// with PermissionFlow's drag panel flying from the clicked button.
+    @Test(arguments: [PermissionFlowPane.accessibility, .fullDiskAccess])
+    func setUpShowsPermissionsAndStartsTheStep(pane: PermissionFlowPane) async throws {
         let delegate = makeDelegate()
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
         let button = CGRect(x: 1200, y: 840, width: 70, height: 22)
 
-        delegate.setUp(.fullDiskAccess, from: button)
+        delegate.setUp(pane, from: button)
 
         let window = try #require(delegate.settingsWindow)
         defer { window.window.orderOut(nil) }
         #expect(window.window.isVisible)
         #expect(window.navigation.selection == .permissions)
-        #expect(permissions.authorized == [.fullDiskAccess])
+        for _ in 0..<1000 where permissions.authorized.isEmpty { await Task.yield() }
+        #expect(permissions.resets == [pane])
+        #expect(permissions.authorized == [pane])
         #expect(permissions.sourceFrames == [button])
     }
 
@@ -264,7 +268,8 @@ struct SidebarAppDelegateTests {
     /// Removing a permission in Settings takes effect at once, rather than at the next poll or notification.
     /// Before Accessibility goes, NotificationCenter's hidden window is moved back while the permission still
     /// allows it: left off-screen, it would hide every later notification.
-    @Test func removingAPermissionChecksItAtOnce() async throws {
+    @Test(arguments: [false, true])
+    func removingAPermissionChecksItAtOnce(startingSetup: Bool) async throws {
         try database.create()
         permissions.states = [.accessibility: .granted]
         let window = FakeElement.window(FakeElement.banner(id: "b"))
@@ -283,18 +288,24 @@ struct SidebarAppDelegateTests {
             // Without the permission, NotificationCenter's windows no longer move.
             window.keepsMoves = false
         }
-        await delegate.onboarding.removeAccessibility()
+        if startingSetup {
+            await delegate.onboarding.authorize(.accessibility)
+        } else {
+            await delegate.onboarding.removeAccessibility()
+        }
 
         #expect(whileRemoving == .stopped)
         #expect(window.position == .zero)
         #expect(delegate.model.interception == .needsAccessibility)
         #expect(delegate.monitor?.isRunning == true)
         #expect(delegate.model.database == .reading)
+        #expect(permissions.authorized == (startingSetup ? [.accessibility] : []))
     }
 
     /// When macOS keeps the permission, interception attaches again and hides what it hid before; while
     /// interception is off, removing the permission leaves it off.
-    @Test func removingAccessibilityThatStaysKeepsIntercepting() async throws {
+    @Test(arguments: [false, true])
+    func removingAccessibilityThatStaysKeepsIntercepting(startingSetup: Bool) async throws {
         permissions.states = [.accessibility: .granted]
         permissions.resetResult = CommandResult(status: 1, output: "tccutil: Failed to reset Accessibility")
         let window = FakeElement.window(FakeElement.banner(id: "b"))
@@ -303,15 +314,25 @@ struct SidebarAppDelegateTests {
         delegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
         defer { delegate.applicationWillTerminate(Notification(name: NSApplication.willTerminateNotification)) }
 
-        await delegate.onboarding.removeAccessibility()
+        if startingSetup {
+            await delegate.onboarding.authorize(.accessibility)
+        } else {
+            await delegate.onboarding.removeAccessibility()
+        }
         #expect(delegate.model.interception == .active)
         #expect(window.moves == [SystemNotificationInterceptor.offScreen, .zero, SystemNotificationInterceptor.offScreen])
         #expect(delegate.onboarding.message?.hasPrefix("Cannot remove AerospaceSidebar from Accessibility") == true)
+        #expect(permissions.authorized.isEmpty)
 
         settings.update { $0.notifications.replaceSystem = false }
-        await delegate.onboarding.removeAccessibility()
+        if startingSetup {
+            await delegate.onboarding.authorize(.accessibility)
+        } else {
+            await delegate.onboarding.removeAccessibility()
+        }
         #expect(delegate.monitor?.isRunning == false)
         #expect(delegate.model.interception == .disabled)
+        #expect(permissions.authorized.isEmpty)
     }
 
     @Test func settingsTurnInterceptionOffAndOnAndApplyHistory() throws {

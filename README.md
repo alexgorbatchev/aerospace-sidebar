@@ -88,7 +88,7 @@ Run the same commands to update. Each release also has the command on its own as
 1. Open `~/Applications/AerospaceSidebar.app`.
 2. Click the gear button at the bottom of the sidebar to open Settings.
 3. Under **Sidebar**, pick the side and width (300 points on the right by default) and check that the AeroSpace config shows as updated.
-4. Under **Permissions**, grant Accessibility, optionally grant Full Disk Access, and add the login item. The permission steps open the right System Settings page with a panel to drag the app from.
+4. Under **Permissions**, grant Accessibility, optionally grant Full Disk Access, and add the login item. Each permission step removes the app's old entry, then opens the right System Settings page with a panel to drag the app from. The sidebar's **Set Up…** buttons use the same flow.
 5. Quit other apps that restyle or hide notification banners, such as NotifyMeHow.
 
 What each permission is for:
@@ -97,7 +97,7 @@ What each permission is for:
 - **Full Disk Access** (optional): buttons on banners, notifications that showed no banner, and apps with notifications switched off.
 - **Login item**: opens the sidebar at login; needs the app in `~/Applications` or `/Applications`.
 
-Release builds are not signed with a developer certificate, so after each update, click **Remove** next to each permission and grant it again.
+Release builds are not signed with a developer certificate, so after each update, use the permission steps to grant access again. Setup removes old entries automatically; **Remove** only revokes access.
 
 To configure AeroSpace by hand, **Copy Settings** in Settings › Sidebar copies this, then run `aerospace reload-config`:
 

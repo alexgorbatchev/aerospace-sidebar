@@ -393,7 +393,7 @@ final class FakePermissions: PermissionGuiding {
     var resets: [PermissionFlowPane] = []
     var resetResult = CommandResult(status: 0, output: "")
     /// Runs while `tccutil` would, before `reset` returns.
-    var whileResetting: @MainActor (PermissionFlowPane) -> Void = { _ in }
+    var whileResetting: @MainActor (PermissionFlowPane) async -> Void = { _ in }
 
     func state(of pane: PermissionFlowPane) -> PermissionAuthorizationState { states[pane] ?? .notGranted }
 
@@ -404,7 +404,7 @@ final class FakePermissions: PermissionGuiding {
 
     func reset(_ pane: PermissionFlowPane) async -> CommandResult {
         resets.append(pane)
-        whileResetting(pane)
+        await whileResetting(pane)
         if resetResult.status == 0 {
             states[pane] = nil
         }
