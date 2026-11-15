@@ -70,17 +70,17 @@ struct RulesPane: View {
             }
             Divider()
             iconButton("Remove Rule", systemImage: "minus") {
-                guard let index = selection else { return }
+                guard let index = selectedIndex else { return }
                 editor.draft.rules.remove(at: index)
                 selection = editor.draft.rules.isEmpty ? nil : min(index, editor.draft.rules.count - 1)
             }
-            .disabled(selection == nil)
+            .disabled(selectedIndex == nil)
             Divider()
             iconButton("Move Up", systemImage: "arrow.up") { move(by: -1) }
-                .disabled((selection ?? 0) == 0)
+                .disabled((selectedIndex ?? 0) == 0)
             Divider()
             iconButton("Move Down", systemImage: "arrow.down") { move(by: 1) }
-                .disabled(selection.map { $0 >= editor.draft.rules.count - 1 } ?? true)
+                .disabled(selectedIndex.map { $0 >= editor.draft.rules.count - 1 } ?? true)
             Divider()
             Spacer()
         }
@@ -187,7 +187,7 @@ struct RulesPane: View {
     }
 
     private func move(by offset: Int) {
-        guard let index = selection, editor.draft.rules.indices.contains(index + offset) else { return }
+        guard let index = selectedIndex, editor.draft.rules.indices.contains(index + offset) else { return }
         editor.draft.rules.swapAt(index, index + offset)
         selection = index + offset
     }

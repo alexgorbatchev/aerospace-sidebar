@@ -246,6 +246,26 @@ struct RulesPaneTests {
         #expect(try sut.find(ViewType.TextField.self, where: { try $0.labelView().text().string() == "Source" }).input() == "b")
     }
 
+    /// A file reload can remove the selected rule before an already-rendered button finishes its action.
+    @Test(arguments: ["Remove Rule", "Move Up", "Move Down"])
+    func ignoresListActionsAfterTheSelectedRuleDisappears(label: String) throws {
+        store.update { $0.rules = [Rule(source: "a"), Rule(source: "b"), Rule(source: "c")] }
+        let sut = pane(selection: 1)
+        let button = try sut.inspect().find(viewWithAccessibilityLabel: label).button()
+        #expect(try !button.isDisabled())
+
+        let remaining = [Rule(source: "a")]
+        try store.file.save(SidebarSettings(rules: remaining))
+        store.reload()
+        #expect(editor.draft.rules == remaining)
+        #expect(try sut.inspect().find(viewWithAccessibilityLabel: label).button().isDisabled())
+
+        try button.tap()
+
+        #expect(editor.draft.rules == remaining)
+        #expect(!editor.isDirty)
+    }
+
     /// One pop-up picks the action: hiding, apart from the severities below it.
     @Test func picksTheActionFromOnePopUp() {
         #expect(RulesPane.actionOptions.map(\.label) == ["Hide it", "List as low", "List as normal", "List as high", "List as critical"])
